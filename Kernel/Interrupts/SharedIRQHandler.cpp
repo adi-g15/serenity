@@ -1,30 +1,10 @@
 /*
  * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Assertions.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Interrupts/IRQHandler.h>
@@ -36,22 +16,20 @@ namespace Kernel {
 
 UNMAP_AFTER_INIT void SharedIRQHandler::initialize(u8 interrupt_number)
 {
-    new SharedIRQHandler(interrupt_number);
+    auto* handler = new SharedIRQHandler(interrupt_number);
+    handler->register_interrupt_handler();
+    handler->disable_interrupt_vector();
 }
 
 void SharedIRQHandler::register_handler(GenericInterruptHandler& handler)
 {
-#if INTERRUPT_DEBUG
-    klog() << "Interrupt Handler registered @ Shared Interrupt Handler " << interrupt_number();
-#endif
+    dbgln_if(INTERRUPT_DEBUG, "Interrupt Handler registered @ Shared Interrupt Handler {}", interrupt_number());
     m_handlers.set(&handler);
     enable_interrupt_vector();
 }
 void SharedIRQHandler::unregister_handler(GenericInterruptHandler& handler)
 {
-#if INTERRUPT_DEBUG
-    klog() << "Interrupt Handler unregistered @ Shared Interrupt Handler " << interrupt_number();
-#endif
+    dbgln_if(INTERRUPT_DEBUG, "Interrupt Handler unregistered @ Shared Interrupt Handler {}", interrupt_number());
     m_handlers.remove(&handler);
     if (m_handlers.is_empty())
         disable_interrupt_vector();
@@ -68,17 +46,12 @@ SharedIRQHandler::SharedIRQHandler(u8 irq)
     : GenericInterruptHandler(irq)
     , m_responsible_irq_controller(InterruptManagement::the().get_responsible_irq_controller(irq))
 {
-#if INTERRUPT_DEBUG
-    klog() << "Shared Interrupt Handler registered @ " << interrupt_number();
-#endif
-    disable_interrupt_vector();
+    dbgln_if(INTERRUPT_DEBUG, "Shared Interrupt Handler registered @ {}", interrupt_number());
 }
 
 SharedIRQHandler::~SharedIRQHandler()
 {
-#if INTERRUPT_DEBUG
-    klog() << "Shared Interrupt Handler unregistered @ " << interrupt_number();
-#endif
+    dbgln_if(INTERRUPT_DEBUG, "Shared Interrupt Handler unregistered @ {}", interrupt_number());
     disable_interrupt_vector();
 }
 

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibWeb/CSS/Length.h>
@@ -267,31 +247,55 @@ void BlockFormattingContext::compute_width_for_block_level_replaced_element_in_n
     box.set_width(compute_width_for_replaced_element(box));
 }
 
-void BlockFormattingContext::compute_height_for_block_level_replaced_element_in_normal_flow(ReplacedBox& box)
+static float compute_auto_height_for_block_level_element(const Box& box)
 {
-    box.set_height(compute_height_for_replaced_element(box));
+    Optional<float> top;
+    Optional<float> bottom;
+
+    if (box.children_are_inline()) {
+        // If it only has inline-level children, the height is the distance between
+        // the top of the topmost line box and the bottom of the bottommost line box.
+        if (!box.line_boxes().is_empty()) {
+            for (auto& fragment : box.line_boxes().first().fragments()) {
+                if (!top.has_value() || fragment.offset().y() < top.value())
+                    top = fragment.offset().y();
+            }
+            for (auto& fragment : box.line_boxes().last().fragments()) {
+                if (!bottom.has_value() || (fragment.offset().y() + fragment.height()) > bottom.value())
+                    bottom = fragment.offset().y() + fragment.height();
+            }
+        }
+    } else {
+        // If it has block-level children, the height is the distance between
+        // the top margin-edge of the topmost block-level child box
+        // and the bottom margin-edge of the bottommost block-level child box.
+        box.for_each_child_of_type<Box>([&](Layout::Box& child_box) {
+            if (child_box.is_absolutely_positioned())
+                return IterationDecision::Continue;
+            if ((box.computed_values().overflow_y() == CSS::Overflow::Visible) && child_box.is_floating())
+                return IterationDecision::Continue;
+
+            float child_box_top = child_box.effective_offset().y() - child_box.box_model().margin_box().top;
+            float child_box_bottom = child_box.effective_offset().y() + child_box.height() + child_box.box_model().margin_box().bottom;
+
+            if (!top.has_value() || child_box_top < top.value())
+                top = child_box_top;
+
+            if (!bottom.has_value() || child_box_bottom > bottom.value())
+                bottom = child_box_bottom;
+
+            return IterationDecision::Continue;
+        });
+    }
+    return bottom.value_or(0) - top.value_or(0);
 }
 
 void BlockFormattingContext::compute_height(Box& box)
 {
-    if (is<ReplacedBox>(box)) {
-        compute_height_for_block_level_replaced_element_in_normal_flow(downcast<ReplacedBox>(box));
-        return;
-    }
-
     auto& computed_values = box.computed_values();
     auto& containing_block = *box.containing_block();
 
-    CSS::Length specified_height;
-
-    if (computed_values.height().is_percentage() && !containing_block.computed_values().height().is_absolute()) {
-        specified_height = CSS::Length::make_auto();
-    } else {
-        specified_height = computed_values.height().resolved_or_auto(box, containing_block.height());
-    }
-
-    auto specified_max_height = computed_values.max_height().resolved_or_auto(box, containing_block.height());
-
+    // First, resolve the top/bottom parts of the surrounding box model.
     box.box_model().margin.top = computed_values.margin().top.resolved_or_zero(box, containing_block.width()).to_px(box);
     box.box_model().margin.bottom = computed_values.margin().bottom.resolved_or_zero(box, containing_block.width()).to_px(box);
     box.box_model().border.top = computed_values.border_top().width;
@@ -299,11 +303,65 @@ void BlockFormattingContext::compute_height(Box& box)
     box.box_model().padding.top = computed_values.padding().top.resolved_or_zero(box, containing_block.width()).to_px(box);
     box.box_model().padding.bottom = computed_values.padding().bottom.resolved_or_zero(box, containing_block.width()).to_px(box);
 
-    if (!specified_height.is_auto()) {
-        float used_height = specified_height.to_px(box);
-        if (!specified_max_height.is_auto())
-            used_height = min(used_height, specified_max_height.to_px(box));
-        box.set_height(used_height);
+    // Then work out what the height is, based on box type and CSS properties.
+    float height = 0;
+    if (is<ReplacedBox>(box)) {
+        height = compute_height_for_replaced_element(downcast<ReplacedBox>(box));
+    } else {
+        if (box.computed_values().height().is_undefined_or_auto()) {
+            height = compute_auto_height_for_block_level_element(box);
+        } else {
+            CSS::Length specified_height;
+            if (computed_values.height().is_percentage() && !containing_block.computed_values().height().is_absolute()) {
+                specified_height = CSS::Length::make_auto();
+            } else {
+                specified_height = computed_values.height().resolved_or_auto(box, containing_block.height());
+            }
+
+            auto specified_max_height = computed_values.max_height().resolved_or_auto(box, containing_block.height());
+            if (!specified_height.is_auto()) {
+                float used_height = specified_height.to_px(box);
+                if (!specified_max_height.is_auto())
+                    used_height = min(used_height, specified_max_height.to_px(box));
+                height = used_height;
+            }
+        }
+    }
+
+    box.set_height(height);
+}
+
+void BlockFormattingContext::compute_position(Box& box)
+{
+    // 9.4.3 Relative positioning
+    // Once a box has been laid out according to the normal flow or floated, it may be shifted relative to this position.
+
+    auto& box_model = box.box_model();
+    auto& computed_values = box.computed_values();
+    float width_of_containing_block = box.width_of_logical_containing_block();
+
+    auto specified_left = computed_values.offset().left.resolved_or_zero(box, width_of_containing_block);
+    auto specified_right = computed_values.offset().right.resolved_or_zero(box, width_of_containing_block);
+
+    if (specified_left.is_auto() && specified_right.is_auto()) {
+        // If both 'left' and 'right' are 'auto' (their initial values), the used values are '0' (i.e., the boxes stay in their original position).
+        box_model.offset.left = 0;
+        box_model.offset.right = 0;
+    } else if (specified_left.is_auto()) {
+        // If 'left' is 'auto', its used value is minus the value of 'right' (i.e., the boxes move to the left by the value of 'right').
+        box_model.offset.right = specified_right.to_px(box);
+        box_model.offset.left = 0 - box_model.offset.right;
+    } else if (specified_right.is_auto()) {
+        // If 'right' is specified as 'auto', its used value is minus the value of 'left'.
+        box_model.offset.left = specified_left.to_px(box);
+        box_model.offset.right = 0 - box_model.offset.left;
+    } else {
+        // If neither 'left' nor 'right' is 'auto', the position is over-constrained, and one of them has to be ignored.
+        // If the 'direction' property of the containing block is 'ltr', the value of 'left' wins and 'right' becomes -'left'.
+        // If 'direction' of the containing block is 'rtl', 'right' wins and 'left' is ignored.
+        // FIXME: Check direction (assuming 'ltr' for now).
+        box_model.offset.left = specified_left.to_px(box);
+        box_model.offset.right = 0 - box_model.offset.left;
     }
 }
 
@@ -331,6 +389,9 @@ void BlockFormattingContext::layout_block_level_children(Box& box, LayoutMode la
         layout_inside(child_box, layout_mode);
         compute_height(child_box);
 
+        if (child_box.computed_values().position() == CSS::Position::Relative)
+            compute_position(child_box);
+
         if (is<ReplacedBox>(child_box))
             place_block_level_replaced_element_in_normal_flow(child_box, box);
         else if (is<BlockBox>(child_box))
@@ -350,11 +411,6 @@ void BlockFormattingContext::layout_block_level_children(Box& box, LayoutMode la
         if (box.computed_values().width().is_undefined() || box.computed_values().width().is_auto())
             box.set_width(content_width);
     }
-
-    if (box.computed_values().height().is_undefined_or_auto())
-        box.set_height(content_height);
-    else
-        box.set_height(box.computed_values().height().resolved_or_zero(box, context_box().height()).to_px(box));
 }
 
 void BlockFormattingContext::place_block_level_replaced_element_in_normal_flow(Box& child_box, Box& containing_block)

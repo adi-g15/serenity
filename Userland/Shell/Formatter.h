@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -49,6 +29,12 @@ public:
         m_trivia = m_source.substring_view(m_source.length() - offset, offset);
     }
 
+    explicit Formatter(const AST::Node& node)
+        : m_cursor(-1)
+        , m_root_node(node)
+    {
+    }
+
     String format();
     size_t cursor() const { return m_output_cursor; }
 
@@ -74,6 +60,7 @@ private:
     virtual void visit(const AST::HistoryEvent*) override;
     virtual void visit(const AST::Execute*) override;
     virtual void visit(const AST::IfCond*) override;
+    virtual void visit(const AST::ImmediateExpression*) override;
     virtual void visit(const AST::Join*) override;
     virtual void visit(const AST::MatchExpr*) override;
     virtual void visit(const AST::Or*) override;
@@ -83,6 +70,7 @@ private:
     virtual void visit(const AST::ReadWriteRedirection*) override;
     virtual void visit(const AST::Sequence*) override;
     virtual void visit(const AST::Subshell*) override;
+    virtual void visit(const AST::Slice*) override;
     virtual void visit(const AST::SimpleVariable*) override;
     virtual void visit(const AST::SpecialVariable*) override;
     virtual void visit(const AST::Juxtaposition*) override;
@@ -119,6 +107,7 @@ private:
     StringView m_source;
     size_t m_output_cursor { 0 };
     ssize_t m_cursor { -1 };
+    RefPtr<AST::Node> m_root_node;
     AST::Node* m_hit_node { nullptr };
 
     const AST::Node* m_parent_node { nullptr };

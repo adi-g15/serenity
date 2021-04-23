@@ -1,34 +1,14 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
 #include <AK/MemMem.h>
 #include <AK/String.h>
 #include <AK/Types.h>
-#include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Arch/x86/SmapDisabler.h>
 #include <Kernel/Heap/kmalloc.h>
 #include <Kernel/StdLib.h>
@@ -43,7 +23,7 @@ String copy_string_from_user(const char* user_str, size_t user_str_size)
     void* fault_at;
     ssize_t length = Kernel::safe_strnlen(user_str, user_str_size, fault_at);
     if (length < 0) {
-        klog() << "copy_string_from_user(" << static_cast<const void*>(user_str) << ", " << user_str_size << ") failed at " << VirtualAddress(fault_at) << " (strnlen)";
+        dbgln("copy_string_from_user({:p}, {}) failed at {} (strnlen)", static_cast<const void*>(user_str), user_str_size, VirtualAddress { fault_at });
         return {};
     }
     if (length == 0)
@@ -52,7 +32,7 @@ String copy_string_from_user(const char* user_str, size_t user_str_size)
     char* buffer;
     auto copied_string = StringImpl::create_uninitialized((size_t)length, buffer);
     if (!Kernel::safe_memcpy(buffer, user_str, (size_t)length, fault_at)) {
-        klog() << "copy_string_from_user(" << static_cast<const void*>(user_str) << ", " << user_str_size << ") failed at " << VirtualAddress(fault_at) << " (memcpy)";
+        dbgln("copy_string_from_user({:p}, {}) failed at {} (memcpy)", static_cast<const void*>(user_str), user_str_size, VirtualAddress { fault_at });
         return {};
     }
     return copied_string;
@@ -62,6 +42,32 @@ String copy_string_from_user(Userspace<const char*> user_str, size_t user_str_si
 {
     return copy_string_from_user(user_str.unsafe_userspace_ptr(), user_str_size);
 }
+
+[[nodiscard]] Optional<Time> copy_time_from_user(const timespec* ts_user)
+{
+    timespec ts;
+    if (!copy_from_user(&ts, ts_user, sizeof(timespec))) {
+        return {};
+    }
+    return Time::from_timespec(ts);
+}
+[[nodiscard]] Optional<Time> copy_time_from_user(const timeval* tv_user)
+{
+    timeval tv;
+    if (!copy_from_user(&tv, tv_user, sizeof(timeval))) {
+        return {};
+    }
+    return Time::from_timeval(tv);
+}
+
+template<>
+[[nodiscard]] Optional<Time> copy_time_from_user<const timeval>(Userspace<const timeval*> src) { return copy_time_from_user(src.unsafe_userspace_ptr()); }
+template<>
+[[nodiscard]] Optional<Time> copy_time_from_user<timeval>(Userspace<timeval*> src) { return copy_time_from_user(src.unsafe_userspace_ptr()); }
+template<>
+[[nodiscard]] Optional<Time> copy_time_from_user<const timespec>(Userspace<const timespec*> src) { return copy_time_from_user(src.unsafe_userspace_ptr()); }
+template<>
+[[nodiscard]] Optional<Time> copy_time_from_user<timespec>(Userspace<timespec*> src) { return copy_time_from_user(src.unsafe_userspace_ptr()); }
 
 Optional<u32> user_atomic_fetch_add_relaxed(volatile u32* var, u32 val)
 {
@@ -175,7 +181,7 @@ bool copy_to_user(void* dest_ptr, const void* src_ptr, size_t n)
     void* fault_at;
     if (!Kernel::safe_memcpy(dest_ptr, src_ptr, n, fault_at)) {
         VERIFY(VirtualAddress(fault_at) >= VirtualAddress(dest_ptr) && VirtualAddress(fault_at) <= VirtualAddress((FlatPtr)dest_ptr + n));
-        klog() << "copy_to_user(" << dest_ptr << ", " << src_ptr << ", " << n << ") failed at " << VirtualAddress(fault_at);
+        dbgln("copy_to_user({:p}, {:p}, {}) failed at {}", dest_ptr, src_ptr, n, VirtualAddress { fault_at });
         return false;
     }
     return true;
@@ -191,7 +197,7 @@ bool copy_from_user(void* dest_ptr, const void* src_ptr, size_t n)
     void* fault_at;
     if (!Kernel::safe_memcpy(dest_ptr, src_ptr, n, fault_at)) {
         VERIFY(VirtualAddress(fault_at) >= VirtualAddress(src_ptr) && VirtualAddress(fault_at) <= VirtualAddress((FlatPtr)src_ptr + n));
-        klog() << "copy_from_user(" << dest_ptr << ", " << src_ptr << ", " << n << ") failed at " << VirtualAddress(fault_at);
+        dbgln("copy_from_user({:p}, {:p}, {}) failed at {}", dest_ptr, src_ptr, n, VirtualAddress { fault_at });
         return false;
     }
     return true;
@@ -244,7 +250,7 @@ const void* memmem(const void* haystack, size_t haystack_length, const void* nee
     Kernel::SmapDisabler disabler;
     void* fault_at;
     if (!Kernel::safe_memset(dest_ptr, c, n, fault_at)) {
-        klog() << "memset(" << dest_ptr << ", " << n << ") failed at " << VirtualAddress(fault_at);
+        dbgln("memset_user({:p}, {}, {}) failed at {}", dest_ptr, c, n, VirtualAddress { fault_at });
         return false;
     }
     return true;
@@ -256,9 +262,7 @@ void* memset(void* dest_ptr, int c, size_t n)
     // FIXME: Support starting at an unaligned address.
     if (!(dest & 0x3) && n >= 12) {
         size_t size_ts = n / sizeof(size_t);
-        size_t expanded_c = (u8)c;
-        expanded_c |= expanded_c << 8;
-        expanded_c |= expanded_c << 16;
+        size_t expanded_c = explode_byte((u8)c);
         asm volatile(
             "rep stosl\n"
             : "=D"(dest)

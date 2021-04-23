@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
@@ -38,6 +18,7 @@
 #include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/HTMLHeadElement.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
+#include <LibWeb/HTML/HTMLTableElement.h>
 #include <LibWeb/HTML/HTMLTemplateElement.h>
 #include <LibWeb/HTML/Parser/HTMLDocumentParser.h>
 #include <LibWeb/HTML/Parser/HTMLToken.h>
@@ -457,17 +438,34 @@ NonnullRefPtr<DOM::Element> HTMLDocumentParser::create_element_for(const HTMLTok
     return element;
 }
 
-RefPtr<DOM::Element> HTMLDocumentParser::insert_foreign_element(const HTMLToken& token, const FlyString& namespace_)
+// https://html.spec.whatwg.org/multipage/parsing.html#insert-a-foreign-element
+NonnullRefPtr<DOM::Element> HTMLDocumentParser::insert_foreign_element(const HTMLToken& token, const FlyString& namespace_)
 {
     auto adjusted_insertion_location = find_appropriate_place_for_inserting_node();
+
+    // FIXME: Pass in adjusted_insertion_location.parent as the intended parent.
     auto element = create_element_for(token, namespace_);
-    // FIXME: Check if it's possible to insert `element` at `adjusted_insertion_location`
-    adjusted_insertion_location.parent->insert_before(element, adjusted_insertion_location.insert_before_sibling);
+
+    auto pre_insertion_validity = adjusted_insertion_location.parent->ensure_pre_insertion_validity(element, adjusted_insertion_location.insert_before_sibling);
+
+    // NOTE: If it's not possible to insert the element at the adjusted insertion location, the element is simply dropped.
+    if (!pre_insertion_validity.is_exception()) {
+        if (!m_parsing_fragment) {
+            // FIXME: push a new element queue onto element's relevant agent's custom element reactions stack.
+        }
+
+        adjusted_insertion_location.parent->insert_before(element, adjusted_insertion_location.insert_before_sibling);
+
+        if (!m_parsing_fragment) {
+            // FIXME: pop the element queue from element's relevant agent's custom element reactions stack, and invoke custom element reactions in that queue.
+        }
+    }
+
     m_stack_of_open_elements.push(element);
     return element;
 }
 
-RefPtr<DOM::Element> HTMLDocumentParser::insert_html_element(const HTMLToken& token)
+NonnullRefPtr<DOM::Element> HTMLDocumentParser::insert_html_element(const HTMLToken& token)
 {
     return insert_foreign_element(token, Namespace::HTML);
 }
@@ -958,9 +956,8 @@ HTMLDocumentParser::AdoptionAgencyAlgorithmOutcome HTMLDocumentParser::run_the_a
 
     if (!m_stack_of_open_elements.contains(*formatting_element)) {
         PARSE_ERROR();
-        // FIXME: If formatting element is not in the stack of open elements,
-        // then this is a parse error; remove the element from the list, and return.
-        TODO();
+        m_list_of_active_formatting_elements.remove(*formatting_element);
+        return AdoptionAgencyAlgorithmOutcome::DoNothing;
     }
 
     if (!m_stack_of_open_elements.has_in_scope(*formatting_element)) {
@@ -2873,6 +2870,7 @@ void HTMLDocumentParser::process_using_the_rules_for_foreign_content(HTMLToken& 
     VERIFY_NOT_REACHED();
 }
 
+// https://html.spec.whatwg.org/multipage/parsing.html#reset-the-insertion-mode-appropriately
 void HTMLDocumentParser::reset_the_insertion_mode_appropriately()
 {
     for (ssize_t i = m_stack_of_open_elements.elements().size() - 1; i >= 0; --i) {
@@ -2886,7 +2884,22 @@ void HTMLDocumentParser::reset_the_insertion_mode_appropriately()
         }
 
         if (node->local_name() == HTML::TagNames::select) {
-            TODO();
+            if (!last) {
+                for (ssize_t j = i; j > 0; --j) {
+                    auto& ancestor = m_stack_of_open_elements.elements().at(j - 1);
+
+                    if (is<HTMLTemplateElement>(ancestor))
+                        break;
+
+                    if (is<HTMLTableElement>(ancestor)) {
+                        m_insertion_mode = InsertionMode::InSelectInTable;
+                        return;
+                    }
+                }
+            }
+
+            m_insertion_mode = InsertionMode::InSelect;
+            return;
         }
 
         if (!last && node->local_name().is_one_of(HTML::TagNames::td, HTML::TagNames::th)) {

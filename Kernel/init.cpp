@@ -1,40 +1,20 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Types.h>
 #include <Kernel/ACPI/DynamicParser.h>
 #include <Kernel/ACPI/Initialize.h>
 #include <Kernel/ACPI/MultiProcessorParser.h>
-#include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/CMOS.h>
 #include <Kernel/CommandLine.h>
 #include <Kernel/DMI.h>
 #include <Kernel/Devices/BXVGADevice.h>
 #include <Kernel/Devices/FullDevice.h>
-#include <Kernel/Devices/I8042Controller.h>
+#include <Kernel/Devices/HID/HIDManagement.h>
 #include <Kernel/Devices/MBVGADevice.h>
 #include <Kernel/Devices/MemoryDevice.h>
 #include <Kernel/Devices/NullDevice.h>
@@ -72,6 +52,9 @@
 #include <Kernel/Tasks/SyncTask.h>
 #include <Kernel/Time/TimeManagement.h>
 #include <Kernel/VM/MemoryManager.h>
+#include <Kernel/VirtIO/VirtIO.h>
+#include <Kernel/WorkQueue.h>
+#include <Kernel/kstdio.h>
 
 // Defined in the linker script
 typedef void (*ctor_func_t)();
@@ -100,8 +83,8 @@ namespace Kernel {
 [[noreturn]] static void init_stage2(void*);
 static void setup_serial_debug();
 
-// boot.S expects these functions precisely this this. We declare them here
-// to ensure the signatures don't accidentally change.
+// boot.S expects these functions to exactly have the following signatures.
+// We declare them here to ensure their signatures don't accidentally change.
 extern "C" void init_finished(u32 cpu);
 extern "C" [[noreturn]] void init_ap(u32 cpu, Processor* processor_info);
 extern "C" [[noreturn]] void init();
@@ -161,10 +144,9 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
     ACPI::initialize();
 
     VFS::initialize();
-    I8042Controller::initialize();
     Console::initialize();
 
-    klog() << "Starting SerenityOS...";
+    dmesgln("Starting SerenityOS...");
 
     TimeManagement::initialize(0);
 
@@ -177,6 +159,8 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
     new SerialDevice(SERIAL_COM3_ADDR, 66);
     new SerialDevice(SERIAL_COM4_ADDR, 67);
 
+    VMWareBackdoor::the(); // don't wait until first mouse packet
+    HIDManagement::initialize();
     VirtualConsole::initialize();
     tty0 = new VirtualConsole(0);
     for (unsigned i = 1; i < s_max_virtual_consoles; i++) {
@@ -187,6 +171,8 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
     Thread::initialize();
     Process::initialize();
     Scheduler::initialize();
+
+    WorkQueue::initialize();
 
     {
         RefPtr<Thread> init_stage2_thread;
@@ -246,10 +232,9 @@ void init_stage2(void*)
     FinalizerTask::spawn();
 
     PCI::initialize();
-
-    bool text_mode = kernel_command_line().lookup("boot_mode").value_or("graphical") == "text";
-
-    if (text_mode) {
+    auto boot_profiling = kernel_command_line().is_boot_profiling_enabled();
+    auto is_text_mode = kernel_command_line().is_text_mode();
+    if (is_text_mode) {
         dbgln("Text mode enabled");
     } else {
         bool bxvga_found = false;
@@ -274,7 +259,10 @@ void init_stage2(void*)
     }
 
     USB::UHCIController::detect();
+
     DMIExpose::initialize();
+
+    VirtIO::detect();
 
     E1000NetworkAdapter::detect();
     NE2000NetworkAdapter::detect();
@@ -290,13 +278,8 @@ void init_stage2(void*)
     new RandomDevice;
     PTYMultiplexer::initialize();
     SB16::detect();
-    VMWareBackdoor::the(); // don't wait until first mouse packet
 
-    bool force_pio = kernel_command_line().contains("force_pio");
-
-    auto root = kernel_command_line().lookup("root").value_or("/dev/hda");
-
-    StorageManagement::initialize(root, force_pio);
+    StorageManagement::initialize(kernel_command_line().root_device(), kernel_command_line().is_force_pio());
     if (!VFS::the().mount_root(StorageManagement::the().root_filesystem())) {
         PANIC("VFS::mount_root failed");
     }
@@ -314,17 +297,21 @@ void init_stage2(void*)
     int error;
 
     // FIXME: It would be nicer to set the mode from userspace.
-    tty0->set_graphical(!text_mode);
+    tty0->set_graphical(!is_text_mode);
     RefPtr<Thread> thread;
-    auto userspace_init = kernel_command_line().lookup("init").value_or("/bin/SystemServer");
-    auto init_args = kernel_command_line().lookup("init_args").value_or("").split(',');
-    if (!init_args.is_empty())
-        init_args.prepend(userspace_init);
+    auto userspace_init = kernel_command_line().userspace_init();
+    auto init_args = kernel_command_line().userspace_init_args();
     Process::create_user_process(thread, userspace_init, (uid_t)0, (gid_t)0, ProcessID(0), error, move(init_args), {}, tty0);
     if (error != 0) {
         PANIC("init_stage2: Error spawning SystemServer: {}", error);
     }
     thread->set_priority(THREAD_PRIORITY_HIGH);
+
+    if (boot_profiling) {
+        dbgln("Starting full system boot profiling");
+        auto result = Process::current()->sys$profiling_enable(-1);
+        VERIFY(!result.is_error());
+    }
 
     NetworkTask::spawn();
 
@@ -334,7 +321,7 @@ void init_stage2(void*)
 
 UNMAP_AFTER_INIT void setup_serial_debug()
 {
-    // serial_debug will output all the klog() and dbgln() data to COM1 at
+    // serial_debug will output all the dbgln() data to COM1 at
     // 8-N-1 57600 baud. this is particularly useful for debugging the boot
     // process on live hardware.
     if (StringView(kernel_cmdline).contains("serial_debug")) {

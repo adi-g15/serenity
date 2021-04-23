@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -38,7 +18,6 @@
 
 #include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
-#include <AK/LogStream.h>
 #include <AK/Memory.h>
 #include <AK/StringView.h>
 #include <Kernel/VM/MemoryManager.h>
@@ -48,7 +27,7 @@ namespace Kernel {
 
 class KBufferImpl : public RefCounted<KBufferImpl> {
 public:
-    static RefPtr<KBufferImpl> try_create_with_size(size_t size, u8 access, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
+    static RefPtr<KBufferImpl> try_create_with_size(size_t size, Region::Access access, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
     {
         auto region = MM.allocate_kernel_region(page_round_up(size), name, access, strategy);
         if (!region)
@@ -56,7 +35,7 @@ public:
         return adopt(*new KBufferImpl(region.release_nonnull(), size, strategy));
     }
 
-    static RefPtr<KBufferImpl> try_create_with_bytes(ReadonlyBytes bytes, u8 access, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
+    static RefPtr<KBufferImpl> try_create_with_bytes(ReadonlyBytes bytes, Region::Access access, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
     {
         auto region = MM.allocate_kernel_region(page_round_up(bytes.size()), name, access, strategy);
         if (!region)
@@ -65,12 +44,12 @@ public:
         return adopt(*new KBufferImpl(region.release_nonnull(), bytes.size(), strategy));
     }
 
-    static RefPtr<KBufferImpl> create_with_size(size_t size, u8 access, const char* name, AllocationStrategy strategy = AllocationStrategy::Reserve)
+    static RefPtr<KBufferImpl> create_with_size(size_t size, Region::Access access, const char* name, AllocationStrategy strategy = AllocationStrategy::Reserve)
     {
         return try_create_with_size(size, access, name, strategy);
     }
 
-    static RefPtr<KBufferImpl> copy(const void* data, size_t size, u8 access, const char* name)
+    static RefPtr<KBufferImpl> copy(const void* data, size_t size, Region::Access access, const char* name)
     {
         auto buffer = create_with_size(size, access, name, AllocationStrategy::AllocateNow);
         if (!buffer)
@@ -124,7 +103,7 @@ public:
     {
     }
 
-    [[nodiscard]] static OwnPtr<KBuffer> try_create_with_size(size_t size, u8 access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
+    [[nodiscard]] static OwnPtr<KBuffer> try_create_with_size(size_t size, Region::Access access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
     {
         auto impl = KBufferImpl::try_create_with_size(size, access, name, strategy);
         if (!impl)
@@ -132,7 +111,7 @@ public:
         return adopt_own(*new KBuffer(impl.release_nonnull()));
     }
 
-    [[nodiscard]] static OwnPtr<KBuffer> try_create_with_bytes(ReadonlyBytes bytes, u8 access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
+    [[nodiscard]] static OwnPtr<KBuffer> try_create_with_bytes(ReadonlyBytes bytes, Region::Access access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
     {
         auto impl = KBufferImpl::try_create_with_bytes(bytes, access, name, strategy);
         if (!impl)
@@ -140,12 +119,12 @@ public:
         return adopt_own(*new KBuffer(impl.release_nonnull()));
     }
 
-    [[nodiscard]] static KBuffer create_with_size(size_t size, u8 access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
+    [[nodiscard]] static KBuffer create_with_size(size_t size, Region::Access access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer", AllocationStrategy strategy = AllocationStrategy::Reserve)
     {
         return KBuffer(KBufferImpl::create_with_size(size, access, name, strategy));
     }
 
-    [[nodiscard]] static KBuffer copy(const void* data, size_t size, u8 access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer")
+    [[nodiscard]] static KBuffer copy(const void* data, size_t size, Region::Access access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer")
     {
         return KBuffer(KBufferImpl::copy(data, size, access, name));
     }
@@ -162,10 +141,11 @@ public:
 
     void set_size(size_t size) { m_impl->set_size(size); }
 
+    [[nodiscard]] KBufferImpl& impl() { return *m_impl; }
     [[nodiscard]] const KBufferImpl& impl() const { return *m_impl; }
     [[nodiscard]] RefPtr<KBufferImpl> take_impl() { return move(m_impl); }
 
-    KBuffer(const ByteBuffer& buffer, u8 access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer")
+    KBuffer(const ByteBuffer& buffer, Region::Access access = Region::Access::Read | Region::Access::Write, const char* name = "KBuffer")
         : m_impl(KBufferImpl::copy(buffer.data(), buffer.size(), access, name))
     {
     }
@@ -173,10 +153,5 @@ public:
 private:
     RefPtr<KBufferImpl> m_impl;
 };
-
-inline const LogStream& operator<<(const LogStream& stream, const KBuffer& value)
-{
-    return stream << StringView(value.data(), value.size());
-}
 
 }

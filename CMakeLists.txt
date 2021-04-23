@@ -23,8 +23,10 @@ option(ENABLE_MEMORY_SANITIZER "Enable memory sanitizer testing in gcc/clang" OF
 option(ENABLE_UNDEFINED_SANITIZER "Enable undefined behavior sanitizer testing in gcc/clang" OFF)
 option(ENABLE_FUZZER_SANITIZER "Enable fuzzer sanitizer testing in clang" OFF)
 option(ENABLE_ALL_THE_DEBUG_MACROS "Enable all debug macros to validate they still compile" OFF)
-option(ENABLE_COMPILETIME_FORMAT_CHECK "Disable compiletime format string checks" ON)
+option(ENABLE_COMPILETIME_FORMAT_CHECK "Enable compiletime format string checks" ON)
+option(ENABLE_PCI_IDS_DOWNLOAD "Enable download of the pci.ids database at build time" ON)
 option(BUILD_LAGOM "Build parts of the system targeting the host OS for fuzzing/testing" OFF)
+option(PRECOMPILE_COMMON_HEADERS "Precompile some common headers to speedup compilation" OFF)
 
 add_custom_target(run
     COMMAND ${CMAKE_SOURCE_DIR}/Meta/run.sh
@@ -47,12 +49,12 @@ add_custom_target(image
     DEPENDS qemu-image
 )
 add_custom_target(qemu-image
-    COMMAND ${CMAKE_COMMAND} -E env "SERENITY_ROOT=${CMAKE_SOURCE_DIR}" "SERENITY_ARCH=${SERENITY_ARCH}" ${CMAKE_SOURCE_DIR}/Meta/build-image-qemu.sh
+    COMMAND ${CMAKE_COMMAND} -E env "SERENITY_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "SERENITY_ARCH=${SERENITY_ARCH}" ${CMAKE_SOURCE_DIR}/Meta/build-image-qemu.sh
     BYPRODUCTS ${CMAKE_BINARY_DIR}/_disk_image
     USES_TERMINAL
 )
 add_custom_target(grub-image
-    COMMAND ${CMAKE_COMMAND} -E env "SERENITY_ROOT=${CMAKE_SOURCE_DIR}" "SERENITY_ARCH=${SERENITY_ARCH}" ${CMAKE_SOURCE_DIR}/Meta/build-image-grub.sh
+    COMMAND ${CMAKE_COMMAND} -E env "SERENITY_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "SERENITY_ARCH=${SERENITY_ARCH}" ${CMAKE_SOURCE_DIR}/Meta/build-image-grub.sh
     BYPRODUCTS ${CMAKE_BINARY_DIR}/grub_disk_image
     USES_TERMINAL
 )
@@ -66,21 +68,18 @@ add_custom_target(check-style
     USES_TERMINAL
 )
 
+add_custom_target(install-ports
+    COMMAND ${CMAKE_COMMAND} -E env "SERENITY_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "SERENITY_ARCH=${SERENITY_ARCH}" ${CMAKE_SOURCE_DIR}/Meta/install-ports-tree.sh
+    USES_TERMINAL
+)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-
-if (${CMAKE_HOST_SYSTEM_NAME} MATCHES SerenityOS)
-    # FIXME: Something makes this go crazy and flag unused variables that aren't flagged as such when building with the toolchain.
-    #        Disable -Werror for now.
-    add_compile_options(-Wno-unknown-warning-option -Wall -Wextra -Wmissing-declarations -Wformat=2 -fdiagnostics-color=always)
-else()
-    add_compile_options(-Wno-unknown-warning-option -Wall -Wextra -Werror -Wmissing-declarations -Wformat=2 -fdiagnostics-color=always)
-endif()
-
+add_compile_options(-Wno-literal-suffix)
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-    add_compile_options(-fconcepts -Wno-literal-suffix)
+    add_compile_options(-fconcepts)
 elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
     add_compile_options(-Wno-overloaded-virtual -Wno-user-defined-literals)
 endif()
@@ -99,8 +98,6 @@ include_directories(${CMAKE_BINARY_DIR})
 add_subdirectory(Meta/Lagom)
 add_subdirectory(Userland/DevTools/IPCCompiler)
 add_subdirectory(Userland/Libraries/LibWeb/CodeGenerators)
-add_subdirectory(AK/Tests)
-add_subdirectory(Userland/Libraries/LibRegex/Tests)
 
 set(write_if_different ${CMAKE_SOURCE_DIR}/Meta/write-only-on-difference.sh)
 
@@ -147,15 +144,49 @@ endforeach()
 
 set(CMAKE_INSTALL_NAME_TOOL "")
 set(CMAKE_SHARED_LIBRARY_SUFFIX ".so")
-set(CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS "-shared -Wl,--hash-style=gnu,-z,relro,-z,now")
-set(CMAKE_CXX_LINK_FLAGS "-Wl,--hash-style=gnu,-z,relro,-z,now")
+set(CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS "-shared -Wl,--hash-style=gnu,-z,relro,-z,now,-z,noexecstack")
+set(CMAKE_CXX_LINK_FLAGS "-Wl,--hash-style=gnu,-z,relro,-z,now,-z,noexecstack")
 
 # We disable it completely because it makes cmake very spammy.
 # This will need to be revisited when the Loader supports RPATH/RUN_PATH.
 set(CMAKE_SKIP_RPATH TRUE)
 
-add_compile_options(-g1 -fno-exceptions -fstack-protector-strong -Wno-address-of-packed-member -Wundef -Wcast-qual -Wwrite-strings -Wimplicit-fallthrough -Wno-nonnull-compare -Wno-deprecated-copy -Wno-expansion-to-defined)
+add_compile_options(-Wformat=2)
+add_compile_options(-fdiagnostics-color=always)
+
+if (NOT ${CMAKE_HOST_SYSTEM_NAME} MATCHES SerenityOS)
+    # FIXME: Something makes this go crazy and flag unused variables that aren't flagged as such when building with the toolchain.
+    #        Disable -Werror for now.
+    add_compile_options(-Werror)
+endif()
+
+add_compile_options(-Wall)
+add_compile_options(-Wextra)
+
+# The following warnings are sorted by the "base" name (the part excluding the initial Wno or W).
+add_compile_options(-Wno-address-of-packed-member)
+add_compile_options(-Wcast-align)
+add_compile_options(-Wcast-qual)
+add_compile_options(-Wno-deprecated-copy)
+add_compile_options(-Wduplicated-cond)
+add_compile_options(-Wdouble-promotion)
+add_compile_options(-Wno-expansion-to-defined)
+add_compile_options(-Wformat=2)
+add_compile_options(-Wimplicit-fallthrough)
+add_compile_options(-Wlogical-op)
+add_compile_options(-Wmisleading-indentation)
+add_compile_options(-Wmissing-declarations)
+add_compile_options(-Wno-nonnull-compare)
+add_compile_options(-Wnon-virtual-dtor)
+add_compile_options(-Wno-unknown-warning-option)
+add_compile_options(-Wundef)
+add_compile_options(-Wunused)
+add_compile_options(-Wwrite-strings)
+
 add_compile_options(-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.)
+add_compile_options(-fno-exceptions)
+add_compile_options(-fstack-protector-strong)
+add_compile_options(-g1)
 
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     add_compile_options(-fstack-clash-protection)
@@ -185,9 +216,19 @@ add_subdirectory(AK)
 add_subdirectory(Kernel)
 add_subdirectory(Userland)
 
-set(PCI_IDS_URL https://pci-ids.ucw.cz/v2.2/pci.ids)
-set(PCI_IDS_PATH ${CMAKE_INSTALL_DATAROOTDIR}/pci.ids)
-if(NOT EXISTS ${PCI_IDS_PATH})
-    message(STATUS "Downloading PCI ID database from ${PCI_IDS_URL}...")
-    file(DOWNLOAD ${PCI_IDS_URL} ${PCI_IDS_PATH} INACTIVITY_TIMEOUT 10)
+set(PCI_IDS_GZ_URL https://pci-ids.ucw.cz/v2.2/pci.ids.gz)
+set(PCI_IDS_GZ_PATH ${CMAKE_BINARY_DIR}/pci.ids.gz)
+set(PCI_IDS_PATH ${CMAKE_BINARY_DIR}/pci.ids)
+set(PCI_IDS_INSTALL_PATH ${CMAKE_INSTALL_DATAROOTDIR}/pci.ids)
+
+if(ENABLE_PCI_IDS_DOWNLOAD AND NOT EXISTS ${PCI_IDS_GZ_PATH})
+    message(STATUS "Downloading PCI ID database from ${PCI_IDS_GZ_URL}...")
+    file(DOWNLOAD ${PCI_IDS_GZ_URL} ${PCI_IDS_GZ_PATH} INACTIVITY_TIMEOUT 10)
+endif()
+
+if(EXISTS ${PCI_IDS_GZ_PATH} AND NOT EXISTS ${PCI_IDS_INSTALL_PATH})
+    message(STATUS "Extracting PCI ID database from ${PCI_IDS_GZ_PATH}...")
+    execute_process(COMMAND gzip -k -d ${PCI_IDS_GZ_PATH})
+    file(MAKE_DIRECTORY ${CMAKE_INSTALL_DATAROOTDIR})
+    file(RENAME ${PCI_IDS_PATH} ${PCI_IDS_INSTALL_PATH})
 endif()

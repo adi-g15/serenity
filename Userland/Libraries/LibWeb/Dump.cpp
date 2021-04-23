@@ -1,34 +1,18 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2021, the SerenityOS developers.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/QuickSort.h>
 #include <AK/StringBuilder.h>
 #include <AK/Utf8View.h>
+#include <LibWeb/CSS/CSSImportRule.h>
+#include <LibWeb/CSS/CSSRule.h>
+#include <LibWeb/CSS/CSSStyleRule.h>
+#include <LibWeb/CSS/CSSStyleSheet.h>
 #include <LibWeb/CSS/PropertyID.h>
-#include <LibWeb/CSS/StyleSheet.h>
 #include <LibWeb/DOM/Comment.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
@@ -185,7 +169,7 @@ void dump_tree(StringBuilder& builder, const Layout::Node& layout_node, bool sho
 
         if (show_box_model) {
             // Dump the horizontal box properties
-            builder.appendf(" [%g+%g+%g %g %g+%g+%g]",
+            builder.appendff(" [{}+{}+{} {} {}+{}+{}]",
                 box.box_model().margin.left,
                 box.box_model().border.left,
                 box.box_model().padding.left,
@@ -195,7 +179,7 @@ void dump_tree(StringBuilder& builder, const Layout::Node& layout_node, bool sho
                 box.box_model().margin.right);
 
             // And the vertical box properties
-            builder.appendf(" [%g+%g+%g %g %g+%g+%g]",
+            builder.appendff(" [{}+{}+{} {} {}+{}+{}]",
                 box.box_model().margin.top,
                 box.box_model().border.top,
                 box.box_model().padding.top,
@@ -355,6 +339,12 @@ void dump_selector(StringBuilder& builder, const CSS::Selector& selector)
             case CSS::Selector::SimpleSelector::PseudoClass::Root:
                 pseudo_class_description = "Root";
                 break;
+            case CSS::Selector::SimpleSelector::PseudoClass::FirstOfType:
+                pseudo_class_description = "FirstOfType";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::LastOfType:
+                pseudo_class_description = "LastOfType";
+                break;
             case CSS::Selector::SimpleSelector::PseudoClass::Focus:
                 pseudo_class_description = "Focus";
                 break;
@@ -389,16 +379,35 @@ void dump_selector(StringBuilder& builder, const CSS::Selector& selector)
     }
 }
 
-void dump_rule(const CSS::StyleRule& rule)
+void dump_rule(const CSS::CSSRule& rule)
 {
     StringBuilder builder;
     dump_rule(builder, rule);
     dbgln("{}", builder.string_view());
 }
 
-void dump_rule(StringBuilder& builder, const CSS::StyleRule& rule)
+void dump_rule(StringBuilder& builder, const CSS::CSSRule& rule)
 {
-    builder.append("Rule:\n");
+    builder.appendff("{}:\n", rule.class_name());
+    switch (rule.type()) {
+    case CSS::CSSRule::Type::Style:
+        dump_style_rule(builder, downcast<const CSS::CSSStyleRule>(rule));
+        break;
+    case CSS::CSSRule::Type::Import:
+        dump_import_rule(builder, downcast<const CSS::CSSImportRule>(rule));
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+}
+
+void dump_import_rule(StringBuilder& builder, const CSS::CSSImportRule& rule)
+{
+    builder.appendff("  Document URL: {}\n", rule.url());
+}
+
+void dump_style_rule(StringBuilder& builder, const CSS::CSSStyleRule& rule)
+{
     for (auto& selector : rule.selectors()) {
         dump_selector(builder, selector);
     }
@@ -417,9 +426,11 @@ void dump_sheet(const CSS::StyleSheet& sheet)
 
 void dump_sheet(StringBuilder& builder, const CSS::StyleSheet& sheet)
 {
-    builder.appendff("StyleSheet{{{}}}: {} rule(s)", &sheet, sheet.rules().size());
+    VERIFY(is<CSS::CSSStyleSheet>(sheet));
 
-    for (auto& rule : sheet.rules()) {
+    builder.appendff("CSSStyleSheet{{{}}}: {} rule(s)\n", &sheet, static_cast<const CSS::CSSStyleSheet&>(sheet).rules().size());
+
+    for (auto& rule : static_cast<const CSS::CSSStyleSheet&>(sheet).rules()) {
         dump_rule(builder, rule);
     }
 }

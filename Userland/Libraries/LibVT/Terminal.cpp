@@ -1,34 +1,13 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
 #include <AK/StringBuilder.h>
 #include <AK/StringView.h>
 #include <LibVT/Terminal.h>
-#include <string.h>
 
 namespace VT {
 
@@ -535,11 +514,11 @@ void Terminal::DCH(const ParamVector& params)
     auto& line = m_lines[m_cursor_row];
 
     // Move n characters of line to the left
-    for (int i = m_cursor_column; i < line.length() - num; i++)
+    for (size_t i = m_cursor_column; i < line.length() - num; i++)
         line.set_code_point(i, line.code_point(i + num));
 
     // Fill remainder of line with blanks
-    for (int i = line.length() - num; i < line.length(); i++)
+    for (size_t i = line.length() - num; i < line.length(); i++)
         line.set_code_point(i, ' ');
 
     line.set_dirty(true);
@@ -579,7 +558,7 @@ void Terminal::execute_xterm_command()
         } else {
             m_current_attribute.href = params[2];
             // FIXME: Respect the provided ID
-            m_current_attribute.href_id = String::format("%u", m_next_href_id++);
+            m_current_attribute.href_id = String::number(m_next_href_id++);
         }
         break;
     case 9:
@@ -759,8 +738,8 @@ void Terminal::put_character_at(unsigned row, unsigned column, u32 code_point)
     VERIFY(column < columns());
     auto& line = m_lines[row];
     line.set_code_point(column, code_point);
-    line.attributes()[column] = m_current_attribute;
-    line.attributes()[column].flags |= Attribute::Touched;
+    line.attribute_at(column) = m_current_attribute;
+    line.attribute_at(column).flags |= Attribute::Touched;
     line.set_dirty(true);
 
     m_last_code_point = code_point;
@@ -788,7 +767,7 @@ void Terminal::DSR(const ParamVector& params)
         emit_string("\033[0n"); // Terminal status OK!
     } else if (params.size() == 1 && params[0] == 6) {
         // Cursor position query
-        emit_string(String::format("\033[%d;%dR", m_cursor_row + 1, m_cursor_column + 1));
+        emit_string(String::formatted("\e[{};{}R", m_cursor_row + 1, m_cursor_column + 1));
     } else {
         dbgln("Unknown DSR");
     }
@@ -1025,15 +1004,15 @@ void Terminal::handle_key_press(KeyCode key, u32 code_point, u8 flags)
 
     auto emit_final_with_modifier = [this, modifier_mask](char final) {
         if (modifier_mask)
-            emit_string(String::format("\e[1;%d%c", modifier_mask + 1, final));
+            emit_string(String::formatted("\e[1;{}{:c}", modifier_mask + 1, final));
         else
-            emit_string(String::format("\e[%c", final));
+            emit_string(String::formatted("\e[{:c}", final));
     };
     auto emit_tilde_with_modifier = [this, modifier_mask](unsigned num) {
         if (modifier_mask)
-            emit_string(String::format("\e[%d;%d~", num, modifier_mask + 1));
+            emit_string(String::formatted("\e[{};{}~", num, modifier_mask + 1));
         else
-            emit_string(String::format("\e[%d~", num));
+            emit_string(String::formatted("\e[{}~", num));
     };
 
     switch (key) {
@@ -1191,9 +1170,9 @@ Attribute Terminal::attribute_at(const Position& position) const
     if (position.row() >= static_cast<int>(line_count()))
         return {};
     auto& line = this->line(position.row());
-    if (position.column() >= line.length())
+    if (static_cast<size_t>(position.column()) >= line.length())
         return {};
-    return line.attributes()[position.column()];
+    return line.attribute_at(position.column());
 }
 
 }

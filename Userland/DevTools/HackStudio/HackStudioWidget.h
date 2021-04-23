@@ -2,32 +2,13 @@
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
  * Copyright (c) 2020, the SerenityOS developers
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include "ClassViewWidget.h"
 #include "Debugger/DebugInfoWidget.h"
 #include "Debugger/DisassemblyWidget.h"
 #include "EditorWrapper.h"
@@ -40,7 +21,7 @@
 #include "ProjectFile.h"
 #include "TerminalWrapper.h"
 #include <LibGUI/ActionGroup.h>
-#include <LibGUI/ScrollBar.h>
+#include <LibGUI/Scrollbar.h>
 #include <LibGUI/Splitter.h>
 #include <LibGUI/Widget.h>
 #include <LibThread/Thread.h>
@@ -52,9 +33,7 @@ class HackStudioWidget : public GUI::Widget {
 
 public:
     virtual ~HackStudioWidget() override;
-    void open_file(const String& filename);
-
-    Vector<String> selected_file_names() const;
+    bool open_file(const String& filename);
 
     void update_actions();
     Project& project();
@@ -63,10 +42,17 @@ public:
     void set_current_editor_wrapper(RefPtr<EditorWrapper>);
 
     String currently_open_file() const { return m_currently_open_file; }
-    void initialize_menubar(GUI::MenuBar&);
+    void initialize_menubar(GUI::Menubar&);
+
+    Locator& locator()
+    {
+        VERIFY(m_locator);
+        return *m_locator;
+    }
 
 private:
     static String get_full_path_of_serenity_source(const String& file);
+    Vector<String> selected_file_paths() const;
 
     HackStudioWidget(const String& path_to_project);
     void open_project(const String& root_path);
@@ -100,24 +86,25 @@ private:
     NonnullRefPtr<GUI::Action> create_set_autocomplete_mode_action();
 
     void add_new_editor(GUI::Widget& parent);
-    NonnullRefPtr<EditorWrapper> get_editor_of_file(const String& file_name);
+    RefPtr<EditorWrapper> get_editor_of_file(const String& file_name);
     String get_project_executable_path() const;
 
     void on_action_tab_change();
     void reveal_action_tab(GUI::Widget&);
     void initialize_debugger();
 
-    void create_project_tree_view(GUI::Widget& parent);
     void create_open_files_view(GUI::Widget& parent);
     void create_form_editor(GUI::Widget& parent);
     void create_toolbar(GUI::Widget& parent);
     void create_action_tab(GUI::Widget& parent);
-    void create_app_menubar(GUI::MenuBar&);
-    void create_project_menubar(GUI::MenuBar&);
-    void create_edit_menubar(GUI::MenuBar&);
-    void create_build_menubar(GUI::MenuBar&);
-    void create_view_menubar(GUI::MenuBar&);
-    void create_help_menubar(GUI::MenuBar&);
+    void create_app_menubar(GUI::Menubar&);
+    void create_project_menubar(GUI::Menubar&);
+    void create_edit_menubar(GUI::Menubar&);
+    void create_build_menubar(GUI::Menubar&);
+    void create_view_menubar(GUI::Menubar&);
+    void create_help_menubar(GUI::Menubar&);
+    void create_project_tab(GUI::Widget& parent);
+    void configure_project_tree_view();
 
     void run(TerminalWrapper& wrapper);
     void build(TerminalWrapper& wrapper);
@@ -145,8 +132,10 @@ private:
     RefPtr<GUI::TreeView> m_form_widget_tree_view;
     RefPtr<DiffViewer> m_diff_viewer;
     RefPtr<GitWidget> m_git_widget;
+    RefPtr<ClassViewWidget> m_class_view;
     RefPtr<GUI::Menu> m_project_tree_view_context_menu;
     RefPtr<GUI::TabWidget> m_action_tab_widget;
+    RefPtr<GUI::TabWidget> m_project_tab;
     RefPtr<TerminalWrapper> m_terminal_wrapper;
     RefPtr<Locator> m_locator;
     RefPtr<FindInFilesWidget> m_find_in_files_widget;

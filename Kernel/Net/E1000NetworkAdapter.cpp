@@ -1,38 +1,15 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/MACAddress.h>
 #include <Kernel/Debug.h>
-#include <Kernel/IO.h>
 #include <Kernel/Net/E1000NetworkAdapter.h>
-#include <Kernel/Thread.h>
 
 namespace Kernel {
 
-// clang-format off
 #define REG_CTRL 0x0000
 #define REG_STATUS 0x0008
 #define REG_EEPROM 0x0014
@@ -139,7 +116,6 @@ namespace Kernel {
 #define INTERRUPT_PHYINT (1 << 12)
 #define INTERRUPT_TXD_LOW (1 << 15)
 #define INTERRUPT_SRPD (1 << 16)
-// clang-format on
 
 // https://www.intel.com/content/dam/doc/manual/pci-pci-x-family-gbe-controllers-software-dev-manual.pdf Section 5.2
 static bool is_valid_device_id(u16 device_id)
@@ -201,7 +177,7 @@ UNMAP_AFTER_INIT E1000NetworkAdapter::E1000NetworkAdapter(PCI::Address address, 
 {
     set_interface_name("e1k");
 
-    klog() << "E1000: Found @ " << pci_address();
+    dmesgln("E1000: Found @ {}", pci_address());
 
     enable_bus_mastering(pci_address());
 
@@ -210,15 +186,15 @@ UNMAP_AFTER_INIT E1000NetworkAdapter::E1000NetworkAdapter(PCI::Address address, 
     m_mmio_base = m_mmio_region->vaddr();
     m_use_mmio = true;
     m_interrupt_line = PCI::get_interrupt_line(pci_address());
-    klog() << "E1000: port base: " << m_io_base;
-    klog() << "E1000: MMIO base: " << PhysicalAddress(PCI::get_BAR0(pci_address()) & 0xfffffffc);
-    klog() << "E1000: MMIO base size: " << mmio_base_size << " bytes";
-    klog() << "E1000: Interrupt line: " << m_interrupt_line;
+    dmesgln("E1000: port base: {}", m_io_base);
+    dmesgln("E1000: MMIO base: {}", PhysicalAddress(PCI::get_BAR0(pci_address()) & 0xfffffffc));
+    dmesgln("E1000: MMIO base size: {} bytes", mmio_base_size);
+    dmesgln("E1000: Interrupt line: {}", m_interrupt_line);
     detect_eeprom();
-    klog() << "E1000: Has EEPROM? " << m_has_eeprom;
+    dmesgln("E1000: Has EEPROM? {}", m_has_eeprom);
     read_mac_address();
     const auto& mac = mac_address();
-    klog() << "E1000: MAC address: " << mac.to_string();
+    dmesgln("E1000: MAC address: {}", mac.to_string());
 
     u32 flags = in32(REG_CTRL);
     out32(REG_CTRL, flags | ECTRL_SLU);
@@ -421,9 +397,7 @@ void E1000NetworkAdapter::send_raw(ReadonlyBytes payload)
 {
     disable_irq();
     size_t tx_current = in32(REG_TXDESCTAIL) % number_of_tx_descriptors;
-#if E1000_DEBUG
-    klog() << "E1000: Sending packet (" << payload.size() << " bytes)";
-#endif
+    dbgln_if(E1000_DEBUG, "E1000: Sending packet ({} bytes)", payload.size());
     auto* tx_descriptors = (e1000_tx_desc*)m_tx_descriptors_region->vaddr().as_ptr();
     auto& descriptor = tx_descriptors[tx_current];
     VERIFY(payload.size() <= 8192);
@@ -432,9 +406,7 @@ void E1000NetworkAdapter::send_raw(ReadonlyBytes payload)
     descriptor.length = payload.size();
     descriptor.status = 0;
     descriptor.cmd = CMD_EOP | CMD_IFCS | CMD_RS;
-#if E1000_DEBUG
-    klog() << "E1000: Using tx descriptor " << tx_current << " (head is at " << in32(REG_TXDESCHEAD) << ")";
-#endif
+    dbgln_if(E1000_DEBUG, "E1000: Using tx descriptor {} (head is at {})", tx_current, in32(REG_TXDESCHEAD));
     tx_current = (tx_current + 1) % number_of_tx_descriptors;
     cli();
     enable_irq();
@@ -446,9 +418,7 @@ void E1000NetworkAdapter::send_raw(ReadonlyBytes payload)
         }
         m_wait_queue.wait_forever("E1000NetworkAdapter");
     }
-#if E1000_DEBUG
-    dbgln("E1000: Sent packet, status is now {:#02x}!", (u8)descriptor.status);
-#endif
+    dbgln_if(E1000_DEBUG, "E1000: Sent packet, status is now {:#02x}!", (u8)descriptor.status);
 }
 
 void E1000NetworkAdapter::receive()
@@ -465,9 +435,7 @@ void E1000NetworkAdapter::receive()
         auto* buffer = m_rx_buffers_regions[rx_current].vaddr().as_ptr();
         u16 length = rx_descriptors[rx_current].length;
         VERIFY(length <= 8192);
-#if E1000_DEBUG
-        klog() << "E1000: Received 1 packet @ " << buffer << " (" << length << ") bytes!";
-#endif
+        dbgln_if(E1000_DEBUG, "E1000: Received 1 packet @ {:p} ({} bytes)", buffer, length);
         did_receive({ buffer, length });
         rx_descriptors[rx_current].status = 0;
         out32(REG_RXDESCTAIL, rx_current);

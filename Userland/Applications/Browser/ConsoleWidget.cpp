@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Hunter Salyer <thefalsehonesty@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "ConsoleWidget.h"
@@ -84,6 +64,13 @@ ConsoleWidget::ConsoleWidget()
 
         print_source_line(js_source);
 
+        if (on_js_input)
+            on_js_input(js_source);
+
+        // no interpreter being set means we are running in multi-process mode
+        if (!m_interpreter)
+            return;
+
         auto parser = JS::Parser(JS::Lexer(js_source));
         auto program = parser.parse_program();
 
@@ -99,16 +86,15 @@ ConsoleWidget::ConsoleWidget()
         }
 
         if (m_interpreter->exception()) {
-            output_html.append("Uncaught exception: ");
-            auto error = m_interpreter->exception()->value();
-            if (error.is_object() && is<Web::Bindings::DOMExceptionWrapper>(error.as_object())) {
-                auto& dom_exception_wrapper = static_cast<Web::Bindings::DOMExceptionWrapper&>(error.as_object());
-                error = JS::Error::create(m_interpreter->global_object(), dom_exception_wrapper.impl().name(), dom_exception_wrapper.impl().message());
-            }
-            output_html.append(JS::MarkupGenerator::html_from_value(error));
-            print_html(output_html.string_view());
-
+            auto* exception = m_interpreter->exception();
             m_interpreter->vm().clear_exception();
+            output_html.append("Uncaught exception: ");
+            auto error = exception->value();
+            if (error.is_object())
+                output_html.append(JS::MarkupGenerator::html_from_error(error.as_object()));
+            else
+                output_html.append(JS::MarkupGenerator::html_from_value(error));
+            print_html(output_html.string_view());
             return;
         }
 
@@ -128,6 +114,15 @@ ConsoleWidget::ConsoleWidget()
 
 ConsoleWidget::~ConsoleWidget()
 {
+}
+
+void ConsoleWidget::handle_js_console_output(const String& method, const String& line)
+{
+    if (method == "html") {
+        print_html(line);
+    } else if (method == "clear") {
+        clear_output();
+    }
 }
 
 void ConsoleWidget::set_interpreter(WeakPtr<JS::Interpreter> interpreter)

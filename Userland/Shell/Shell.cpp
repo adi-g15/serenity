@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, The SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Shell.h"
@@ -31,6 +11,7 @@
 #include <AK/Function.h>
 #include <AK/LexicalPath.h>
 #include <AK/ScopeGuard.h>
+#include <AK/ScopedValueRollback.h>
 #include <AK/StringBuilder.h>
 #include <AK/TemporaryChange.h>
 #include <LibCore/ArgsParser.h>
@@ -59,19 +40,11 @@ extern char** environ;
 
 namespace Shell {
 
-// FIXME: This should eventually be removed once we've established that
-//        waitpid() is not passed the same job twice.
-#ifdef __serenity__
-#    define ENSURE_WAITID_ONCE
-#endif
-
 void Shell::setup_signals()
 {
     if (m_should_reinstall_signal_handlers) {
         Core::EventLoop::register_signal(SIGCHLD, [this](int) {
-#if SH_DEBUG
-            dbgln("SIGCHLD!");
-#endif
+            dbgln_if(SH_DEBUG, "SIGCHLD!");
             notify_child_event();
         });
 
@@ -178,9 +151,9 @@ String Shell::expand_tilde(const String& expression)
         if (!home) {
             auto passwd = getpwuid(getuid());
             VERIFY(passwd && passwd->pw_dir);
-            return String::format("%s/%s", passwd->pw_dir, path.to_string().characters());
+            return String::formatted("{}/{}", passwd->pw_dir, path.to_string());
         }
-        return String::format("%s/%s", home, path.to_string().characters());
+        return String::formatted("{}/{}", home, path.to_string());
     }
 
     auto passwd = getpwnam(login_name.to_string().characters());
@@ -188,7 +161,7 @@ String Shell::expand_tilde(const String& expression)
         return expression;
     VERIFY(passwd->pw_dir);
 
-    return String::format("%s/%s", passwd->pw_dir, path.to_string().characters());
+    return String::formatted("{}/{}", passwd->pw_dir, path.to_string());
 }
 
 bool Shell::is_glob(const StringView& s)
@@ -354,7 +327,7 @@ Vector<AST::Command> Shell::expand_aliases(Vector<AST::Command> initial_commands
 String Shell::resolve_path(String path) const
 {
     if (!path.starts_with('/'))
-        path = String::format("%s/%s", cwd.characters(), path.characters());
+        path = String::formatted("{}/{}", cwd, path);
 
     return Core::File::real_path_for(path);
 }
@@ -507,9 +480,7 @@ String Shell::format(const StringView& source, ssize_t& cursor) const
 Shell::Frame Shell::push_frame(String name)
 {
     m_local_frames.append(make<LocalFrame>(name, decltype(LocalFrame::local_variables) {}));
-#if SH_DEBUG
-    dbgln("New frame '{}' at {:p}", name, &m_local_frames.last());
-#endif
+    dbgln_if(SH_DEBUG, "New frame '{}' at {:p}", name, &m_local_frames.last());
     return { m_local_frames, m_local_frames.last() };
 }
 
@@ -568,15 +539,15 @@ int Shell::run_command(const StringView& cmd, Optional<SourcePosition> source_po
     if (cmd.is_empty())
         return 0;
 
-    auto command = Parser(cmd).parse();
+    auto command = Parser(cmd, m_is_interactive).parse();
 
     if (!command)
         return 0;
 
-#if SH_DEBUG
-    dbgln("Command follows");
-    command->dump(0);
-#endif
+    if constexpr (SH_DEBUG) {
+        dbgln("Command follows");
+        command->dump(0);
+    }
 
     if (command->is_syntax_error()) {
         auto& error_node = command->syntax_error_node();
@@ -670,9 +641,7 @@ RefPtr<Job> Shell::run_command(const AST::Command& command)
     auto apply_rewirings = [&] {
         for (auto& rewiring : rewirings) {
 
-#if SH_DEBUG
-            dbgln("in {}<{}>, dup2({}, {})", command.argv.is_empty() ? "(<Empty>)" : command.argv[0].characters(), getpid(), rewiring.old_fd, rewiring.new_fd);
-#endif
+            dbgln_if(SH_DEBUG, "in {}<{}>, dup2({}, {})", command.argv.is_empty() ? "(<Empty>)" : command.argv[0].characters(), getpid(), rewiring.old_fd, rewiring.new_fd);
             int rc = dup2(rewiring.old_fd, rewiring.new_fd);
             if (rc < 0) {
                 perror("dup2(run)");
@@ -785,9 +754,7 @@ RefPtr<Job> Shell::run_command(const AST::Command& command)
             }
         }
 
-#if SH_DEBUG
-        dbgln("Synced up with parent, we're good to exec()");
-#endif
+        dbgln_if(SH_DEBUG, "Synced up with parent, we're good to exec()");
 
         close(sync_pipe[0]);
 
@@ -835,10 +802,12 @@ RefPtr<Job> Shell::run_command(const AST::Command& command)
             perror("setpgid");
 
         if (!m_is_subshell) {
-            if (tcsetpgrp(STDOUT_FILENO, pgid) != 0 && m_is_interactive)
-                perror("tcsetpgrp(OUT)");
-            if (tcsetpgrp(STDIN_FILENO, pgid) != 0 && m_is_interactive)
-                perror("tcsetpgrp(IN)");
+            // There's no reason to care about the errors here
+            // either we're in a tty, we're interactive, and this works
+            // or we're not, and it fails - in which case, we don't need
+            // stdin/stdout handoff to child processes anyway.
+            tcsetpgrp(STDOUT_FILENO, pgid);
+            tcsetpgrp(STDIN_FILENO, pgid);
         }
     }
 
@@ -867,7 +836,6 @@ RefPtr<Job> Shell::run_command(const AST::Command& command)
         if (!job->exited())
             return;
 
-        restore_ios();
         if (job->is_running_in_background() && job->should_announce_exit())
             warnln("Shell: Job {} ({}) exited\n", job->job_id(), job->cmd().characters());
         else if (job->signaled() && job->should_announce_signal())
@@ -983,25 +951,25 @@ NonnullRefPtrVector<Job> Shell::run_commands(Vector<AST::Command>& commands)
     NonnullRefPtrVector<Job> spawned_jobs;
 
     for (auto& command : commands) {
-#if SH_DEBUG
-        dbgln("Command");
-        for (auto& arg : command.argv)
-            dbgln("argv: {}", arg);
-        for (auto& redir : command.redirections) {
-            if (redir.is_path_redirection()) {
-                auto path_redir = (const AST::PathRedirection*)&redir;
-                dbgln("redir path '{}' <-({})-> {}", path_redir->path, (int)path_redir->direction, path_redir->fd);
-            } else if (redir.is_fd_redirection()) {
-                auto* fdredir = (const AST::FdRedirection*)&redir;
-                dbgln("redir fd {} -> {}", fdredir->old_fd, fdredir->new_fd);
-            } else if (redir.is_close_redirection()) {
-                auto close_redir = (const AST::CloseRedirection*)&redir;
-                dbgln("close fd {}", close_redir->fd);
-            } else {
-                VERIFY_NOT_REACHED();
+        if constexpr (SH_DEBUG) {
+            dbgln("Command");
+            for (auto& arg : command.argv)
+                dbgln("argv: {}", arg);
+            for (auto& redir : command.redirections) {
+                if (redir.is_path_redirection()) {
+                    auto path_redir = (const AST::PathRedirection*)&redir;
+                    dbgln("redir path '{}' <-({})-> {}", path_redir->path, (int)path_redir->direction, path_redir->fd);
+                } else if (redir.is_fd_redirection()) {
+                    auto* fdredir = (const AST::FdRedirection*)&redir;
+                    dbgln("redir fd {} -> {}", fdredir->old_fd, fdredir->new_fd);
+                } else if (redir.is_close_redirection()) {
+                    auto close_redir = (const AST::CloseRedirection*)&redir;
+                    dbgln("close fd {}", close_redir->fd);
+                } else {
+                    VERIFY_NOT_REACHED();
+                }
             }
         }
-#endif
         auto job = run_command(command);
         if (!job)
             continue;
@@ -1071,7 +1039,7 @@ void Shell::block_on_job(RefPtr<Job> job)
     if (!job)
         return;
 
-    if (job->is_suspended())
+    if (job->is_suspended() && !job->shell_did_continue())
         return; // We cannot wait for a suspended job.
 
     ScopeGuard io_restorer { [&]() {
@@ -1228,12 +1196,23 @@ String Shell::unescape_token(const String& token)
 
 void Shell::cache_path()
 {
+    if (!m_is_interactive)
+        return;
+
     if (!cached_path.is_empty())
         cached_path.clear_with_capacity();
 
     // Add shell builtins to the cache.
     for (const auto& builtin_name : builtin_names)
         cached_path.append(escape_token(builtin_name));
+
+    // Add functions to the cache.
+    for (auto& function : m_functions) {
+        auto name = escape_token(function.key);
+        if (cached_path.contains_slow(name))
+            continue;
+        cached_path.append(name);
+    }
 
     // Add aliases to the cache.
     for (const auto& alias : m_aliases) {
@@ -1250,7 +1229,7 @@ void Shell::cache_path()
             Core::DirIterator programs(directory.characters(), Core::DirIterator::SkipDots);
             while (programs.has_next()) {
                 auto program = programs.next_path();
-                String program_path = String::format("%s/%s", directory.characters(), program.characters());
+                auto program_path = String::formatted("{}/{}", directory, program);
                 auto escaped_name = escape_token(program);
                 if (cached_path.contains_slow(escaped_name))
                     continue;
@@ -1284,7 +1263,7 @@ void Shell::add_entry_to_cache(const String& entry)
 void Shell::highlight(Line::Editor& editor) const
 {
     auto line = editor.line();
-    Parser parser(line);
+    Parser parser(line, m_is_interactive);
     auto ast = parser.parse();
     if (!ast)
         return;
@@ -1295,7 +1274,7 @@ Vector<Line::CompletionSuggestion> Shell::complete()
 {
     auto line = m_editor->line(m_editor->cursor());
 
-    Parser parser(line);
+    Parser parser(line, m_is_interactive);
 
     auto ast = parser.parse();
 
@@ -1305,7 +1284,8 @@ Vector<Line::CompletionSuggestion> Shell::complete()
     return ast->complete_for_editor(*this, line.length());
 }
 
-Vector<Line::CompletionSuggestion> Shell::complete_path(const String& base, const String& part, size_t offset)
+Vector<Line::CompletionSuggestion> Shell::complete_path(const String& base,
+    const String& part, size_t offset, ExecutableOnly executable_only)
 {
     auto token = offset ? part.substring_view(0, offset) : "";
     String path;
@@ -1357,9 +1337,9 @@ Vector<Line::CompletionSuggestion> Shell::complete_path(const String& base, cons
         auto file = files.next_path();
         if (file.starts_with(token)) {
             struct stat program_status;
-            String file_path = String::format("%s/%s", path.characters(), file.characters());
+            auto file_path = String::formatted("{}/{}", path, file);
             int stat_error = stat(file_path.characters(), &program_status);
-            if (!stat_error) {
+            if (!stat_error && (executable_only == ExecutableOnly::No || access(file_path.characters(), X_OK) == 0)) {
                 if (S_ISDIR(program_status.st_mode)) {
                     suggestions.append({ escape_token(file), "/" });
                 } else {
@@ -1382,7 +1362,7 @@ Vector<Line::CompletionSuggestion> Shell::complete_program_name(const String& na
         [](auto& name, auto& program) { return strncmp(name.characters(), program.characters(), name.length()); });
 
     if (!match)
-        return complete_path("", name, offset);
+        return complete_path("", name, offset, ExecutableOnly::Yes);
 
     String completion = *match;
     auto token_length = escape_token(name).length();
@@ -1513,6 +1493,26 @@ Vector<Line::CompletionSuggestion> Shell::complete_option(const String& program_
     return suggestions;
 }
 
+Vector<Line::CompletionSuggestion> Shell::complete_immediate_function_name(const String& name, size_t offset)
+{
+    Vector<Line::CompletionSuggestion> suggestions;
+
+#define __ENUMERATE_SHELL_IMMEDIATE_FUNCTION(fn_name)                            \
+    if (auto name_view = StringView { #fn_name }; name_view.starts_with(name)) { \
+        suggestions.append({ name_view, " " });                                  \
+        suggestions.last().input_offset = offset;                                \
+    }
+
+    ENUMERATE_SHELL_IMMEDIATE_FUNCTIONS();
+
+#undef __ENUMERATE_SHELL_IMMEDIATE_FUNCTION
+
+    if (m_editor)
+        m_editor->suggest(offset);
+
+    return suggestions;
+}
+
 void Shell::bring_cursor_to_beginning_of_a_line() const
 {
     struct winsize ws;
@@ -1557,7 +1557,11 @@ bool Shell::has_history_event(StringView source)
         bool has_history_event { false };
     } visitor;
 
-    Parser { source }.parse()->visit(visitor);
+    auto ast = Parser { source, true }.parse();
+    if (!ast)
+        return false;
+
+    ast->visit(visitor);
     return visitor.has_history_event;
 }
 
@@ -1602,9 +1606,6 @@ void Shell::custom_event(Core::CustomEvent& event)
 
 void Shell::notify_child_event()
 {
-#ifdef ENSURE_WAITID_ONCE
-    static HashTable<pid_t> s_waited_for_pids;
-#endif
     Vector<u64> disowned_jobs;
     // Workaround the fact that we can't receive *who* exactly changed state.
     // The child might still be alive (and even running) when this signal is dispatched to us
@@ -1620,20 +1621,11 @@ void Shell::notify_child_event()
         for (auto& it : jobs) {
             auto job_id = it.key;
             auto& job = *it.value;
-#ifdef ENSURE_WAITID_ONCE
-            // Theoretically, this should never trip, as jobs are removed from
-            // the job table when waitpid() succeeds *and* the child is dead.
-            VERIFY(!s_waited_for_pids.contains(job.pid()));
-#endif
 
             int wstatus = 0;
-#if SH_DEBUG
-            dbgln("waitpid({}) = ...", job.pid());
-#endif
+            dbgln_if(SH_DEBUG, "waitpid({} = {}) = ...", job.pid(), job.cmd());
             auto child_pid = waitpid(job.pid(), &wstatus, WNOHANG | WUNTRACED);
-#if SH_DEBUG
-            dbgln("... = {} - {}", child_pid, wstatus);
-#endif
+            dbgln_if(SH_DEBUG, "... = {} - exited: {}, suspended: {}", child_pid, WIFEXITED(wstatus), WIFSTOPPED(wstatus));
 
             if (child_pid < 0) {
                 if (errno == ECHILD) {
@@ -1646,6 +1638,12 @@ void Shell::notify_child_event()
             }
             if (child_pid == 0) {
                 // If the child existed, but wasn't dead.
+                if (job.is_suspended() && job.shell_did_continue()) {
+                    // The job was suspended, and we sent it a SIGCONT.
+                    job.set_is_suspended(false);
+                    job.set_shell_did_continue(false);
+                    found_child = true;
+                }
                 continue;
             }
             if (child_pid == job.pid()) {
@@ -1658,18 +1656,6 @@ void Shell::notify_child_event()
                     job.set_is_suspended(true);
                 }
                 found_child = true;
-#ifdef ENSURE_WAITID_ONCE
-                // NOTE: This check is here to find bugs about our assumptions about waitpid(),
-                //       it does not hold in general, and it definitely does not hold in the long run.
-                // Reasons that we would call waitpid() more than once:
-                // - PID reuse/wraparound: This will simply fail the assertion, ignored here.
-                // - Non-terminating unblocks:
-                //   - Suspension: (e.g. via ^Z)
-                //   - ?
-                // - ?
-                if (job.exited())
-                    s_waited_for_pids.set(child_pid);
-#endif
             }
             if (job.should_be_disowned())
                 disowned_jobs.append(job_id);
@@ -1717,7 +1703,7 @@ Shell::Shell()
     cache_path();
 }
 
-Shell::Shell(Line::Editor& editor)
+Shell::Shell(Line::Editor& editor, bool attempt_interactive)
     : m_editor(editor)
 {
     uid = getuid();
@@ -1731,7 +1717,7 @@ Shell::Shell(Line::Editor& editor)
         perror("gethostname");
 
     auto istty = isatty(STDIN_FILENO);
-    m_is_interactive = istty;
+    m_is_interactive = attempt_interactive && istty;
 
     if (istty) {
         rc = ttyname_r(0, ttyname, Shell::TTYNameSize);
@@ -1759,8 +1745,10 @@ Shell::Shell(Line::Editor& editor)
     }
 
     directory_stack.append(cwd);
-    m_editor->load_history(get_history_path());
-    cache_path();
+    if (m_is_interactive) {
+        m_editor->load_history(get_history_path());
+        cache_path();
+    }
 
     m_editor->register_key_input_callback('\n', [](Line::Editor& editor) {
         auto ast = Parser(editor.line()).parse();
@@ -1777,6 +1765,9 @@ Shell::~Shell()
         return;
 
     stop_all_jobs();
+    if (!m_is_interactive)
+        return;
+
     m_editor->save_history(get_history_path());
 }
 
@@ -1787,9 +1778,7 @@ void Shell::stop_all_jobs()
             printf("Killing active jobs\n");
         for (auto& entry : jobs) {
             if (entry.value->is_suspended()) {
-#if SH_DEBUG
-                dbgln("Job {} is suspended", entry.value->pid());
-#endif
+                dbgln_if(SH_DEBUG, "Job {} is suspended", entry.value->pid());
                 kill_job(entry.value, SIGCONT);
             }
 
@@ -1799,9 +1788,7 @@ void Shell::stop_all_jobs()
         usleep(10000); // Wait for a bit before killing the job
 
         for (auto& entry : jobs) {
-#if SH_DEBUG
-            dbgln("Actively killing {} ({})", entry.value->pid(), entry.value->cmd());
-#endif
+            dbgln_if(SH_DEBUG, "Actively killing {} ({})", entry.value->pid(), entry.value->cmd());
             kill_job(entry.value, SIGKILL);
         }
 
@@ -1871,6 +1858,7 @@ void Shell::possibly_print_error() const
     case ShellError::EvaluatedSyntaxError:
         warnln("Shell Syntax Error: {}", m_error_description);
         break;
+    case ShellError::InvalidSliceContentsError:
     case ShellError::InvalidGlobError:
     case ShellError::NonExhaustiveMatchRules:
         warnln("Shell: {}", m_error_description);

@@ -1,32 +1,13 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Parser.h"
 #include "Shell.h"
 #include <AK/AllOf.h>
+#include <AK/ScopedValueRollback.h>
 #include <AK/TemporaryChange.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -88,8 +69,8 @@ bool Parser::expect(const StringView& expected)
     if (expected.length() + m_offset > m_input.length())
         return false;
 
-    for (size_t i = 0; i < expected.length(); ++i) {
-        if (peek() != expected[i]) {
+    for (auto& c : expected) {
+        if (peek() != c) {
             restore_to(offset_at_start, line_at_start);
             return false;
         }
@@ -353,7 +334,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
     if (!expect('('))
         return restore();
 
-    Vector<AST::FunctionDeclaration::NameWithPosition> arguments;
+    Vector<AST::NameWithPosition> arguments;
     for (;;) {
         consume_while(is_whitespace);
 
@@ -370,7 +351,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
         arguments.append({ arg_name, { name_offset, m_offset, start_line, line() } });
     }
 
-    consume_while(is_whitespace);
+    consume_while(is_any_of("\n\t "));
 
     {
         RefPtr<AST::Node> syntax_error;
@@ -380,7 +361,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
         }
         if (!expect('{')) {
             return create<AST::FunctionDeclaration>(
-                AST::FunctionDeclaration::NameWithPosition {
+                AST::NameWithPosition {
                     move(function_name),
                     { pos_before_name.offset, pos_after_name.offset, pos_before_name.line, pos_after_name.line } },
                 move(arguments),
@@ -404,7 +385,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
                 body = move(syntax_error);
 
             return create<AST::FunctionDeclaration>(
-                AST::FunctionDeclaration::NameWithPosition {
+                AST::NameWithPosition {
                     move(function_name),
                     { pos_before_name.offset, pos_after_name.offset, pos_before_name.line, pos_after_name.line } },
                 move(arguments),
@@ -413,7 +394,7 @@ RefPtr<AST::Node> Parser::parse_function_decl()
     }
 
     return create<AST::FunctionDeclaration>(
-        AST::FunctionDeclaration::NameWithPosition {
+        AST::NameWithPosition {
             move(function_name),
             { pos_before_name.offset, pos_after_name.offset, pos_before_name.line, pos_after_name.line } },
         move(arguments),
@@ -592,16 +573,46 @@ RefPtr<AST::Node> Parser::parse_for_loop()
         return nullptr;
     }
 
-    auto variable_name = consume_while(is_word_character);
-    Optional<AST::Position> in_start_position;
-    if (variable_name.is_empty()) {
-        variable_name = "it";
-    } else {
+    Optional<AST::NameWithPosition> index_variable_name, variable_name;
+    Optional<AST::Position> in_start_position, index_start_position;
+
+    auto offset_before_index = current_position();
+    if (expect("index")) {
+        auto offset = current_position();
+        if (!consume_while(is_whitespace).is_empty()) {
+            auto offset_before_variable = current_position();
+            auto variable = consume_while(is_word_character);
+            if (!variable.is_empty()) {
+                index_start_position = AST::Position { offset_before_index.offset, offset.offset, offset_before_index.line, offset.line };
+
+                auto offset_after_variable = current_position();
+                index_variable_name = AST::NameWithPosition {
+                    variable,
+                    { offset_before_variable.offset, offset_after_variable.offset, offset_before_variable.line, offset_after_variable.line },
+                };
+
+                consume_while(is_whitespace);
+            } else {
+                restore_to(offset_before_index.offset, offset_before_index.line);
+            }
+        } else {
+            restore_to(offset_before_index.offset, offset_before_index.line);
+        }
+    }
+
+    auto variable_name_start_offset = current_position();
+    auto name = consume_while(is_word_character);
+    auto variable_name_end_offset = current_position();
+    if (!name.is_empty()) {
+        variable_name = AST::NameWithPosition {
+            name,
+            { variable_name_start_offset.offset, variable_name_end_offset.offset, variable_name_start_offset.line, variable_name_end_offset.line }
+        };
         consume_while(is_whitespace);
         auto in_error_start = push_start();
         if (!expect("in")) {
             auto syntax_error = create<AST::SyntaxError>("Expected 'in' after a variable name in a 'for' loop", true);
-            return create<AST::ForLoop>(move(variable_name), move(syntax_error), nullptr); // ForLoop Var Iterated Block
+            return create<AST::ForLoop>(move(variable_name), move(index_variable_name), move(syntax_error), nullptr); // ForLoop Var Iterated Block
         }
         in_start_position = AST::Position { in_error_start->offset, m_offset, in_error_start->line, line() };
     }
@@ -620,7 +631,7 @@ RefPtr<AST::Node> Parser::parse_for_loop()
         auto obrace_error_start = push_start();
         if (!expect('{')) {
             auto syntax_error = create<AST::SyntaxError>("Expected an open brace '{' to start a 'for' loop body", true);
-            return create<AST::ForLoop>(move(variable_name), move(iterated_expression), move(syntax_error), move(in_start_position)); // ForLoop Var Iterated Block
+            return create<AST::ForLoop>(move(variable_name), move(index_variable_name), move(iterated_expression), move(syntax_error), move(in_start_position), move(index_start_position)); // ForLoop Var Iterated Block
         }
     }
 
@@ -639,7 +650,7 @@ RefPtr<AST::Node> Parser::parse_for_loop()
         }
     }
 
-    return create<AST::ForLoop>(move(variable_name), move(iterated_expression), move(body), move(in_start_position)); // ForLoop Var Iterated Block
+    return create<AST::ForLoop>(move(variable_name), move(index_variable_name), move(iterated_expression), move(body), move(in_start_position), move(index_start_position)); // ForLoop Var Iterated Block
 }
 
 RefPtr<AST::Node> Parser::parse_loop_loop()
@@ -657,7 +668,7 @@ RefPtr<AST::Node> Parser::parse_loop_loop()
         auto obrace_error_start = push_start();
         if (!expect('{')) {
             auto syntax_error = create<AST::SyntaxError>("Expected an open brace '{' to start a 'loop' loop body", true);
-            return create<AST::ForLoop>(String::empty(), nullptr, move(syntax_error), Optional<AST::Position> {}); // ForLoop null null Block
+            return create<AST::ForLoop>(AST::NameWithPosition {}, AST::NameWithPosition {}, nullptr, move(syntax_error)); // ForLoop null null Block
         }
     }
 
@@ -676,7 +687,7 @@ RefPtr<AST::Node> Parser::parse_loop_loop()
         }
     }
 
-    return create<AST::ForLoop>(String::empty(), nullptr, move(body), Optional<AST::Position> {}); // ForLoop null null Block
+    return create<AST::ForLoop>(AST::NameWithPosition {}, AST::NameWithPosition {}, nullptr, move(body)); // ForLoop null null Block
 }
 
 RefPtr<AST::Node> Parser::parse_if_expr()
@@ -1101,6 +1112,9 @@ RefPtr<AST::Node> Parser::parse_expression()
         if (auto variable = parse_variable())
             return read_concat(variable.release_nonnull());
 
+        if (auto immediate = parse_immediate_expression())
+            return read_concat(immediate.release_nonnull());
+
         if (auto inline_exec = parse_evaluate())
             return read_concat(inline_exec.release_nonnull());
     }
@@ -1118,7 +1132,7 @@ RefPtr<AST::Node> Parser::parse_expression()
         return read_concat(create<AST::CastToList>(move(list))); // Cast To List
     }
 
-    if (starting_char == '!') {
+    if (starting_char == '!' && m_in_interactive_mode) {
         if (auto designator = parse_history_designator())
             return designator;
     }
@@ -1205,7 +1219,7 @@ RefPtr<AST::Node> Parser::parse_string()
         auto result = create<AST::StringLiteral>(move(text)); // String Literal
         if (is_error)
             result->set_is_syntax_error(*create<AST::SyntaxError>("Expected a terminating single quote", true));
-        return move(result);
+        return result;
     }
 
     return nullptr;
@@ -1266,29 +1280,26 @@ RefPtr<AST::Node> Parser::parse_doublequoted_string_inner()
         }
         if (peek() == '$') {
             auto string_literal = create<AST::StringLiteral>(builder.to_string()); // String Literal
-            if (auto variable = parse_variable()) {
+            auto read_concat = [&](auto&& node) {
                 auto inner = create<AST::StringPartCompose>(
                     move(string_literal),
-                    variable.release_nonnull()); // Compose String Variable
+                    move(node)); // Compose String Node
 
                 if (auto string = parse_doublequoted_string_inner()) {
                     return create<AST::StringPartCompose>(move(inner), string.release_nonnull()); // Compose Composition Composition
                 }
 
                 return inner;
-            }
+            };
 
-            if (auto evaluate = parse_evaluate()) {
-                auto composition = create<AST::StringPartCompose>(
-                    move(string_literal),
-                    evaluate.release_nonnull()); // Compose String Sequence
+            if (auto variable = parse_variable())
+                return read_concat(variable.release_nonnull());
 
-                if (auto string = parse_doublequoted_string_inner()) {
-                    return create<AST::StringPartCompose>(move(composition), string.release_nonnull()); // Compose Composition Composition
-                }
+            if (auto immediate = parse_immediate_expression())
+                return read_concat(immediate.release_nonnull());
 
-                return composition;
-            }
+            if (auto evaluate = parse_evaluate())
+                return read_concat(evaluate.release_nonnull());
         }
 
         builder.append(consume());
@@ -1298,6 +1309,21 @@ RefPtr<AST::Node> Parser::parse_doublequoted_string_inner()
 }
 
 RefPtr<AST::Node> Parser::parse_variable()
+{
+    auto rule_start = push_start();
+    auto ref = parse_variable_ref();
+
+    if (!ref)
+        return nullptr;
+
+    auto variable = static_ptr_cast<AST::VariableNode>(ref);
+    if (auto slice = parse_slice())
+        variable->set_slice(slice.release_nonnull());
+
+    return variable;
+}
+
+RefPtr<AST::Node> Parser::parse_variable_ref()
 {
     auto rule_start = push_start();
     if (at_end())
@@ -1325,6 +1351,38 @@ RefPtr<AST::Node> Parser::parse_variable()
     }
 
     return create<AST::SimpleVariable>(move(name)); // Variable Simple
+}
+
+RefPtr<AST::Node> Parser::parse_slice()
+{
+    auto rule_start = push_start();
+    if (!next_is("["))
+        return nullptr;
+
+    consume(); // [
+
+    ScopedValueRollback chars_change { m_extra_chars_not_allowed_in_barewords };
+    m_extra_chars_not_allowed_in_barewords.append(']');
+    auto spec = parse_brace_expansion_spec();
+
+    RefPtr<AST::SyntaxError> error;
+
+    if (peek() != ']')
+        error = create<AST::SyntaxError>("Expected a close bracket ']' to end a variable slice");
+    else
+        consume();
+
+    if (!spec) {
+        if (error)
+            spec = move(error);
+        else
+            spec = create<AST::SyntaxError>("Expected either a range, or a comma-seprated list of selectors");
+    }
+
+    auto node = create<AST::Slice>(spec.release_nonnull());
+    if (error)
+        node->set_is_syntax_error(*error);
+    return node;
 }
 
 RefPtr<AST::Node> Parser::parse_evaluate()
@@ -1362,6 +1420,75 @@ RefPtr<AST::Node> Parser::parse_evaluate()
     }
 
     return inner;
+}
+
+RefPtr<AST::Node> Parser::parse_immediate_expression()
+{
+    auto rule_start = push_start();
+    if (at_end())
+        return nullptr;
+
+    if (peek() != '$')
+        return nullptr;
+
+    consume();
+
+    if (peek() != '{') {
+        restore_to(*rule_start);
+        return nullptr;
+    }
+
+    consume();
+    consume_while(is_whitespace);
+
+    auto function_name_start_offset = current_position();
+    auto function_name = consume_while(is_word_character);
+    auto function_name_end_offset = current_position();
+    AST::Position function_position {
+        function_name_start_offset.offset,
+        function_name_end_offset.offset,
+        function_name_start_offset.line,
+        function_name_end_offset.line,
+    };
+
+    consume_while(is_whitespace);
+
+    NonnullRefPtrVector<AST::Node> arguments;
+    do {
+        auto expr = parse_expression();
+        if (!expr)
+            break;
+        arguments.append(expr.release_nonnull());
+    } while (!consume_while(is_whitespace).is_empty());
+
+    auto ending_brace_start_offset = current_position();
+    if (peek() == '}')
+        consume();
+
+    auto ending_brace_end_offset = current_position();
+
+    auto ending_brace_position = ending_brace_start_offset.offset == ending_brace_end_offset.offset
+        ? Optional<AST::Position> {}
+        : Optional<AST::Position> {
+              AST::Position {
+                  ending_brace_start_offset.offset,
+                  ending_brace_end_offset.offset,
+                  ending_brace_start_offset.line,
+                  ending_brace_end_offset.line,
+              }
+          };
+
+    auto node = create<AST::ImmediateExpression>(
+        AST::NameWithPosition { function_name, move(function_position) },
+        move(arguments),
+        ending_brace_position);
+
+    if (!ending_brace_position.has_value())
+        node->set_is_syntax_error(create<AST::SyntaxError>("Expected a closing brace '}' to end an immediate expression", true));
+    else if (node->function_name().is_empty())
+        node->set_is_syntax_error(create<AST::SyntaxError>("Expected an immediate function name"));
+
+    return node;
 }
 
 RefPtr<AST::Node> Parser::parse_history_designator()
@@ -1417,7 +1544,7 @@ RefPtr<AST::Node> Parser::parse_history_designator()
             ++it;
             is_negative = true;
         }
-        if (it != selector.event.text.end() && AK::all_of(it, selector.event.text.end(), is_digit)) {
+        if (it != selector.event.text.end() && all_of(it, selector.event.text.end(), is_digit)) {
             if (is_negative)
                 selector.event.kind = AST::HistorySelector::EventKind::IndexFromEnd;
             else
@@ -1586,7 +1713,11 @@ RefPtr<AST::Node> Parser::parse_bareword()
             restore_to(rule_start->offset, rule_start->line);
             auto ch = consume();
             VERIFY(ch == '~');
+            auto username_length = username.length();
             tilde = create<AST::Tilde>(move(username));
+            // Consume the username (if any)
+            for (size_t i = 0; i < username_length; ++i)
+                consume();
         }
 
         if (string.is_empty())
@@ -1631,7 +1762,7 @@ RefPtr<AST::Node> Parser::parse_glob()
             } else {
                 // FIXME: Allow composition of tilde+bareword with globs: '~/foo/bar/baz*'
                 restore_to(saved_offset.offset, saved_offset.line);
-                bareword_part->set_is_syntax_error(*create<AST::SyntaxError>(String::format("Unexpected %s inside a glob", bareword_part->class_name().characters())));
+                bareword_part->set_is_syntax_error(*create<AST::SyntaxError>(String::formatted("Unexpected {} inside a glob", bareword_part->class_name())));
                 return bareword_part;
             }
             textbuilder.append(text);
@@ -1683,7 +1814,9 @@ RefPtr<AST::Node> Parser::parse_brace_expansion()
 RefPtr<AST::Node> Parser::parse_brace_expansion_spec()
 {
     TemporaryChange is_in_brace_expansion { m_is_in_brace_expansion_spec, true };
-    TemporaryChange chars_change { m_extra_chars_not_allowed_in_barewords, { ',' } };
+    ScopedValueRollback chars_change { m_extra_chars_not_allowed_in_barewords };
+
+    m_extra_chars_not_allowed_in_barewords.append(',');
 
     auto rule_start = push_start();
     auto start_expr = parse_expression();

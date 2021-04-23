@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/URL.h>
@@ -33,7 +13,7 @@
 #include <LibGUI/InputBox.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Painter.h>
-#include <LibGUI/ScrollBar.h>
+#include <LibGUI/Scrollbar.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/ShareableBitmap.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
@@ -262,14 +242,7 @@ void InProcessWebView::paint_event(GUI::PaintEvent& event)
         return;
     }
 
-    painter.fill_rect(event.rect(), document()->background_color(palette()));
-
-    if (auto background_bitmap = document()->background_image()) {
-        painter.draw_tiled_bitmap(event.rect(), *background_bitmap);
-    }
-
     painter.translate(frame_thickness(), frame_thickness());
-    painter.translate(-horizontal_scrollbar().value(), -vertical_scrollbar().value());
 
     PaintContext context(painter, palette(), { horizontal_scrollbar().value(), vertical_scrollbar().value() });
     context.set_should_show_line_box_borders(m_should_show_line_box_borders);
@@ -438,6 +411,19 @@ String InProcessWebView::page_did_request_prompt(const String& message, const St
     if (GUI::InputBox::show(window(), value, message, "Prompt") == GUI::InputBox::ExecOK)
         return value;
     return {};
+}
+
+String InProcessWebView::page_did_request_cookie(const URL& url, Cookie::Source source)
+{
+    if (on_get_cookie)
+        return on_get_cookie(url, source);
+    return {};
+}
+
+void InProcessWebView::page_did_set_cookie(const URL& url, const Cookie::ParsedCookie& cookie, Cookie::Source source)
+{
+    if (on_set_cookie)
+        on_set_cookie(url, cookie, source);
 }
 
 }

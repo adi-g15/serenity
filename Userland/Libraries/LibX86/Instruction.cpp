@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringBuilder.h>
@@ -918,21 +898,21 @@ String MemoryOrRegisterReference::to_string_o8(const Instruction& insn) const
 {
     if (is_register())
         return register_name(reg8());
-    return String::format("[%s]", to_string(insn).characters());
+    return String::formatted("[{}]", to_string(insn));
 }
 
 String MemoryOrRegisterReference::to_string_o16(const Instruction& insn) const
 {
     if (is_register())
         return register_name(reg16());
-    return String::format("[%s]", to_string(insn).characters());
+    return String::formatted("[{}]", to_string(insn));
 }
 
 String MemoryOrRegisterReference::to_string_o32(const Instruction& insn) const
 {
     if (is_register())
         return register_name(reg32());
-    return String::format("[%s]", to_string(insn).characters());
+    return String::formatted("[{}]", to_string(insn));
 }
 
 String MemoryOrRegisterReference::to_string_fpu_reg() const
@@ -944,7 +924,7 @@ String MemoryOrRegisterReference::to_string_fpu_reg() const
 String MemoryOrRegisterReference::to_string_fpu_mem(const Instruction& insn) const
 {
     VERIFY(!is_register());
-    return String::format("[%s]", to_string(insn).characters());
+    return String::formatted("[{}]", to_string(insn));
 }
 
 String MemoryOrRegisterReference::to_string_fpu_ax16() const
@@ -957,33 +937,33 @@ String MemoryOrRegisterReference::to_string_fpu16(const Instruction& insn) const
 {
     if (is_register())
         return register_name(reg_fpu());
-    return String::format("word ptr [%s]", to_string(insn).characters());
+    return String::formatted("word ptr [{}]", to_string(insn));
 }
 
 String MemoryOrRegisterReference::to_string_fpu32(const Instruction& insn) const
 {
     if (is_register())
         return register_name(reg_fpu());
-    return String::format("dword ptr [%s]", to_string(insn).characters());
+    return String::formatted("dword ptr [{}]", to_string(insn));
 }
 
 String MemoryOrRegisterReference::to_string_fpu64(const Instruction& insn) const
 {
     if (is_register())
         return register_name(reg_fpu());
-    return String::format("qword ptr [%s]", to_string(insn).characters());
+    return String::formatted("qword ptr [{}]", to_string(insn));
 }
 
 String MemoryOrRegisterReference::to_string_fpu80(const Instruction& insn) const
 {
     VERIFY(!is_register());
-    return String::format("tbyte ptr [%s]", to_string(insn).characters());
+    return String::formatted("tbyte ptr [{}]", to_string(insn));
 }
 String MemoryOrRegisterReference::to_string_mm(const Instruction& insn) const
 {
     if (is_register())
         return register_name(static_cast<MMXRegisterIndex>(m_register_index));
-    return String::format("[%s]", to_string(insn).characters());
+    return String::formatted("[{}]", to_string(insn));
 }
 
 String MemoryOrRegisterReference::to_string(const Instruction& insn) const
@@ -1022,7 +1002,7 @@ String MemoryOrRegisterReference::to_string_a16() const
         break;
     case 6:
         if ((m_rm & 0xc0) == 0)
-            base = String::format("%#04x", m_displacement16);
+            base = String::formatted("{:#04x}", m_displacement16);
         else
             base = "bp";
         break;
@@ -1037,12 +1017,12 @@ String MemoryOrRegisterReference::to_string_a16() const
     if (!hasDisplacement)
         return base;
 
-    String disp;
+    String displacement_string;
     if ((i16)m_displacement16 < 0)
-        disp = String::format("-%#x", -(i16)m_displacement16);
+        displacement_string = String::formatted("-{:#x}", -(i16)m_displacement16);
     else
-        String::format("+%#x", m_displacement16);
-    return String::format("%s%s", base.characters(), disp.characters());
+        displacement_string = String::formatted("+{:#x}", m_displacement16);
+    return String::formatted("{}{}", base, displacement_string);
 }
 
 static String sib_to_string(u8 rm, u8 sib)
@@ -1169,7 +1149,7 @@ String MemoryOrRegisterReference::to_string_a32() const
         break;
     case 5:
         if ((m_rm & 0xc0) == 0)
-            base = String::format("%#08x", m_displacement32);
+            base = String::formatted("{:#08x}", m_displacement32);
         else
             base = "ebp";
         break;
@@ -1181,29 +1161,29 @@ String MemoryOrRegisterReference::to_string_a32() const
     if (!has_displacement)
         return base;
 
-    String disp;
+    String displacement_string;
     if ((i32)m_displacement32 < 0)
-        disp = String::format("-%#x", -(i32)m_displacement32);
+        displacement_string = String::formatted("-{:#x}", -(i32)m_displacement32);
     else
-        disp = String::format("+%#x", m_displacement32);
-    return String::format("%s%s", base.characters(), disp.characters());
+        displacement_string = String::formatted("+{:#x}", m_displacement32);
+    return String::formatted("{}{}", base, displacement_string);
 }
 
 static String relative_address(u32 origin, bool x32, i8 imm)
 {
     if (x32)
-        return String::format("%#08x", origin + imm);
+        return String::formatted("{:#08x}", origin + imm);
     u16 w = origin & 0xffff;
-    return String::format("%#04x", w + imm);
+    return String::formatted("{:#04x}", w + imm);
 }
 
 static String relative_address(u32 origin, bool x32, i32 imm)
 {
     if (x32)
-        return String::format("%#08x", origin + imm);
+        return String::formatted("{:#08x}", origin + imm);
     u16 w = origin & 0xffff;
     i16 si = imm;
-    return String::format("%#04x", w + si);
+    return String::formatted("{:#04x}", w + si);
 }
 
 String Instruction::to_string(u32 origin, const SymbolProvider* symbol_provider, bool x32) const
@@ -1816,7 +1796,7 @@ void Instruction::to_string_internal(StringBuilder& builder, u32 origin, const S
     case MultibyteWithSlash:
     case __BeginFormatsWithRMByte:
     case __EndFormatsWithRMByte:
-        builder.append(String::format("(!%s)", mnemonic.characters()));
+        builder.append(String::formatted("(!{})", mnemonic));
         break;
     }
 }

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "MmapRegion.h"
@@ -31,42 +11,54 @@
 
 namespace UserspaceEmulator {
 
-NonnullOwnPtr<MmapRegion> MmapRegion::create_anonymous(u32 base, u32 size, u32 prot)
+static void* mmap_initialized(size_t bytes, char initial_value, const char* name)
 {
-    auto region = adopt_own(*new MmapRegion(base, size, prot));
-    region->m_file_backed = false;
-    region->m_data = (u8*)calloc(1, size);
+    auto* ptr = mmap_with_name(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0, name);
+    VERIFY(ptr != MAP_FAILED);
+    memset(ptr, initial_value, bytes);
+    return ptr;
+}
+
+static void free_pages(void* ptr, size_t bytes)
+{
+    int rc = munmap(ptr, bytes);
+    VERIFY(rc == 0);
+}
+
+NonnullOwnPtr<MmapRegion> MmapRegion::create_anonymous(u32 base, u32 size, u32 prot, String name)
+{
+    auto data = (u8*)mmap_initialized(size, 0, nullptr);
+    auto shadow_data = (u8*)mmap_initialized(size, 1, "MmapRegion ShadowData");
+    auto region = adopt_own(*new MmapRegion(base, size, prot, data, shadow_data));
+    region->m_name = move(name);
     return region;
 }
 
 NonnullOwnPtr<MmapRegion> MmapRegion::create_file_backed(u32 base, u32 size, u32 prot, int flags, int fd, off_t offset, String name)
 {
-    auto region = adopt_own(*new MmapRegion(base, size, prot));
+    // Since we put the memory to an arbitrary location, do not pass MAP_FIXED to the Kernel.
+    auto real_flags = flags & ~MAP_FIXED;
+    auto data = (u8*)mmap_with_name(nullptr, size, prot, real_flags, fd, offset, name.is_empty() ? nullptr : name.characters());
+    VERIFY(data != MAP_FAILED);
+    auto shadow_data = (u8*)mmap_initialized(size, 1, "MmapRegion ShadowData");
+    auto region = adopt_own(*new MmapRegion(base, size, prot, data, shadow_data));
     region->m_file_backed = true;
-    if (!name.is_empty()) {
-        name = String::formatted("{} (Emulated)", name);
-        region->m_name = name;
-    }
-    region->m_data = (u8*)mmap_with_name(nullptr, size, prot, flags, fd, offset, name.is_empty() ? nullptr : name.characters());
-    VERIFY(region->m_data != MAP_FAILED);
+    region->m_name = move(name);
     return region;
 }
 
-MmapRegion::MmapRegion(u32 base, u32 size, int prot)
-    : Region(base, size)
+MmapRegion::MmapRegion(u32 base, u32 size, int prot, u8* data, u8* shadow_data)
+    : Region(base, size, true)
+    , m_data(data)
+    , m_shadow_data(shadow_data)
 {
     set_prot(prot);
-    m_shadow_data = (u8*)malloc(size);
-    memset(m_shadow_data, 1, size);
 }
 
 MmapRegion::~MmapRegion()
 {
-    free(m_shadow_data);
-    if (m_file_backed)
-        munmap(m_data, size());
-    else
-        free(m_data);
+    free_pages(m_data, size());
+    free_pages(m_shadow_data, size());
 }
 
 ValueWithShadow<u8> MmapRegion::read8(FlatPtr offset)
@@ -211,13 +203,29 @@ void MmapRegion::write64(u32 offset, ValueWithShadow<u64> value)
     *reinterpret_cast<u64*>(m_shadow_data + offset) = value.shadow();
 }
 
+NonnullOwnPtr<MmapRegion> MmapRegion::split_at(VirtualAddress offset)
+{
+    VERIFY(!m_malloc);
+    VERIFY(!m_malloc_metadata);
+    Range new_range = range();
+    Range other_range = new_range.split_at(offset);
+    auto other_region = adopt_own(*new MmapRegion(other_range.base().get(), other_range.size(), prot(), data() + new_range.size(), shadow_data() + new_range.size()));
+    other_region->m_file_backed = m_file_backed;
+    other_region->m_name = m_name;
+    set_range(new_range);
+    return other_region;
+}
+
 void MmapRegion::set_prot(int prot)
 {
     set_readable(prot & PROT_READ);
     set_writable(prot & PROT_WRITE);
     set_executable(prot & PROT_EXEC);
     if (m_file_backed) {
-        mprotect(m_data, size(), prot);
+        if (mprotect(m_data, size(), prot & ~PROT_EXEC) < 0) {
+            perror("MmapRegion::set_prot: mprotect");
+            exit(1);
+        }
     }
 }
 

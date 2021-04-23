@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2019-2020, William McPherson <willmcpherson2@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Track.h"
@@ -45,7 +25,7 @@ Track::~Track()
 
 void Track::fill_sample(Sample& sample)
 {
-    Audio::Sample new_sample;
+    Audio::Frame new_sample;
 
     for (size_t note = 0; note < note_count; ++note) {
         if (!m_roll_iters[note].is_end()) {
@@ -86,7 +66,7 @@ void Track::fill_sample(Sample& sample)
             VERIFY_NOT_REACHED();
         }
 
-        Audio::Sample note_sample;
+        Audio::Frame note_sample;
         switch (m_wave) {
         case Wave::Sine:
             note_sample = sine(note);
@@ -134,6 +114,9 @@ void Track::reset()
     memset(m_note_on, 0, sizeof(m_note_on));
     memset(m_power, 0, sizeof(m_power));
     memset(m_envelope, 0, sizeof(m_envelope));
+
+    for (size_t note = 0; note < note_count; ++note)
+        m_roll_iters[note] = m_roll_notes[note].begin();
 }
 
 String Track::set_recorded_sample(const StringView& path)
@@ -169,7 +152,7 @@ String Track::set_recorded_sample(const StringView& path)
 
 // All of the information for these waves is on Wikipedia.
 
-Audio::Sample Track::sine(size_t note)
+Audio::Frame Track::sine(size_t note)
 {
     double pos = note_frequencies[note] / sample_rate;
     double sin_step = pos * 2 * M_PI;
@@ -178,7 +161,7 @@ Audio::Sample Track::sine(size_t note)
     return w;
 }
 
-Audio::Sample Track::saw(size_t note)
+Audio::Frame Track::saw(size_t note)
 {
     double saw_step = note_frequencies[note] / sample_rate;
     double t = m_pos[note];
@@ -187,7 +170,7 @@ Audio::Sample Track::saw(size_t note)
     return w;
 }
 
-Audio::Sample Track::square(size_t note)
+Audio::Frame Track::square(size_t note)
 {
     double pos = note_frequencies[note] / sample_rate;
     double square_step = pos * 2 * M_PI;
@@ -196,7 +179,7 @@ Audio::Sample Track::square(size_t note)
     return w;
 }
 
-Audio::Sample Track::triangle(size_t note)
+Audio::Frame Track::triangle(size_t note)
 {
     double triangle_step = note_frequencies[note] / sample_rate;
     double t = m_pos[note];
@@ -205,14 +188,14 @@ Audio::Sample Track::triangle(size_t note)
     return w;
 }
 
-Audio::Sample Track::noise() const
+Audio::Frame Track::noise() const
 {
     double random_percentage = static_cast<double>(rand()) / RAND_MAX;
     double w = (random_percentage * 2) - 1;
     return w;
 }
 
-Audio::Sample Track::recorded_sample(size_t note)
+Audio::Frame Track::recorded_sample(size_t note)
 {
     int t = m_pos[note];
     if (t >= static_cast<int>(m_recorded_sample.size()))

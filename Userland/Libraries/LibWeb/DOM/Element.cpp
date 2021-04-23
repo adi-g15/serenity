@@ -1,32 +1,12 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/AnyOf.h>
 #include <AK/StringBuilder.h>
-#include <LibWeb/CSS/Parser/CSSParser.h>
+#include <LibWeb/CSS/Parser/DeprecatedCSSParser.h>
 #include <LibWeb/CSS/PropertyID.h>
 #include <LibWeb/CSS/StyleInvalidator.h>
 #include <LibWeb/CSS/StyleResolver.h>
@@ -34,6 +14,7 @@
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
 #include <LibWeb/DOM/ExceptionOr.h>
+#include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/HTML/Parser/HTMLDocumentParser.h>
@@ -345,31 +326,22 @@ bool Element::is_focused() const
     return document().focused_element() == this;
 }
 
-NonnullRefPtrVector<Element> Element::get_elements_by_tag_name(const FlyString& tag_name) const
+NonnullRefPtr<HTMLCollection> Element::get_elements_by_tag_name(FlyString const& tag_name)
 {
     // FIXME: Support "*" for tag_name
     // https://dom.spec.whatwg.org/#concept-getelementsbytagname
-    NonnullRefPtrVector<Element> elements;
-    for_each_in_subtree_of_type<Element>([&](auto& element) {
-        if (element.namespace_() == Namespace::HTML
-                ? element.local_name().to_lowercase() == tag_name.to_lowercase()
-                : element.local_name() == tag_name) {
-            elements.append(element);
-        }
-        return IterationDecision::Continue;
+    return HTMLCollection::create(*this, [tag_name](Element const& element) {
+        if (element.namespace_() == Namespace::HTML)
+            return element.local_name().to_lowercase() == tag_name.to_lowercase();
+        return element.local_name() == tag_name;
     });
-    return elements;
 }
 
-NonnullRefPtrVector<Element> Element::get_elements_by_class_name(const FlyString& class_name) const
+NonnullRefPtr<HTMLCollection> Element::get_elements_by_class_name(FlyString const& class_name)
 {
-    NonnullRefPtrVector<Element> elements;
-    for_each_in_subtree_of_type<Element>([&](auto& element) {
-        if (element.has_class(class_name, m_document->in_quirks_mode() ? CaseSensitivity::CaseInsensitive : CaseSensitivity::CaseSensitive))
-            elements.append(element);
-        return IterationDecision::Continue;
+    return HTMLCollection::create(*this, [class_name, quirks_mode = document().in_quirks_mode()](Element const& element) {
+        return element.has_class(class_name, quirks_mode ? CaseSensitivity::CaseInsensitive : CaseSensitivity::CaseSensitive);
     });
-    return elements;
 }
 
 void Element::set_shadow_root(RefPtr<ShadowRoot> shadow_root)
@@ -378,6 +350,13 @@ void Element::set_shadow_root(RefPtr<ShadowRoot> shadow_root)
         return;
     m_shadow_root = move(shadow_root);
     invalidate_style();
+}
+
+NonnullRefPtr<CSS::CSSStyleDeclaration> Element::style_for_bindings()
+{
+    if (!m_inline_style)
+        m_inline_style = CSS::ElementInlineCSSStyleDeclaration::create(*this);
+    return *m_inline_style;
 }
 
 }

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/MemoryStream.h>
@@ -98,22 +78,23 @@ KResult FileDescription::attach()
 
 Thread::FileBlocker::BlockFlags FileDescription::should_unblock(Thread::FileBlocker::BlockFlags block_flags) const
 {
-    u32 unblock_flags = (u32)Thread::FileBlocker::BlockFlags::None;
-    if (((u32)block_flags & (u32)Thread::FileBlocker::BlockFlags::Read) && can_read())
-        unblock_flags |= (u32)Thread::FileBlocker::BlockFlags::Read;
-    if (((u32)block_flags & (u32)Thread::FileBlocker::BlockFlags::Write) && can_write())
-        unblock_flags |= (u32)Thread::FileBlocker::BlockFlags::Write;
+    using BlockFlags = Thread::FileBlocker::BlockFlags;
+    BlockFlags unblock_flags = BlockFlags::None;
+    if (has_flag(block_flags, BlockFlags::Read) && can_read())
+        unblock_flags |= BlockFlags::Read;
+    if (has_flag(block_flags, BlockFlags::Write) && can_write())
+        unblock_flags |= BlockFlags::Write;
     // TODO: Implement Thread::FileBlocker::BlockFlags::Exception
 
-    if ((u32)block_flags & (u32)Thread::FileBlocker::BlockFlags::SocketFlags) {
+    if (has_flag(block_flags, BlockFlags::SocketFlags)) {
         auto* sock = socket();
         VERIFY(sock);
-        if (((u32)block_flags & (u32)Thread::FileBlocker::BlockFlags::Accept) && sock->can_accept())
-            unblock_flags |= (u32)Thread::FileBlocker::BlockFlags::Accept;
-        if (((u32)block_flags & (u32)Thread::FileBlocker::BlockFlags::Connect) && sock->setup_state() == Socket::SetupState::Completed)
-            unblock_flags |= (u32)Thread::FileBlocker::BlockFlags::Connect;
+        if (has_flag(block_flags, BlockFlags::Accept) && sock->can_accept())
+            unblock_flags |= BlockFlags::Accept;
+        if (has_flag(block_flags, BlockFlags::Connect) && sock->setup_state() == Socket::SetupState::Completed)
+            unblock_flags |= BlockFlags::Connect;
     }
-    return (Thread::FileBlocker::BlockFlags)unblock_flags;
+    return unblock_flags;
 }
 
 KResult FileDescription::stat(::stat& buffer)
@@ -125,11 +106,11 @@ KResult FileDescription::stat(::stat& buffer)
     return m_file->stat(buffer);
 }
 
-off_t FileDescription::seek(off_t offset, int whence)
+KResultOr<off_t> FileDescription::seek(off_t offset, int whence)
 {
     LOCKER(m_lock);
     if (!m_file->is_seekable())
-        return -ESPIPE;
+        return ESPIPE;
 
     off_t new_offset;
 
@@ -139,21 +120,21 @@ off_t FileDescription::seek(off_t offset, int whence)
         break;
     case SEEK_CUR:
         if (Checked<off_t>::addition_would_overflow(m_current_offset, offset))
-            return -EOVERFLOW;
+            return EOVERFLOW;
         new_offset = m_current_offset + offset;
         break;
     case SEEK_END:
         if (!metadata().is_valid())
-            return -EIO;
+            return EIO;
         new_offset = metadata().size;
         break;
     default:
-        return -EINVAL;
+        return EINVAL;
     }
 
     if (new_offset < 0)
-        return -EINVAL;
-    // FIXME: Return -EINVAL if attempting to seek past the end of a seekable device.
+        return EINVAL;
+    // FIXME: Return EINVAL if attempting to seek past the end of a seekable device.
 
     m_current_offset = new_offset;
 
@@ -326,7 +307,7 @@ InodeMetadata FileDescription::metadata() const
     return {};
 }
 
-KResultOr<Region*> FileDescription::mmap(Process& process, const Range& range, size_t offset, int prot, bool shared)
+KResultOr<Region*> FileDescription::mmap(Process& process, const Range& range, u64 offset, int prot, bool shared)
 {
     LOCKER(m_lock);
     return m_file->mmap(process, *this, range, offset, prot, shared);

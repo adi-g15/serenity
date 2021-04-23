@@ -6,7 +6,9 @@ Everyone is welcome to work on the project, and while we have lots of fun, it's 
 
 ## Communication
 
-The easiest way to get in touch is by joining the `#serenityos` channel on the Freenode IRC network.
+IRC: `#serenityos` on the Freenode IRC network.
+
+Discord: [SerenityOS Discord](https://discord.com/invite/29gCcKsXkF)
 
 ## Issue policy
 
@@ -15,7 +17,7 @@ Unlike many other software projects, SerenityOS is not concerned with gaining th
 That said, please do file any bugs you find, keeping the following in mind:
 
 * One issue per bug. Putting multiple things in the same issue makes both discussion and completion unnecessarily complicated.
-* No build issues (or other support requests). If the GitHub Actions CI build succeeds, the build problem is most likely on your side. Work it out locally, or ask on IRC.
+* No build issues (or other support requests). If the GitHub Actions CI build succeeds, the build problem is most likely on your side. Work it out locally, or ask in the `#build-problems` channel on Discord.
 
 ## Feature policy
 
@@ -42,6 +44,8 @@ Nobody is perfect, and sometimes we mess things up. That said, here are some goo
 * The first line of the commit message should have the format "Category: Brief description of what's being changed". The "category" can be a subdirectory, but also something like "POSIX compliance" or "ClassName". Whatever seems logical.
 * Write your commit messages in proper English, with care and punctuation.
 * Squash your commits when making revisions after a patch review.
+* Add your personal copyright line to files when making substantive changes. (Optional but encouraged!)
+* Check the spelling of your code, comments and commit messages.
 
 **Don't:**
 
@@ -51,3 +55,4 @@ Nobody is perfect, and sometimes we mess things up. That said, here are some goo
 * Use weasel-words like "refactor" or "fix" to avoid explaining what's being changed.
 * Include commented-out code.
 * Write in C.
+* Attempt large architectural changes until you are familiar with the system and have worked on it for a while.

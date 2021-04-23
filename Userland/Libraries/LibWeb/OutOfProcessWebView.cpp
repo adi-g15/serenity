@@ -1,37 +1,19 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "OutOfProcessWebView.h"
 #include "WebContentClient.h"
 #include <AK/String.h>
 #include <AK/URLParser.h>
+#include <LibGUI/Application.h>
+#include <LibGUI/Desktop.h>
 #include <LibGUI/InputBox.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Painter.h>
-#include <LibGUI/ScrollBar.h>
+#include <LibGUI/Scrollbar.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
@@ -87,6 +69,7 @@ void OutOfProcessWebView::create_client()
     };
 
     client().post_message(Messages::WebContentServer::UpdateSystemTheme(Gfx::current_system_theme_buffer()));
+    client().post_message(Messages::WebContentServer::UpdateScreenRect(GUI::Desktop::the().rect()));
 }
 
 void OutOfProcessWebView::load(const URL& url)
@@ -160,13 +143,13 @@ void OutOfProcessWebView::handle_resize()
     if (available_size().is_empty())
         return;
 
-    if (auto new_bitmap = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::RGB32, available_size())) {
+    if (auto new_bitmap = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRx8888, available_size())) {
         m_client_state.front_bitmap = move(new_bitmap);
         m_client_state.front_bitmap_id = m_client_state.next_bitmap_id++;
         client().post_message(Messages::WebContentServer::AddBackingStore(m_client_state.front_bitmap_id, m_client_state.front_bitmap->to_shareable_bitmap()));
     }
 
-    if (auto new_bitmap = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::RGB32, available_size())) {
+    if (auto new_bitmap = Gfx::Bitmap::create_shareable(Gfx::BitmapFormat::BGRx8888, available_size())) {
         m_client_state.back_bitmap = move(new_bitmap);
         m_client_state.back_bitmap_id = m_client_state.next_bitmap_id++;
         client().post_message(Messages::WebContentServer::AddBackingStore(m_client_state.back_bitmap_id, m_client_state.back_bitmap->to_shareable_bitmap()));
@@ -207,6 +190,11 @@ void OutOfProcessWebView::theme_change_event(GUI::ThemeChangeEvent& event)
     request_repaint();
 }
 
+void OutOfProcessWebView::screen_rect_change_event(GUI::ScreenRectChangeEvent& event)
+{
+    client().post_message(Messages::WebContentServer::UpdateScreenRect(event.rect()));
+}
+
 void OutOfProcessWebView::notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id)
 {
     if (m_client_state.back_bitmap_id == bitmap_id) {
@@ -229,6 +217,11 @@ void OutOfProcessWebView::notify_server_did_change_selection(Badge<WebContentCli
     request_repaint();
 }
 
+void OutOfProcessWebView::notify_server_did_request_cursor_change(Badge<WebContentClient>, Gfx::StandardCursor cursor)
+{
+    set_override_cursor(cursor);
+}
+
 void OutOfProcessWebView::notify_server_did_layout(Badge<WebContentClient>, const Gfx::IntSize& content_size)
 {
     set_content_size(content_size);
@@ -240,14 +233,28 @@ void OutOfProcessWebView::notify_server_did_change_title(Badge<WebContentClient>
         on_title_change(title);
 }
 
+void OutOfProcessWebView::notify_server_did_request_scroll(Badge<WebContentClient>, int wheel_delta)
+{
+    vertical_scrollbar().set_value(vertical_scrollbar().value() + wheel_delta * 20);
+}
+
 void OutOfProcessWebView::notify_server_did_request_scroll_into_view(Badge<WebContentClient>, const Gfx::IntRect& rect)
 {
     scroll_into_view(rect, true, true);
 }
 
+void OutOfProcessWebView::notify_server_did_enter_tooltip_area(Badge<WebContentClient>, const Gfx::IntPoint&, const String& title)
+{
+    GUI::Application::the()->show_tooltip(title, nullptr);
+}
+
+void OutOfProcessWebView::notify_server_did_leave_tooltip_area(Badge<WebContentClient>)
+{
+    GUI::Application::the()->hide_tooltip();
+}
+
 void OutOfProcessWebView::notify_server_did_hover_link(Badge<WebContentClient>, const URL& url)
 {
-    set_override_cursor(Gfx::StandardCursor::Hand);
     if (on_link_hover)
         on_link_hover(url);
 }
@@ -295,6 +302,12 @@ void OutOfProcessWebView::notify_server_did_request_link_context_menu(Badge<WebC
         on_link_context_menu_request(url, screen_relative_rect().location().translated(to_widget_position(content_position)));
 }
 
+void OutOfProcessWebView::notify_server_did_request_image_context_menu(Badge<WebContentClient>, const Gfx::IntPoint& content_position, const URL& url, const String&, unsigned, const Gfx::ShareableBitmap& bitmap)
+{
+    if (on_image_context_menu_request)
+        on_image_context_menu_request(url, screen_relative_rect().location().translated(to_widget_position(content_position)), bitmap);
+}
+
 void OutOfProcessWebView::notify_server_did_request_alert(Badge<WebContentClient>, const String& message)
 {
     GUI::MessageBox::show(window(), message, "Alert", GUI::MessageBox::Type::Information);
@@ -318,6 +331,31 @@ void OutOfProcessWebView::notify_server_did_get_source(const URL& url, const Str
 {
     if (on_get_source)
         on_get_source(url, source);
+}
+
+void OutOfProcessWebView::notify_server_did_js_console_output(const String& method, const String& line)
+{
+    if (on_js_console_output)
+        on_js_console_output(method, line);
+}
+
+void OutOfProcessWebView::notify_server_did_change_favicon(const Gfx::Bitmap& favicon)
+{
+    if (on_favicon_change)
+        on_favicon_change(favicon);
+}
+
+String OutOfProcessWebView::notify_server_did_request_cookie(Badge<WebContentClient>, const URL& url, Cookie::Source source)
+{
+    if (on_get_cookie)
+        return on_get_cookie(url, source);
+    return {};
+}
+
+void OutOfProcessWebView::notify_server_did_set_cookie(Badge<WebContentClient>, const URL& url, const Cookie::ParsedCookie& cookie, Cookie::Source source)
+{
+    if (on_set_cookie)
+        on_set_cookie(url, cookie, source);
 }
 
 void OutOfProcessWebView::did_scroll()
@@ -349,6 +387,16 @@ void OutOfProcessWebView::debug_request(const String& request, const String& arg
 void OutOfProcessWebView::get_source()
 {
     client().post_message(Messages::WebContentServer::GetSource());
+}
+
+void OutOfProcessWebView::js_console_initialize()
+{
+    client().post_message(Messages::WebContentServer::JSConsoleInitialize());
+}
+
+void OutOfProcessWebView::js_console_input(const String& js_source)
+{
+    client().post_message(Messages::WebContentServer::JSConsoleInput(js_source));
 }
 
 }

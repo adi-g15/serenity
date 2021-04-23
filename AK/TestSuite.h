@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -34,6 +14,10 @@ namespace AK {
 template<typename... Parameters>
 void warnln(CheckedFormatString<Parameters...>&& fmtstr, const Parameters&...);
 
+// Declare a helper so that we can call it from VERIFY in included headers
+// before defining TestSuite
+inline void current_test_case_did_fail();
+
 }
 
 using AK::warnln;
@@ -41,8 +25,10 @@ using AK::warnln;
 #undef VERIFY
 #define VERIFY(x)                                                                                    \
     do {                                                                                             \
-        if (!(x))                                                                                    \
+        if (!(x)) {                                                                                  \
             ::AK::warnln("\033[31;1mFAIL\033[0m: {}:{}: VERIFY({}) failed", __FILE__, __LINE__, #x); \
+            current_test_case_did_fail();                                                            \
+        }                                                                                            \
     } while (false)
 
 #undef VERIFY_NOT_REACHED
@@ -90,7 +76,7 @@ private:
     struct timeval m_started;
 };
 
-using TestFunction = AK::Function<void()>;
+using TestFunction = Function<void()>;
 
 class TestCase : public RefCounted<TestCase> {
 public:
@@ -127,13 +113,15 @@ public:
         s_global = nullptr;
     }
 
-    void run(const NonnullRefPtrVector<TestCase>&);
-    void main(const String& suite_name, int argc, char** argv);
+    int run(const NonnullRefPtrVector<TestCase>&);
+    int main(const String& suite_name, int argc, char** argv);
     NonnullRefPtrVector<TestCase> find_cases(const String& search, bool find_tests, bool find_benchmarks);
     void add_case(const NonnullRefPtr<TestCase>& test_case)
     {
         m_cases.append(test_case);
     }
+
+    void current_test_case_did_fail() { m_current_test_case_passed = false; }
 
 private:
     static TestSuite* s_global;
@@ -141,9 +129,12 @@ private:
     u64 m_testtime = 0;
     u64 m_benchtime = 0;
     String m_suite_name;
+    bool m_current_test_case_passed = true;
 };
 
-void TestSuite::main(const String& suite_name, int argc, char** argv)
+inline void current_test_case_did_fail() { TestSuite::the().current_test_case_did_fail(); }
+
+int TestSuite::main(const String& suite_name, int argc, char** argv)
 {
     m_suite_name = suite_name;
 
@@ -167,11 +158,12 @@ void TestSuite::main(const String& suite_name, int argc, char** argv)
         for (const auto& test : matching_tests) {
             outln("    {}", test.name());
         }
-    } else {
-        outln("Running {} cases out of {}.", matching_tests.size(), m_cases.size());
-
-        run(matching_tests);
+        return 0;
     }
+
+    outln("Running {} cases out of {}.", matching_tests.size(), m_cases.size());
+
+    return run(matching_tests);
 }
 
 NonnullRefPtrVector<TestCase> TestSuite::find_cases(const String& search, bool find_tests, bool find_benchmarks)
@@ -194,9 +186,10 @@ NonnullRefPtrVector<TestCase> TestSuite::find_cases(const String& search, bool f
     return matches;
 }
 
-void TestSuite::run(const NonnullRefPtrVector<TestCase>& tests)
+int TestSuite::run(const NonnullRefPtrVector<TestCase>& tests)
 {
     size_t test_count = 0;
+    size_t test_failed_count = 0;
     size_t benchmark_count = 0;
     TestElapsedTimer global_timer;
 
@@ -204,12 +197,13 @@ void TestSuite::run(const NonnullRefPtrVector<TestCase>& tests)
         const auto test_type = t.is_benchmark() ? "benchmark" : "test";
 
         warnln("Running {} '{}'.", test_type, t.name());
+        m_current_test_case_passed = true;
 
         TestElapsedTimer timer;
         t.func()();
         const auto time = timer.elapsed_milliseconds();
 
-        dbgln("Completed {} '{}' in {}ms", test_type, t.name(), time);
+        dbgln("{} {} '{}' in {}ms", m_current_test_case_passed ? "Completed" : "Failed", test_type, t.name(), time);
 
         if (t.is_benchmark()) {
             m_benchtime += time;
@@ -217,6 +211,10 @@ void TestSuite::run(const NonnullRefPtrVector<TestCase>& tests)
         } else {
             m_testtime += time;
             test_count++;
+        }
+
+        if (!m_current_test_case_passed) {
+            test_failed_count++;
         }
     }
 
@@ -227,10 +225,14 @@ void TestSuite::run(const NonnullRefPtrVector<TestCase>& tests)
         m_testtime,
         m_benchtime,
         global_timer.elapsed_milliseconds() - (m_testtime + m_benchtime));
+    dbgln("Out of {} tests, {} passed and {} failed.", test_count, test_count - test_failed_count, test_failed_count);
+
+    return (int)test_failed_count;
 }
 
 }
 
+using AK::current_test_case_did_fail;
 using AK::TestCase;
 using AK::TestSuite;
 
@@ -268,16 +270,19 @@ using AK::TestSuite;
     int main(int argc, char** argv)                                 \
     {                                                               \
         static_assert(compiletime_lenof(#x) != 0, "Set SuiteName"); \
-        TestSuite::the().main(#x, argc, argv);                      \
+        int ret = TestSuite::the().main(#x, argc, argv);            \
         TestSuite::release();                                       \
+        return ret;                                                 \
     }
 
 #define EXPECT_EQ(a, b)                                                                                                                                                                \
     do {                                                                                                                                                                               \
         auto lhs = (a);                                                                                                                                                                \
         auto rhs = (b);                                                                                                                                                                \
-        if (lhs != rhs)                                                                                                                                                                \
+        if (lhs != rhs) {                                                                                                                                                              \
             warnln("\033[31;1mFAIL\033[0m: {}:{}: EXPECT_EQ({}, {}) failed with lhs={} and rhs={}", __FILE__, __LINE__, #a, #b, FormatIfSupported { lhs }, FormatIfSupported { rhs }); \
+            current_test_case_did_fail();                                                                                                                                              \
+        }                                                                                                                                                                              \
     } while (false)
 
 // If you're stuck and `EXPECT_EQ` seems to refuse to print anything useful,
@@ -286,12 +291,29 @@ using AK::TestSuite;
     do {                                                                                                                                   \
         auto lhs = (a);                                                                                                                    \
         auto rhs = (b);                                                                                                                    \
-        if (lhs != rhs)                                                                                                                    \
+        if (lhs != rhs) {                                                                                                                  \
             warnln("\033[31;1mFAIL\033[0m: {}:{}: EXPECT_EQ({}, {}) failed with lhs={} and rhs={}", __FILE__, __LINE__, #a, #b, lhs, rhs); \
+            current_test_case_did_fail();                                                                                                  \
+        }                                                                                                                                  \
     } while (false)
 
 #define EXPECT(x)                                                                              \
     do {                                                                                       \
-        if (!(x))                                                                              \
+        if (!(x)) {                                                                            \
             warnln("\033[31;1mFAIL\033[0m: {}:{}: EXPECT({}) failed", __FILE__, __LINE__, #x); \
+            current_test_case_did_fail();                                                      \
+        }                                                                                      \
+    } while (false)
+
+#define EXPECT_APPROXIMATE(a, b)                                                                                \
+    do {                                                                                                        \
+        auto expect_close_lhs = a;                                                                              \
+        auto expect_close_rhs = b;                                                                              \
+        auto expect_close_diff = static_cast<double>(expect_close_lhs) - static_cast<double>(expect_close_rhs); \
+        if (fabs(expect_close_diff) > 0.0000005) {                                                              \
+            warnln("\033[31;1mFAIL\033[0m: {}:{}: EXPECT_APPROXIMATE({}, {})"                                   \
+                   " failed with lhs={}, rhs={}, (lhs-rhs)={}",                                                 \
+                __FILE__, __LINE__, #a, #b, expect_close_lhs, expect_close_rhs, expect_close_diff);             \
+            current_test_case_did_fail();                                                                       \
+        }                                                                                                       \
     } while (false)

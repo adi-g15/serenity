@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
@@ -34,9 +14,9 @@
 
 namespace Core {
 
-IntrusiveList<Object, &Object::m_all_objects_list_node>& Object::all_objects()
+IntrusiveList<Object, RawPtr<Object>, &Object::m_all_objects_list_node>& Object::all_objects()
 {
-    static IntrusiveList<Object, &Object::m_all_objects_list_node> objects;
+    static IntrusiveList<Object, RawPtr<Object>, &Object::m_all_objects_list_node> objects;
     return objects;
 }
 
@@ -195,7 +175,7 @@ void Object::save_to(JsonObject& json)
     }
 }
 
-JsonValue Object::property(const StringView& name) const
+JsonValue Object::property(String const& name) const
 {
     auto it = m_properties.find(name);
     if (it == m_properties.end())
@@ -203,7 +183,7 @@ JsonValue Object::property(const StringView& name) const
     return it->value->get();
 }
 
-bool Object::set_property(const StringView& name, const JsonValue& value)
+bool Object::set_property(String const& name, JsonValue const& value)
 {
     auto it = m_properties.find(name);
     if (it == m_properties.end())
@@ -227,6 +207,9 @@ void Object::dispatch_event(Core::Event& e, Object* stay_within)
     VERIFY(!stay_within || stay_within == this || stay_within->is_ancestor_of(*this));
     auto* target = this;
     do {
+        // If there's an event filter on this target, ask if it wants to swallow this event.
+        if (target->m_event_filter && !target->m_event_filter(e))
+            return;
         target->event(e);
         target = target->parent();
         if (target == stay_within) {
@@ -262,9 +245,9 @@ void Object::register_property(const String& name, Function<JsonValue()> getter,
     m_properties.set(name, make<Property>(name, move(getter), move(setter)));
 }
 
-const LogStream& operator<<(const LogStream& stream, const Object& object)
+void Object::set_event_filter(Function<bool(Core::Event&)> filter)
 {
-    return stream << object.class_name() << '{' << &object << '}';
+    m_event_filter = move(filter);
 }
 
 }

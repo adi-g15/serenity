@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <Kernel/Arch/x86/SmapDisabler.h>
@@ -51,9 +31,8 @@ RefPtr<VMObject> AnonymousVMObject::clone()
         });
     }
 
-#if COMMIT_DEBUG
-    klog() << "Cloning " << this << ", need " << need_cow_pages << " committed cow pages";
-#endif
+    dbgln_if(COMMIT_DEBUG, "Cloning {:p}, need {} committed cow pages", this, need_cow_pages);
+
     if (!MM.commit_user_physical_pages(need_cow_pages))
         return {};
     // Create or replace the committed cow pages. When cloning a previously
@@ -75,10 +54,15 @@ RefPtr<AnonymousVMObject> AnonymousVMObject::create_with_size(size_t size, Alloc
 {
     if (commit == AllocationStrategy::Reserve || commit == AllocationStrategy::AllocateNow) {
         // We need to attempt to commit before actually creating the object
-        if (!MM.commit_user_physical_pages(ceil_div(size, PAGE_SIZE)))
+        if (!MM.commit_user_physical_pages(ceil_div(size, static_cast<size_t>(PAGE_SIZE))))
             return {};
     }
     return adopt(*new AnonymousVMObject(size, commit));
+}
+
+NonnullRefPtr<AnonymousVMObject> AnonymousVMObject::create_with_physical_pages(NonnullRefPtrVector<PhysicalPage> physical_pages)
+{
+    return adopt(*new AnonymousVMObject(physical_pages));
 }
 
 NonnullRefPtr<AnonymousVMObject> AnonymousVMObject::create_with_physical_page(PhysicalPage& page)
@@ -125,6 +109,15 @@ AnonymousVMObject::AnonymousVMObject(PhysicalPage& page)
     , m_volatile_ranges_cache({ 0, page_count() })
 {
     physical_pages()[0] = page;
+}
+
+AnonymousVMObject::AnonymousVMObject(NonnullRefPtrVector<PhysicalPage> physical_pages)
+    : VMObject()
+    , m_volatile_ranges_cache({ 0, page_count() })
+{
+    for (auto& page : physical_pages) {
+        m_physical_pages.append(page);
+    }
 }
 
 AnonymousVMObject::AnonymousVMObject(const AnonymousVMObject& other)
@@ -210,9 +203,18 @@ int AnonymousVMObject::purge_impl()
                 if (&region.vmobject() == this) {
                     if (auto owner = region.get_owner()) {
                         // we need to hold a reference the process here (if there is one) as we may not own this region
-                        klog() << "Purged " << purged_in_range << " pages from region " << region.name() << " owned by " << *owner << " at " << region.vaddr_from_page_index(range.base) << " - " << region.vaddr_from_page_index(range.base + range.count);
+                        dmesgln("Purged {} pages from region {} owned by {} at {} - {}",
+                            purged_in_range,
+                            region.name(),
+                            *owner,
+                            region.vaddr_from_page_index(range.base),
+                            region.vaddr_from_page_index(range.base + range.count));
                     } else {
-                        klog() << "Purged " << purged_in_range << " pages from region " << region.name() << " (no ownership) at " << region.vaddr_from_page_index(range.base) << " - " << region.vaddr_from_page_index(range.base + range.count);
+                        dmesgln("Purged {} pages from region {} (no ownership) at {} - {}",
+                            purged_in_range,
+                            region.name(),
+                            region.vaddr_from_page_index(range.base),
+                            region.vaddr_from_page_index(range.base + range.count));
                     }
                     region.remap_vmobject_page_range(range.base, range.count);
                 }
@@ -312,9 +314,7 @@ void AnonymousVMObject::range_made_volatile(const VolatilePageRange& range)
 
     // Return those committed pages back to the system
     if (uncommit_page_count > 0) {
-#if COMMIT_DEBUG
-        klog() << "Uncommit " << uncommit_page_count << " lazy-commit pages from " << this;
-#endif
+        dbgln_if(COMMIT_DEBUG, "Uncommit {} lazy-commit pages from {:p}", uncommit_page_count, this);
         MM.uncommit_user_physical_pages(uncommit_page_count);
     }
 
@@ -336,7 +336,7 @@ size_t AnonymousVMObject::count_needed_commit_pages_for_nonvolatile_range(const 
     auto range_end = range.base + range.count;
     for (size_t page_index = range.base; page_index < range_end; page_index++) {
         // COW pages are accounted for in m_shared_committed_cow_pages
-        if (m_cow_map && m_cow_map->get(page_index))
+        if (!m_cow_map.is_null() && m_cow_map.get(page_index))
             continue;
         auto& phys_page = m_physical_pages[page_index];
         if (phys_page && phys_page->is_shared_zero_page())
@@ -355,7 +355,7 @@ size_t AnonymousVMObject::mark_committed_pages_for_nonvolatile_range(const Volat
     auto range_end = range.base + range.count;
     for (size_t page_index = range.base; page_index < range_end; page_index++) {
         // COW pages are accounted for in m_shared_committed_cow_pages
-        if (m_cow_map && m_cow_map->get(page_index))
+        if (!m_cow_map.is_null() && m_cow_map.get(page_index))
             continue;
         auto& phys_page = m_physical_pages[page_index];
         if (phys_page && phys_page->is_shared_zero_page()) {
@@ -365,9 +365,8 @@ size_t AnonymousVMObject::mark_committed_pages_for_nonvolatile_range(const Volat
         }
     }
 
-#if COMMIT_DEBUG
-    klog() << "Added " << pages_updated << " lazy-commit pages to " << this;
-#endif
+    dbgln_if(COMMIT_DEBUG, "Added {} lazy-commit pages to {:p}", pages_updated, this);
+
     m_unused_committed_pages += pages_updated;
     return pages_updated;
 }
@@ -395,17 +394,17 @@ RefPtr<PhysicalPage> AnonymousVMObject::allocate_committed_page(size_t page_inde
 
 Bitmap& AnonymousVMObject::ensure_cow_map()
 {
-    if (!m_cow_map)
-        m_cow_map = make<Bitmap>(page_count(), true);
-    return *m_cow_map;
+    if (m_cow_map.is_null())
+        m_cow_map = Bitmap { page_count(), true };
+    return m_cow_map;
 }
 
 void AnonymousVMObject::ensure_or_reset_cow_map()
 {
-    if (!m_cow_map)
-        m_cow_map = make<Bitmap>(page_count(), true);
+    if (m_cow_map.is_null())
+        ensure_cow_map();
     else
-        m_cow_map->fill(true);
+        m_cow_map.fill(true);
 }
 
 bool AnonymousVMObject::should_cow(size_t page_index, bool is_shared) const
@@ -415,7 +414,7 @@ bool AnonymousVMObject::should_cow(size_t page_index, bool is_shared) const
         return true;
     if (is_shared)
         return false;
-    return m_cow_map && m_cow_map->get(page_index);
+    return !m_cow_map.is_null() && m_cow_map.get(page_index);
 }
 
 void AnonymousVMObject::set_should_cow(size_t page_index, bool cow)
@@ -425,9 +424,9 @@ void AnonymousVMObject::set_should_cow(size_t page_index, bool cow)
 
 size_t AnonymousVMObject::cow_pages() const
 {
-    if (!m_cow_map)
+    if (m_cow_map.is_null())
         return 0;
-    return m_cow_map->count_slow(true);
+    return m_cow_map.count_slow(true);
 }
 
 bool AnonymousVMObject::is_nonvolatile(size_t page_index)
@@ -467,7 +466,7 @@ PageFaultResponse AnonymousVMObject::handle_cow_fault(size_t page_index, Virtual
 #endif
         page = MM.allocate_user_physical_page(MemoryManager::ShouldZeroFill::No);
         if (page.is_null()) {
-            klog() << "MM: handle_cow_fault was unable to allocate a physical page";
+            dmesgln("MM: handle_cow_fault was unable to allocate a physical page");
             return PageFaultResponse::OutOfMemory;
         }
     }

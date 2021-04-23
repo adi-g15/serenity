@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibGfx/Painter.h>
@@ -46,10 +26,12 @@ void Box::paint(PaintContext& context, PaintPhase phase)
     auto padded_rect = this->padded_rect();
 
     if (phase == PaintPhase::Background && !is_body()) {
-        context.painter().fill_rect(enclosing_int_rect(padded_rect), computed_values().background_color());
+        auto background_rect = enclosing_int_rect(padded_rect);
+        context.painter().fill_rect(background_rect, computed_values().background_color());
 
-        if (background_image() && background_image()->bitmap())
-            context.painter().draw_tiled_bitmap(enclosing_int_rect(padded_rect), *background_image()->bitmap());
+        if (background_image() && background_image()->bitmap()) {
+            paint_background_image(context, *background_image()->bitmap(), computed_values().background_repeat_x(), computed_values().background_repeat_y(), move(background_rect));
+        }
     }
 
     if (phase == PaintPhase::Border) {
@@ -80,6 +62,40 @@ void Box::paint(PaintContext& context, PaintPhase phase)
     if (phase == PaintPhase::FocusOutline && dom_node() && dom_node()->is_element() && downcast<DOM::Element>(*dom_node()).is_focused()) {
         context.painter().draw_rect(enclosing_int_rect(absolute_rect()), context.palette().focus_outline());
     }
+}
+
+void Box::paint_background_image(
+    PaintContext& context,
+    const Gfx::Bitmap& background_image,
+    CSS::Repeat background_repeat_x,
+    CSS::Repeat background_repeat_y,
+    Gfx::IntRect background_rect)
+{
+    switch (background_repeat_x) {
+    case CSS::Repeat::Round:
+    case CSS::Repeat::Space:
+        // FIXME: Support 'round' and 'space'. Fall through to 'repeat' since that most closely resembles these.
+    case CSS::Repeat::Repeat:
+        // The background rect is already sized to align with 'repeat'.
+        break;
+    case CSS::Repeat::NoRepeat:
+        background_rect.set_width(background_image.width());
+        break;
+    }
+
+    switch (background_repeat_y) {
+    case CSS::Repeat::Round:
+    case CSS::Repeat::Space:
+        // FIXME: Support 'round' and 'space'. Fall through to 'repeat' since that most closely resembles these.
+    case CSS::Repeat::Repeat:
+        // The background rect is already sized to align with 'repeat'.
+        break;
+    case CSS::Repeat::NoRepeat:
+        background_rect.set_height(background_image.height());
+        break;
+    }
+
+    context.painter().blit_tiled(background_rect, background_image, background_image.rect());
 }
 
 HitTestResult Box::hit_test(const Gfx::IntPoint& position, HitTestType type) const

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "JSIntegration.h"
@@ -64,6 +44,10 @@ Optional<FunctionAndArgumentIndex> get_function_and_argument_index(StringView so
         case JS::TokenType::ParenClose:
             previous_was_identifier = false;
             if (open_parens_since_last_commit == 0) {
+                if (state.is_empty() || names.is_empty()) {
+                    // JS Syntax error.
+                    break;
+                }
                 state.take_last();
                 names.take_last();
                 break;
@@ -73,7 +57,8 @@ Optional<FunctionAndArgumentIndex> get_function_and_argument_index(StringView so
         case JS::TokenType::Comma:
             previous_was_identifier = false;
             if (open_parens_since_last_commit == 0 && open_curlies_and_brackets_since_last_commit == 0) {
-                state.last()++;
+                if (!state.is_empty())
+                    state.last()++;
                 break;
             }
             break;
@@ -116,7 +101,7 @@ SheetGlobalObject::~SheetGlobalObject()
 {
 }
 
-JS::Value SheetGlobalObject::get(const JS::PropertyName& name, JS::Value receiver) const
+JS::Value SheetGlobalObject::get(const JS::PropertyName& name, JS::Value receiver, bool without_side_effects) const
 {
     if (name.is_string()) {
         if (name.as_string() == "value") {
@@ -132,7 +117,7 @@ JS::Value SheetGlobalObject::get(const JS::PropertyName& name, JS::Value receive
         }
     }
 
-    return GlobalObject::get(name, receiver);
+    return GlobalObject::get(name, receiver, without_side_effects);
 }
 
 bool SheetGlobalObject::put(const JS::PropertyName& name, JS::Value value, JS::Value receiver)
@@ -151,9 +136,9 @@ bool SheetGlobalObject::put(const JS::PropertyName& name, JS::Value value, JS::V
     return GlobalObject::put(name, value, receiver);
 }
 
-void SheetGlobalObject::initialize()
+void SheetGlobalObject::initialize_global_object()
 {
-    GlobalObject::initialize();
+    Base::initialize_global_object();
     define_native_function("get_real_cell_contents", get_real_cell_contents, 1);
     define_native_function("set_real_cell_contents", set_real_cell_contents, 2);
     define_native_function("parse_cell_name", parse_cell_name, 1);
@@ -444,7 +429,9 @@ JS_DEFINE_NATIVE_FUNCTION(WorkbookObject::sheet)
                 return JS::Value(&sheet.global_object());
         }
     } else {
-        auto index = name_value.as_size_t();
+        auto index = name_value.to_length(global_object);
+        if (vm.exception())
+            return {};
         if (index < workbook.sheets().size())
             return JS::Value(&workbook.sheets()[index].global_object());
     }

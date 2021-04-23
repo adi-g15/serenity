@@ -1,27 +1,7 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
+ * Copyright (c) 2020-2021, the SerenityOS developers.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Spreadsheet.h"
@@ -40,6 +20,7 @@
 #include <LibJS/Parser.h>
 #include <LibJS/Runtime/Function.h>
 #include <ctype.h>
+#include <unistd.h>
 
 namespace Spreadsheet {
 
@@ -60,7 +41,7 @@ Sheet::Sheet(Workbook& workbook)
 {
     JS::DeferGC defer_gc(m_workbook.interpreter().heap());
     m_global_object = m_workbook.interpreter().heap().allocate_without_global_object<SheetGlobalObject>(*this);
-    global_object().initialize();
+    global_object().initialize_global_object();
     global_object().put("workbook", m_workbook.workbook_object());
     global_object().put("thisSheet", &global_object()); // Self-reference is unfortunate, but required.
 
@@ -113,7 +94,7 @@ static String convert_to_string(size_t value, unsigned base = 26, StringView map
         value /= base;
     } while (value > 0);
 
-    // NOTE: Weird as this may seem, the thing that comes after 'A' is 'AA', which as a number would be '00'
+    // NOTE: Weird as this may seem, the thing that comes after 'Z' is 'AA', which as a number would be '00'
     //       to make this work, only the most significant digit has to be in a range of (1..25) as opposed to (0..25),
     //       but only if it's not the only digit in the string.
     if (i > 1)
@@ -198,10 +179,10 @@ Sheet::ValueAndException Sheet::evaluate(const StringView& source, Cell* on_beha
     ScopeGuard clear_exception { [&] { interpreter().vm().clear_exception(); } };
 
     auto parser = JS::Parser(JS::Lexer(source));
+    auto program = parser.parse_program();
     if (parser.has_errors() || interpreter().exception())
         return { JS::js_undefined(), interpreter().exception() };
 
-    auto program = parser.parse_program();
     interpreter().run(global_object(), program);
     if (interpreter().exception()) {
         auto exc = interpreter().exception();
@@ -325,7 +306,7 @@ Position Sheet::offset_relative_to(const Position& base, const Position& offset,
     return { new_column, new_row };
 }
 
-void Sheet::copy_cells(Vector<Position> from, Vector<Position> to, Optional<Position> resolve_relative_to)
+void Sheet::copy_cells(Vector<Position> from, Vector<Position> to, Optional<Position> resolve_relative_to, CopyOperation copy_operation)
 {
     auto copy_to = [&](auto& source_position, Position target_position) {
         auto& target_cell = ensure(target_position);
@@ -337,6 +318,8 @@ void Sheet::copy_cells(Vector<Position> from, Vector<Position> to, Optional<Posi
         }
 
         target_cell.copy_from(*source_cell);
+        if (copy_operation == CopyOperation::Cut)
+            source_cell->set_data("");
     };
 
     if (from.size() == to.size()) {
@@ -380,6 +363,10 @@ RefPtr<Sheet> Sheet::from_json(const JsonObject& object, Workbook& workbook)
     auto rows = object.get("rows").to_u32(default_row_count);
     auto columns = object.get("columns");
     auto name = object.get("name").as_string_or("Sheet");
+    auto cells_value = object.get_or("cells", JsonObject {});
+    if (!cells_value.is_object())
+        return nullptr;
+    auto& cells = cells_value.as_object();
 
     sheet->set_name(name);
 
@@ -399,7 +386,6 @@ RefPtr<Sheet> Sheet::from_json(const JsonObject& object, Workbook& workbook)
             sheet->add_column();
     }
 
-    auto cells = object.get("cells").as_object();
     auto json = sheet->interpreter().global_object().get("JSON");
     auto& parse_function = json.as_object().get("parse").as_function();
 
@@ -489,6 +475,8 @@ Position Sheet::written_data_bounds() const
 {
     Position bound;
     for (auto& entry : m_cells) {
+        if (entry.value->data().is_empty())
+            continue;
         if (entry.key.row >= bound.row)
             bound.row = entry.key.row;
         if (entry.key.column >= bound.column)
@@ -536,7 +524,7 @@ JsonObject Sheet::to_json() const
     JsonObject cells;
     for (auto& it : m_cells) {
         StringBuilder builder;
-        builder.append(it.key.column);
+        builder.append(column(it.key.column));
         builder.appendff("{}", it.key.row);
         auto key = builder.to_string();
 
@@ -630,7 +618,13 @@ RefPtr<Sheet> Sheet::from_xsv(const Reader::XSV& xsv, Workbook& workbook)
     auto rows = xsv.size();
 
     auto sheet = adopt(*new Sheet(workbook));
-    sheet->m_columns = cols;
+    if (xsv.has_explicit_headers()) {
+        sheet->m_columns = cols;
+    } else {
+        sheet->m_columns.ensure_capacity(cols.size());
+        for (size_t i = 0; i < cols.size(); ++i)
+            sheet->m_columns.append(convert_to_string(i));
+    }
     for (size_t i = 0; i < max(rows, Sheet::default_row_count); ++i)
         sheet->add_row();
     if (sheet->columns_are_standard()) {
@@ -726,13 +720,18 @@ String Sheet::generate_inline_documentation_for(StringView function, size_t argu
     return builder.build();
 }
 
+String Position::to_cell_identifier(const Sheet& sheet) const
+{
+    return String::formatted("{}{}", sheet.column(column), row);
+}
+
 URL Position::to_url(const Sheet& sheet) const
 {
     URL url;
     url.set_protocol("spreadsheet");
     url.set_host("cell");
     url.set_path(String::formatted("/{}", getpid()));
-    url.set_fragment(String::formatted("{}{}", sheet.column(column), row));
+    url.set_fragment(to_cell_identifier(sheet));
     return url;
 }
 

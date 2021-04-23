@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringBuilder.h>
@@ -106,14 +86,22 @@ KResult Socket::setsockopt(int level, int option, Userspace<const void*> user_va
     case SO_SNDTIMEO:
         if (user_value_size != sizeof(timeval))
             return EINVAL;
-        if (!copy_from_user(&m_send_timeout, static_ptr_cast<const timeval*>(user_value)))
-            return EFAULT;
+        {
+            auto timeout = copy_time_from_user(static_ptr_cast<const timeval*>(user_value));
+            if (!timeout.has_value())
+                return EFAULT;
+            m_send_timeout = timeout.value();
+        }
         return KSuccess;
     case SO_RCVTIMEO:
         if (user_value_size != sizeof(timeval))
             return EINVAL;
-        if (!copy_from_user(&m_receive_timeout, static_ptr_cast<const timeval*>(user_value)))
-            return EFAULT;
+        {
+            auto timeout = copy_time_from_user(static_ptr_cast<const timeval*>(user_value));
+            if (!timeout.has_value())
+                return EFAULT;
+            m_receive_timeout = timeout.value();
+        }
         return KSuccess;
     case SO_BINDTODEVICE: {
         if (user_value_size != IFNAMSIZ)
@@ -134,8 +122,12 @@ KResult Socket::setsockopt(int level, int option, Userspace<const void*> user_va
     case SO_TIMESTAMP:
         if (user_value_size != sizeof(int))
             return EINVAL;
-        if (!copy_from_user(&m_timestamp, static_ptr_cast<const int*>(user_value)))
-            return EFAULT;
+        {
+            int timestamp;
+            if (!copy_from_user(&timestamp, static_ptr_cast<const int*>(user_value)))
+                return EFAULT;
+            m_timestamp = timestamp;
+        }
         if (m_timestamp && (domain() != AF_INET || type() == SOCK_STREAM)) {
             // FIXME: Support SO_TIMESTAMP for more protocols?
             m_timestamp = 0;
@@ -164,8 +156,11 @@ KResult Socket::getsockopt(FileDescription&, int level, int option, Userspace<vo
     case SO_SNDTIMEO:
         if (size < sizeof(timeval))
             return EINVAL;
-        if (!copy_to_user(static_ptr_cast<timeval*>(value), &m_send_timeout))
-            return EFAULT;
+        {
+            timeval tv = m_send_timeout.to_timeval();
+            if (!copy_to_user(static_ptr_cast<timeval*>(value), &tv))
+                return EFAULT;
+        }
         size = sizeof(timeval);
         if (!copy_to_user(value_size, &size))
             return EFAULT;
@@ -173,8 +168,11 @@ KResult Socket::getsockopt(FileDescription&, int level, int option, Userspace<vo
     case SO_RCVTIMEO:
         if (size < sizeof(timeval))
             return EINVAL;
-        if (!copy_to_user(static_ptr_cast<timeval*>(value), &m_receive_timeout))
-            return EFAULT;
+        {
+            timeval tv = m_send_timeout.to_timeval();
+            if (!copy_to_user(static_ptr_cast<timeval*>(value), &tv))
+                return EFAULT;
+        }
         size = sizeof(timeval);
         if (!copy_to_user(value_size, &size))
             return EFAULT;
@@ -225,18 +223,18 @@ KResult Socket::getsockopt(FileDescription&, int level, int option, Userspace<vo
     }
 }
 
-KResultOr<size_t> Socket::read(FileDescription& description, size_t, UserOrKernelBuffer& buffer, size_t size)
+KResultOr<size_t> Socket::read(FileDescription& description, u64, UserOrKernelBuffer& buffer, size_t size)
 {
     if (is_shut_down_for_reading())
         return 0;
-    timeval tv;
-    return recvfrom(description, buffer, size, 0, {}, 0, tv);
+    Time t {};
+    return recvfrom(description, buffer, size, 0, {}, 0, t);
 }
 
-KResultOr<size_t> Socket::write(FileDescription& description, size_t, const UserOrKernelBuffer& data, size_t size)
+KResultOr<size_t> Socket::write(FileDescription& description, u64, const UserOrKernelBuffer& data, size_t size)
 {
     if (is_shut_down_for_writing())
-        return -EPIPE;
+        return EPIPE;
     return sendto(description, data, size, 0, {}, 0);
 }
 

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Base64.h>
@@ -40,11 +20,13 @@
 #include <LibWeb/Bindings/NavigatorObject.h>
 #include <LibWeb/Bindings/NodeWrapperFactory.h>
 #include <LibWeb/Bindings/PerformanceWrapper.h>
+#include <LibWeb/Bindings/ScreenWrapper.h>
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/Window.h>
 #include <LibWeb/Origin.h>
+#include <LibWeb/Page/Frame.h>
 
 #include <LibWeb/Bindings/WindowObjectHelper.h>
 
@@ -56,17 +38,22 @@ WindowObject::WindowObject(DOM::Window& impl)
     impl.set_wrapper({}, *this);
 }
 
-void WindowObject::initialize()
+void WindowObject::initialize_global_object()
 {
-    GlobalObject::initialize();
+    Base::initialize_global_object();
 
     set_prototype(&ensure_web_prototype<EventTargetPrototype>("EventTarget"));
 
     define_property("window", this, JS::Attribute::Enumerable);
     define_property("frames", this, JS::Attribute::Enumerable);
     define_property("self", this, JS::Attribute::Enumerable);
-    define_native_property("document", document_getter, document_setter, JS::Attribute::Enumerable);
+    define_native_property("top", top_getter, nullptr, JS::Attribute::Enumerable);
+    define_native_property("parent", parent_getter, nullptr, JS::Attribute::Enumerable);
+    define_native_property("document", document_getter, nullptr, JS::Attribute::Enumerable);
     define_native_property("performance", performance_getter, nullptr, JS::Attribute::Enumerable);
+    define_native_property("screen", screen_getter, nullptr, JS::Attribute::Enumerable);
+    define_native_property("innerWidth", inner_width_getter, nullptr, JS::Attribute::Enumerable);
+    define_native_property("innerHeight", inner_height_getter, nullptr, JS::Attribute::Enumerable);
     define_native_function("alert", alert);
     define_native_function("confirm", confirm);
     define_native_function("prompt", prompt);
@@ -348,17 +335,40 @@ JS_DEFINE_NATIVE_FUNCTION(WindowObject::btoa)
     return JS::js_string(vm, move(encoded));
 }
 
+JS_DEFINE_NATIVE_GETTER(WindowObject::top_getter)
+{
+    auto* impl = impl_from(vm, global_object);
+    if (!impl)
+        return {};
+    auto* this_frame = impl->document().frame();
+    VERIFY(this_frame);
+    VERIFY(this_frame->main_frame().document());
+    auto& top_window = this_frame->main_frame().document()->window();
+    return top_window.wrapper();
+}
+
+JS_DEFINE_NATIVE_GETTER(WindowObject::parent_getter)
+{
+    auto* impl = impl_from(vm, global_object);
+    if (!impl)
+        return {};
+    auto* this_frame = impl->document().frame();
+    VERIFY(this_frame);
+    if (this_frame->parent()) {
+        VERIFY(this_frame->parent()->document());
+        auto& parent_window = this_frame->parent()->document()->window();
+        return parent_window.wrapper();
+    }
+    VERIFY(this_frame == &this_frame->main_frame());
+    return impl->wrapper();
+}
+
 JS_DEFINE_NATIVE_GETTER(WindowObject::document_getter)
 {
     auto* impl = impl_from(vm, global_object);
     if (!impl)
         return {};
     return wrap(global_object, impl->document());
-}
-
-JS_DEFINE_NATIVE_SETTER(WindowObject::document_setter)
-{
-    // FIXME: Figure out what we should do here. Just ignore attempts to set window.document for now.
 }
 
 JS_DEFINE_NATIVE_GETTER(WindowObject::performance_getter)
@@ -369,6 +379,14 @@ JS_DEFINE_NATIVE_GETTER(WindowObject::performance_getter)
     return wrap(global_object, impl->performance());
 }
 
+JS_DEFINE_NATIVE_GETTER(WindowObject::screen_getter)
+{
+    auto* impl = impl_from(vm, global_object);
+    if (!impl)
+        return {};
+    return wrap(global_object, impl->screen());
+}
+
 JS_DEFINE_NATIVE_GETTER(WindowObject::event_getter)
 {
     auto* impl = impl_from(vm, global_object);
@@ -377,6 +395,22 @@ JS_DEFINE_NATIVE_GETTER(WindowObject::event_getter)
     if (!impl->current_event())
         return JS::js_undefined();
     return wrap(global_object, const_cast<DOM::Event&>(*impl->current_event()));
+}
+
+JS_DEFINE_NATIVE_GETTER(WindowObject::inner_width_getter)
+{
+    auto* impl = impl_from(vm, global_object);
+    if (!impl)
+        return {};
+    return JS::Value(impl->inner_width());
+}
+
+JS_DEFINE_NATIVE_GETTER(WindowObject::inner_height_getter)
+{
+    auto* impl = impl_from(vm, global_object);
+    if (!impl)
+        return {};
+    return JS::Value(impl->inner_height());
 }
 
 }

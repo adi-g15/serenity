@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
@@ -29,10 +9,11 @@
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Types.h>
-#include <Kernel/Arch/i386/CPU.h>
-#include <Kernel/Arch/i386/ISRStubs.h>
-#include <Kernel/Arch/i386/ProcessorInfo.h>
-#include <Kernel/Arch/i386/SafeMem.h>
+#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/Arch/x86/ISRStubs.h>
+#include <Kernel/Arch/x86/ProcessorInfo.h>
+#include <Kernel/Arch/x86/SafeMem.h>
+#include <Kernel/Assertions.h>
 #include <Kernel/Debug.h>
 #include <Kernel/IO.h>
 #include <Kernel/Interrupts/APIC.h>
@@ -58,7 +39,7 @@ extern FlatPtr end_of_ro_after_init;
 namespace Kernel {
 
 READONLY_AFTER_INIT static DescriptorTablePointer s_idtr;
-READONLY_AFTER_INIT static Descriptor s_idt[256];
+READONLY_AFTER_INIT static IDTEntry s_idt[256];
 
 static GenericInterruptHandler* s_interrupt_handler[GENERIC_INTERRUPT_HANDLERS_COUNT];
 
@@ -76,6 +57,7 @@ extern "C" void handle_interrupt(TrapFrame*);
 
 // clang-format off
 
+#if ARCH(I386)
 #define EH_ENTRY(ec, title)                         \
     extern "C" void title##_asm_entry();            \
     extern "C" void title##_handler(TrapFrame*); \
@@ -126,6 +108,26 @@ extern "C" void handle_interrupt(TrapFrame*);
         "    call enter_trap_no_irq \n"             \
         "    call " #title "_handler\n"             \
         "    jmp common_trap_exit \n");
+
+#elif ARCH(X86_64)
+#define EH_ENTRY(ec, title)                         \
+    extern "C" void title##_asm_entry();            \
+    extern "C" void title##_handler(TrapFrame*);    \
+    asm(                                            \
+        ".globl " #title "_asm_entry\n"             \
+        "" #title "_asm_entry: \n"                  \
+        "    cli;hlt;\n"                            \
+);
+
+#define EH_ENTRY_NO_CODE(ec, title)                 \
+    extern "C" void title##_handler(TrapFrame*);    \
+    extern "C" void title##_asm_entry();            \
+asm(                                                \
+        ".globl " #title "_asm_entry\n"             \
+        "" #title "_asm_entry: \n"                  \
+        "    cli;hlt;\n"                            \
+);
+#endif
 
 // clang-format on
 
@@ -263,7 +265,8 @@ void page_fault_handler(TrapFrame* trap)
         PANIC("Attempt to access UNMAP_AFTER_INIT section");
     }
 
-    auto response = MM.handle_page_fault(PageFault(regs.exception_code, VirtualAddress(fault_address)));
+    PageFault fault { regs.exception_code, VirtualAddress { fault_address } };
+    auto response = MM.handle_page_fault(fault);
 
     if (response == PageFaultResponse::ShouldCrash || response == PageFaultResponse::OutOfMemory) {
         if (faulted_in_kernel && handle_safe_access_fault(regs, fault_address)) {
@@ -307,6 +310,18 @@ void page_fault_handler(TrapFrame* trap)
             dbgln("Note: Address {} looks like a possible nullptr dereference", VirtualAddress(fault_address));
         }
 
+        auto& current_process = current_thread->process();
+        if (current_process.is_user_process()) {
+            current_process.set_coredump_metadata("fault_address", String::formatted("{:p}", fault_address));
+            current_process.set_coredump_metadata("fault_type", fault.type() == PageFault::Type::PageNotPresent ? "NotPresent" : "ProtectionViolation");
+            String fault_access;
+            if (fault.is_instruction_fetch())
+                fault_access = "Execute";
+            else
+                fault_access = fault.access() == PageFault::Access::Read ? "Read" : "Write";
+            current_process.set_coredump_metadata("fault_access", fault_access);
+        }
+
         handle_crash(regs, "Page Fault", SIGSEGV, response == PageFaultResponse::OutOfMemory);
     } else if (response == PageFaultResponse::Continue) {
 #if PAGE_FAULT_DEBUG
@@ -328,14 +343,15 @@ void debug_handler(TrapFrame* trap)
         PANIC("Debug exception in ring 0");
     }
     constexpr u8 REASON_SINGLESTEP = 14;
-    bool is_reason_singlestep = (read_dr6() & (1 << REASON_SINGLESTEP));
-    if (!is_reason_singlestep)
+    auto debug_status = read_dr6();
+    auto should_trap_mask = (1 << REASON_SINGLESTEP) | 0b1111;
+    if ((debug_status & should_trap_mask) == 0)
         return;
-
     if (auto tracer = process.tracer()) {
         tracer->set_regs(regs);
     }
     current_thread->send_urgent_signal_to_self(SIGTRAP);
+    write_dr6(debug_status & ~(should_trap_mask));
 }
 
 EH_ENTRY_NO_CODE(3, breakpoint);
@@ -384,64 +400,77 @@ static void unimp_trap()
 
 GenericInterruptHandler& get_interrupt_handler(u8 interrupt_number)
 {
-    VERIFY(s_interrupt_handler[interrupt_number] != nullptr);
-    return *s_interrupt_handler[interrupt_number];
+    auto*& handler_slot = s_interrupt_handler[interrupt_number];
+    VERIFY(handler_slot != nullptr);
+    return *handler_slot;
 }
 
 static void revert_to_unused_handler(u8 interrupt_number)
 {
-    new UnhandledInterruptHandler(interrupt_number);
+    auto handler = new UnhandledInterruptHandler(interrupt_number);
+    handler->register_interrupt_handler();
 }
 
 void register_generic_interrupt_handler(u8 interrupt_number, GenericInterruptHandler& handler)
 {
     VERIFY(interrupt_number < GENERIC_INTERRUPT_HANDLERS_COUNT);
-    if (s_interrupt_handler[interrupt_number] != nullptr) {
-        if (s_interrupt_handler[interrupt_number]->type() == HandlerType::UnhandledInterruptHandler) {
-            s_interrupt_handler[interrupt_number] = &handler;
+    auto*& handler_slot = s_interrupt_handler[interrupt_number];
+    if (handler_slot != nullptr) {
+        if (handler_slot->type() == HandlerType::UnhandledInterruptHandler) {
+            if (handler_slot) {
+                auto* unhandled_handler = static_cast<UnhandledInterruptHandler*>(handler_slot);
+                unhandled_handler->unregister_interrupt_handler();
+                delete unhandled_handler;
+            }
+            handler_slot = &handler;
             return;
         }
-        if (s_interrupt_handler[interrupt_number]->is_shared_handler() && !s_interrupt_handler[interrupt_number]->is_sharing_with_others()) {
-            VERIFY(s_interrupt_handler[interrupt_number]->type() == HandlerType::SharedIRQHandler);
-            static_cast<SharedIRQHandler*>(s_interrupt_handler[interrupt_number])->register_handler(handler);
+        if (handler_slot->is_shared_handler() && !handler_slot->is_sharing_with_others()) {
+            VERIFY(handler_slot->type() == HandlerType::SharedIRQHandler);
+            static_cast<SharedIRQHandler*>(handler_slot)->register_handler(handler);
             return;
         }
-        if (!s_interrupt_handler[interrupt_number]->is_shared_handler()) {
-            if (s_interrupt_handler[interrupt_number]->type() == HandlerType::SpuriousInterruptHandler) {
-                static_cast<SpuriousInterruptHandler*>(s_interrupt_handler[interrupt_number])->register_handler(handler);
+        if (!handler_slot->is_shared_handler()) {
+            if (handler_slot->type() == HandlerType::SpuriousInterruptHandler) {
+                static_cast<SpuriousInterruptHandler*>(handler_slot)->register_handler(handler);
                 return;
             }
-            VERIFY(s_interrupt_handler[interrupt_number]->type() == HandlerType::IRQHandler);
-            auto& previous_handler = *s_interrupt_handler[interrupt_number];
-            s_interrupt_handler[interrupt_number] = nullptr;
+            VERIFY(handler_slot->type() == HandlerType::IRQHandler);
+            auto& previous_handler = *handler_slot;
+            handler_slot = nullptr;
             SharedIRQHandler::initialize(interrupt_number);
-            static_cast<SharedIRQHandler*>(s_interrupt_handler[interrupt_number])->register_handler(previous_handler);
-            static_cast<SharedIRQHandler*>(s_interrupt_handler[interrupt_number])->register_handler(handler);
+            VERIFY(handler_slot);
+            static_cast<SharedIRQHandler*>(handler_slot)->register_handler(previous_handler);
+            static_cast<SharedIRQHandler*>(handler_slot)->register_handler(handler);
             return;
         }
         VERIFY_NOT_REACHED();
     } else {
-        s_interrupt_handler[interrupt_number] = &handler;
+        handler_slot = &handler;
     }
 }
 
 void unregister_generic_interrupt_handler(u8 interrupt_number, GenericInterruptHandler& handler)
 {
-    VERIFY(s_interrupt_handler[interrupt_number] != nullptr);
-    if (s_interrupt_handler[interrupt_number]->type() == HandlerType::UnhandledInterruptHandler) {
+    auto*& handler_slot = s_interrupt_handler[interrupt_number];
+    VERIFY(handler_slot != nullptr);
+    if (handler_slot->type() == HandlerType::UnhandledInterruptHandler) {
         dbgln("Trying to unregister unused handler (?)");
         return;
     }
-    if (s_interrupt_handler[interrupt_number]->is_shared_handler() && !s_interrupt_handler[interrupt_number]->is_sharing_with_others()) {
-        VERIFY(s_interrupt_handler[interrupt_number]->type() == HandlerType::SharedIRQHandler);
-        static_cast<SharedIRQHandler*>(s_interrupt_handler[interrupt_number])->unregister_handler(handler);
-        if (!static_cast<SharedIRQHandler*>(s_interrupt_handler[interrupt_number])->sharing_devices_count()) {
+    if (handler_slot->is_shared_handler() && !handler_slot->is_sharing_with_others()) {
+        VERIFY(handler_slot->type() == HandlerType::SharedIRQHandler);
+        auto* shared_handler = static_cast<SharedIRQHandler*>(handler_slot);
+        shared_handler->unregister_handler(handler);
+        if (!shared_handler->sharing_devices_count()) {
+            handler_slot = nullptr;
             revert_to_unused_handler(interrupt_number);
         }
         return;
     }
-    if (!s_interrupt_handler[interrupt_number]->is_shared_handler()) {
-        VERIFY(s_interrupt_handler[interrupt_number]->type() == HandlerType::IRQHandler);
+    if (!handler_slot->is_shared_handler()) {
+        VERIFY(handler_slot->type() == HandlerType::IRQHandler);
+        handler_slot = nullptr;
         revert_to_unused_handler(interrupt_number);
         return;
     }
@@ -450,14 +479,18 @@ void unregister_generic_interrupt_handler(u8 interrupt_number, GenericInterruptH
 
 UNMAP_AFTER_INIT void register_interrupt_handler(u8 index, void (*handler)())
 {
-    s_idt[index].low = 0x00080000 | LSW((FlatPtr)(handler));
-    s_idt[index].high = ((FlatPtr)(handler)&0xffff0000) | 0x8e00;
+    // FIXME: Why is that with selector 8?
+    // FIXME: Is the Gate Type really required to be an Interrupt
+    // FIXME: What's up with that storage segment 0?
+    s_idt[index] = IDTEntry((FlatPtr)handler, 8, IDTEntryType::InterruptGate32, 0, 0);
 }
 
 UNMAP_AFTER_INIT void register_user_callable_interrupt_handler(u8 index, void (*handler)())
 {
-    s_idt[index].low = 0x00080000 | LSW(((FlatPtr)handler));
-    s_idt[index].high = ((FlatPtr)(handler)&0xffff0000) | 0xef00;
+    // FIXME: Why is that with selector 8?
+    // FIXME: Is the Gate Type really required to be a Trap
+    // FIXME: What's up with that storage segment 0?
+    s_idt[index] = IDTEntry((FlatPtr)handler, 8, IDTEntryType::TrapGate32, 0, 3);
 }
 
 UNMAP_AFTER_INIT void flush_idt()
@@ -671,7 +704,8 @@ UNMAP_AFTER_INIT static void idt_init()
     dbgln("Installing Unhandled Handlers");
 
     for (u8 i = 0; i < GENERIC_INTERRUPT_HANDLERS_COUNT; ++i) {
-        new UnhandledInterruptHandler(i);
+        auto* handler = new UnhandledInterruptHandler(i);
+        handler->register_interrupt_handler();
     }
 
     flush_idt();
@@ -802,17 +836,86 @@ FlatPtr read_cr4()
     return cr4;
 }
 
-FlatPtr read_dr6()
+void read_debug_registers_into(DebugRegisterState& state)
 {
-    FlatPtr dr6;
+    state.dr0 = read_dr0();
+    state.dr1 = read_dr1();
+    state.dr2 = read_dr2();
+    state.dr3 = read_dr3();
+    state.dr6 = read_dr6();
+    state.dr7 = read_dr7();
+}
+
+void write_debug_registers_from(const DebugRegisterState& state)
+{
+    write_dr0(state.dr0);
+    write_dr1(state.dr1);
+    write_dr2(state.dr2);
+    write_dr3(state.dr3);
+    write_dr6(state.dr6);
+    write_dr7(state.dr7);
+}
+
+void clear_debug_registers()
+{
+    write_dr0(0);
+    write_dr1(0);
+    write_dr2(0);
+    write_dr3(0);
+    write_dr7(1 << 10); // Bit 10 is reserved and must be set to 1.
+}
+
 #if ARCH(I386)
-    asm("mov %%dr6, %%eax"
-        : "=a"(dr6));
+#    define DEFINE_DEBUG_REGISTER(index)                         \
+        FlatPtr read_dr##index()                                 \
+        {                                                        \
+            FlatPtr value;                                       \
+            asm("mov %%dr" #index ", %%eax"                      \
+                : "=a"(value));                                  \
+            return value;                                        \
+        }                                                        \
+        void write_dr##index(FlatPtr value)                      \
+        {                                                        \
+            asm volatile("mov %%eax, %%dr" #index ::"a"(value)); \
+        }
 #else
-    asm("mov %%dr6, %%rax"
-        : "=a"(dr6));
+#    define DEFINE_DEBUG_REGISTER(index)                         \
+        FlatPtr read_dr##index()                                 \
+        {                                                        \
+            FlatPtr value;                                       \
+            asm("mov %%dr" #index ", %%rax"                      \
+                : "=a"(value));                                  \
+            return value;                                        \
+        }                                                        \
+        void write_dr##index(FlatPtr value)                      \
+        {                                                        \
+            asm volatile("mov %%rax, %%dr" #index ::"a"(value)); \
+        }
 #endif
-    return dr6;
+
+DEFINE_DEBUG_REGISTER(0);
+DEFINE_DEBUG_REGISTER(1);
+DEFINE_DEBUG_REGISTER(2);
+DEFINE_DEBUG_REGISTER(3);
+DEFINE_DEBUG_REGISTER(6);
+DEFINE_DEBUG_REGISTER(7);
+
+#define XCR_XFEATURE_ENABLED_MASK 0
+
+UNMAP_AFTER_INIT u64 read_xcr0()
+{
+    u32 eax, edx;
+    asm volatile("xgetbv"
+                 : "=a"(eax), "=d"(edx)
+                 : "c"(XCR_XFEATURE_ENABLED_MASK));
+    return eax + ((u64)edx << 32);
+}
+
+UNMAP_AFTER_INIT void write_xcr0(u64 value)
+{
+    u32 eax = value;
+    u32 edx = value >> 32;
+    asm volatile("xsetbv" ::"a"(eax), "d"(edx), "c"(XCR_XFEATURE_ENABLED_MASK));
 }
 
 READONLY_AFTER_INIT FPUState Processor::s_clean_fpu_state;
@@ -879,6 +982,10 @@ UNMAP_AFTER_INIT void Processor::cpu_detect()
         set_feature(CPUFeature::SSE4_1);
     if (processor_info.ecx() & (1 << 20))
         set_feature(CPUFeature::SSE4_2);
+    if (processor_info.ecx() & (1 << 26))
+        set_feature(CPUFeature::XSAVE);
+    if (processor_info.ecx() & (1 << 28))
+        set_feature(CPUFeature::AVX);
     if (processor_info.ecx() & (1 << 30))
         set_feature(CPUFeature::RDRAND);
     if (processor_info.edx() & (1 << 11)) {
@@ -975,6 +1082,20 @@ UNMAP_AFTER_INIT void Processor::cpu_setup()
     if (has_feature(CPUFeature::TSC)) {
         write_cr4(read_cr4() | 0x4);
     }
+
+    if (has_feature(CPUFeature::XSAVE)) {
+        // Turn on CR4.OSXSAVE
+        write_cr4(read_cr4() | 0x40000);
+
+        // According to the Intel manual: "After reset, all bits (except bit 0) in XCR0 are cleared to zero; XCR0[0] is set to 1."
+        // Sadly we can't trust this, for example VirtualBox starts with bits 0-4 set, so let's do it ourselves.
+        write_xcr0(0x1);
+
+        if (has_feature(CPUFeature::AVX)) {
+            // Turn on SSE, AVX and x87 flags
+            write_xcr0(read_xcr0() | 0x7);
+        }
+    }
 }
 
 String Processor::features_string() const
@@ -1025,6 +1146,10 @@ String Processor::features_string() const
             return "sse4.1";
         case CPUFeature::SSE4_2:
             return "sse4.2";
+        case CPUFeature::XSAVE:
+            return "xsave";
+        case CPUFeature::AVX:
+            return "avx";
             // no default statement here intentionally so that we get
             // a warning if a new feature is forgotten to be added here
         }
@@ -1298,6 +1423,15 @@ extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread)
     set_fs(to_tss.fs);
     set_gs(to_tss.gs);
 
+    if (from_thread->process().is_traced())
+        read_debug_registers_into(from_thread->debug_register_state());
+
+    if (to_thread->process().is_traced()) {
+        write_debug_registers_from(to_thread->debug_register_state());
+    } else {
+        clear_debug_registers();
+    }
+
     auto& processor = Processor::current();
     auto& tls_descriptor = processor.get_gdt_entry(GDT_SELECTOR_TLS);
     tls_descriptor.set_base(to_thread->thread_specific_data());
@@ -1311,7 +1445,6 @@ extern "C" void enter_thread_context(Thread* from_thread, Thread* to_thread)
 
     asm volatile("fxrstor %0" ::"m"(to_thread->fpu_state()));
 
-    // TODO: debug registers
     // TODO: ioperm?
 }
 
@@ -1546,6 +1679,7 @@ extern "C" u32 do_init_context(Thread* thread, u32 flags)
 
 extern "C" void do_assume_context(Thread* thread, u32 flags);
 
+#if ARCH(I386)
 // clang-format off
 asm(
 ".global do_assume_context \n"
@@ -1567,8 +1701,9 @@ asm(
 "    jmp enter_thread_context \n"
 );
 // clang-format on
+#endif
 
-void Processor::assume_context(Thread& thread, u32 flags)
+void Processor::assume_context(Thread& thread, FlatPtr flags)
 {
     dbgln_if(CONTEXT_SWITCH_DEBUG, "Assume context for thread {} {}", VirtualAddress(&thread), thread);
 
@@ -1577,7 +1712,12 @@ void Processor::assume_context(Thread& thread, u32 flags)
     // in_critical() should be 2 here. The critical section in Process::exec
     // and then the scheduler lock
     VERIFY(Processor::current().in_critical() == 2);
+#if ARCH(I386)
     do_assume_context(&thread, flags);
+#elif ARCH(X86_64)
+    (void)flags;
+    TODO();
+#endif
     VERIFY_NOT_REACHED();
 }
 
@@ -2227,8 +2367,8 @@ UNMAP_AFTER_INIT void Processor::gdt_init()
     tls_descriptor.dpl = 3;
     tls_descriptor.segment_present = 1;
     tls_descriptor.granularity = 0;
-    tls_descriptor.zero = 0;
-    tls_descriptor.operation_size = 1;
+    tls_descriptor.operation_size64 = 0;
+    tls_descriptor.operation_size32 = 1;
     tls_descriptor.descriptor_type = 1;
     tls_descriptor.type = 2;
     write_gdt_entry(GDT_SELECTOR_TLS, tls_descriptor); // tls3
@@ -2239,8 +2379,8 @@ UNMAP_AFTER_INIT void Processor::gdt_init()
     fs_descriptor.dpl = 0;
     fs_descriptor.segment_present = 1;
     fs_descriptor.granularity = 0;
-    fs_descriptor.zero = 0;
-    fs_descriptor.operation_size = 1;
+    fs_descriptor.operation_size64 = 0;
+    fs_descriptor.operation_size32 = 1;
     fs_descriptor.descriptor_type = 1;
     fs_descriptor.type = 2;
     write_gdt_entry(GDT_SELECTOR_PROC, fs_descriptor); // fs0
@@ -2251,8 +2391,8 @@ UNMAP_AFTER_INIT void Processor::gdt_init()
     tss_descriptor.dpl = 0;
     tss_descriptor.segment_present = 1;
     tss_descriptor.granularity = 0;
-    tss_descriptor.zero = 0;
-    tss_descriptor.operation_size = 1;
+    tss_descriptor.operation_size64 = 0;
+    tss_descriptor.operation_size32 = 1;
     tss_descriptor.descriptor_type = 0;
     tss_descriptor.type = 9;
     write_gdt_entry(GDT_SELECTOR_TSS, tss_descriptor); // tss
@@ -2268,12 +2408,14 @@ UNMAP_AFTER_INIT void Processor::gdt_init()
         : "memory");
     set_fs(GDT_SELECTOR_PROC);
 
+#if ARCH(I386)
     // Make sure CS points to the kernel code descriptor.
     // clang-format off
     asm volatile(
         "ljmpl $" __STRINGIFY(GDT_SELECTOR_CODE0) ", $sanity\n"
         "sanity:\n");
     // clang-format on
+#endif
 }
 
 void copy_kernel_registers_into_ptrace_registers(PtraceRegisters& ptrace_regs, const RegisterState& kernel_regs)
@@ -2309,7 +2451,6 @@ void copy_ptrace_registers_into_kernel_registers(RegisterState& kernel_regs, con
     kernel_regs.eip = ptrace_regs.eip;
     kernel_regs.eflags = (kernel_regs.eflags & ~safe_eflags_mask) | (ptrace_regs.eflags & safe_eflags_mask);
 }
-
 }
 
 #ifdef DEBUG
@@ -2319,6 +2460,13 @@ void __assertion_failed(const char* msg, const char* file, unsigned line, const 
     dmesgln("ASSERTION FAILED: {}", msg);
     dmesgln("{}:{} in {}", file, line, func);
 
+    abort();
+}
+#endif
+
+[[noreturn]] void abort()
+{
+#ifdef DEBUG
     // Switch back to the current process's page tables if there are any.
     // Otherwise stack walking will be a disaster.
     auto process = Process::current();
@@ -2327,8 +2475,16 @@ void __assertion_failed(const char* msg, const char* file, unsigned line, const 
 
     Kernel::dump_backtrace();
     Processor::halt();
-}
 #endif
+
+    abort();
+}
+
+[[noreturn]] void _abort()
+{
+    asm volatile("ud2");
+    __builtin_unreachable();
+}
 
 NonMaskableInterruptDisabler::NonMaskableInterruptDisabler()
 {

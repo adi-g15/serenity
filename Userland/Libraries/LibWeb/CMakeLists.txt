@@ -1,7 +1,10 @@
 set(SOURCES
+    Bindings/CSSStyleDeclarationWrapperCustom.cpp
     Bindings/EventListenerWrapper.cpp
     Bindings/EventWrapperFactory.cpp
     Bindings/EventTargetWrapperFactory.cpp
+    Bindings/HTMLCollectionWrapperCustom.cpp
+    Bindings/ImageConstructor.cpp
     Bindings/LocationObject.cpp
     Bindings/MainThreadVM.cpp
     Bindings/NavigatorObject.cpp
@@ -9,19 +12,28 @@ set(SOURCES
     Bindings/ScriptExecutionContext.cpp
     Bindings/WindowObject.cpp
     Bindings/Wrappable.cpp
+    Cookie/ParsedCookie.cpp
+    CSS/CSSImportRule.cpp
+    CSS/CSSRule.cpp
+    CSS/CSSStyleDeclaration.cpp
+    CSS/CSSStyleRule.cpp
+    CSS/CSSStyleSheet.cpp
     CSS/DefaultStyleSheetSource.cpp
     CSS/Length.cpp
-    CSS/Parser/CSSParser.cpp
+    CSS/Parser/DeprecatedCSSParser.cpp
+    CSS/Parser/Parser.cpp
+    CSS/Parser/StyleRules.cpp
+    CSS/Parser/Token.cpp
+    CSS/Parser/Tokenizer.cpp
     CSS/PropertyID.cpp
     CSS/PropertyID.h
     CSS/QuirksModeStyleSheetSource.cpp
+    CSS/Screen.cpp
     CSS/Selector.cpp
     CSS/SelectorEngine.cpp
-    CSS/StyleDeclaration.cpp
     CSS/StyleInvalidator.cpp
     CSS/StyleProperties.cpp
     CSS/StyleResolver.cpp
-    CSS/StyleRule.cpp
     CSS/StyleSheet.cpp
     CSS/StyleSheetList.cpp
     CSS/StyleValue.cpp
@@ -37,6 +49,7 @@ set(SOURCES
     DOM/Element.cpp
     DOM/ElementFactory.cpp
     DOM/Event.cpp
+    DOM/HTMLCollection.cpp
     DOM/Range.cpp
     DOM/EventDispatcher.cpp
     DOM/EventListener.cpp
@@ -44,6 +57,7 @@ set(SOURCES
     DOM/Node.cpp
     DOM/ParentNode.cpp
     DOM/Position.cpp
+    DOM/ProcessingInstruction.cpp
     DOM/ShadowRoot.cpp
     DOM/Text.cpp
     DOM/Text.idl
@@ -55,6 +69,8 @@ set(SOURCES
     HTML/AttributeNames.cpp
     HTML/CanvasRenderingContext2D.cpp
     HTML/EventNames.cpp
+    HTML/FormAssociatedElement.cpp
+    HTML/FrameHostElement.cpp
     HTML/GlobalEventHandlers.cpp
     HTML/HTMLAnchorElement.cpp
     HTML/HTMLAreaElement.cpp
@@ -154,12 +170,14 @@ set(SOURCES
     Layout/InitialContainingBlockBox.cpp
     Layout/InlineFormattingContext.cpp
     Layout/InlineNode.cpp
+    Layout/Label.cpp
     Layout/LayoutPosition.cpp
     Layout/LineBox.cpp
     Layout/LineBoxFragment.cpp
     Layout/ListItemBox.cpp
     Layout/ListItemMarkerBox.cpp
     Layout/Node.cpp
+    Layout/RadioButton.cpp
     Layout/ReplacedBox.cpp
     Layout/SVGBox.cpp
     Layout/SVGGraphicsBox.cpp
@@ -174,9 +192,11 @@ set(SOURCES
     Layout/TreeBuilder.cpp
     LayoutTreeModel.cpp
     Loader/ContentFilter.cpp
+    Loader/CSSLoader.cpp
     Loader/FrameLoader.cpp
     Loader/ImageLoader.cpp
     Loader/ImageResource.cpp
+    Loader/LoadRequest.cpp
     Loader/Resource.cpp
     Loader/ResourceLoader.cpp
     Namespace.cpp
@@ -276,6 +296,11 @@ function(libweb_js_wrapper class)
     add_custom_target(generate_${basename}Prototype.cpp DEPENDS Bindings/${class}Prototype.cpp)
 endfunction()
 
+libweb_js_wrapper(CSS/CSSStyleDeclaration)
+libweb_js_wrapper(CSS/CSSStyleSheet)
+libweb_js_wrapper(CSS/Screen)
+libweb_js_wrapper(CSS/StyleSheet)
+libweb_js_wrapper(CSS/StyleSheetList)
 libweb_js_wrapper(DOM/CharacterData)
 libweb_js_wrapper(DOM/Comment)
 libweb_js_wrapper(DOM/Document)
@@ -286,6 +311,8 @@ libweb_js_wrapper(DOM/DOMImplementation)
 libweb_js_wrapper(DOM/Element)
 libweb_js_wrapper(DOM/Event)
 libweb_js_wrapper(DOM/EventTarget)
+libweb_js_wrapper(DOM/HTMLCollection)
+libweb_js_wrapper(DOM/ProcessingInstruction)
 libweb_js_wrapper(DOM/ShadowRoot)
 libweb_js_wrapper(DOM/Node)
 libweb_js_wrapper(DOM/Range)

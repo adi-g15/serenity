@@ -1,6 +1,11 @@
+
+namespace MyNamespace {
+
 int func();
 
 #define USE_VAR2
+
+#define INT_Z int z
 
 struct StructInHeader {
     int var1;
@@ -10,3 +15,5 @@ struct StructInHeader {
     int var3;
 #endif
 };
+
+}

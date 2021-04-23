@@ -1,35 +1,15 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibGUI/Button.h>
 #include <LibGUI/ComboBox.h>
-#include <LibGUI/ControlBoxButton.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/ListView.h>
 #include <LibGUI/Model.h>
-#include <LibGUI/ScrollBar.h>
+#include <LibGUI/Scrollbar.h>
 #include <LibGUI/TextBox.h>
 #include <LibGUI/Window.h>
 
@@ -60,6 +40,9 @@ private:
 
 ComboBox::ComboBox()
 {
+    REGISTER_STRING_PROPERTY("placeholder", editor_placeholder, set_editor_placeholder);
+    REGISTER_BOOL_PROPERTY("model_only", only_allow_values_from_model, set_only_allow_values_from_model);
+
     set_min_width(32);
     set_fixed_height(22);
 
@@ -91,7 +74,8 @@ ComboBox::ComboBox()
             m_open_button->click();
     };
 
-    m_open_button = add<ControlBoxButton>(ControlBoxButton::DownArrow);
+    m_open_button = add<Button>();
+    m_open_button->set_icon(Gfx::Bitmap::load_from_file("/res/icons/16x16/downward-triangle.png"));
     m_open_button->set_focus_policy(GUI::FocusPolicy::NoFocus);
     m_open_button->on_click = [this](auto) {
         if (m_list_window->is_visible())
@@ -141,6 +125,16 @@ ComboBox::ComboBox()
 
 ComboBox::~ComboBox()
 {
+}
+
+void ComboBox::set_editor_placeholder(const StringView& placeholder)
+{
+    m_editor->set_placeholder(placeholder);
+}
+
+const String& ComboBox::editor_placeholder() const
+{
+    return m_editor->placeholder();
 }
 
 void ComboBox::navigate(AbstractView::CursorMovement cursor_movement)
@@ -230,14 +224,12 @@ void ComboBox::open()
     };
 
     auto taskbar_height = GUI::Desktop::the().taskbar_height();
-    auto menubar_height = GUI::Desktop::the().menubar_height();
     // NOTE: This is so the combobox bottom edge exactly fits the taskbar's
     //       top edge - the value was found through trial and error though.
     auto offset = 8;
     Gfx::IntRect list_window_rect { my_screen_rect.bottom_left(), size };
-    list_window_rect.intersect(Desktop::the().rect().shrunken(0, taskbar_height + menubar_height + offset));
+    list_window_rect.intersect(Desktop::the().rect().shrunken(0, taskbar_height + offset));
 
-    m_editor->set_has_visible_list(true);
     m_editor->set_focus(true);
     if (m_selected_index.has_value()) {
         // Don't set m_updating_model to true here because we only want to
@@ -258,8 +250,6 @@ void ComboBox::open()
 void ComboBox::close()
 {
     m_list_window->hide();
-    m_editor->set_has_visible_list(false);
-    m_editor->set_focus(true);
 }
 
 String ComboBox::text() const

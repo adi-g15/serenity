@@ -6,7 +6,7 @@ cd "$script_path/.." || exit 1
 # We simply check if the file starts with:
 # /*
 #  * Copyright
-LICENSE_HEADER_PATTERN=$'^/\*\n \* Copyright'
+LICENSE_HEADER_PATTERN=$'^([^\n]*\n)?/\*\n \* Copyright'
 MISSING_LICENSE_HEADER_ERRORS=()
 
 # We check that "#pragma once" is present
@@ -41,10 +41,6 @@ done < <(git ls-files -- \
     '*.h' \
     ':!:Base' \
     ':!:Kernel/FileSystem/ext2_fs.h' \
-    ':!:Userland/Libraries/LibC/getopt.cpp' \
-    ':!:Userland/Libraries/LibCore/puff.h' \
-    ':!:Userland/Libraries/LibCore/puff.cpp' \
-    ':!:Userland/Libraries/LibELF/exec_elf.h' \
 )
 
 exit_status=0

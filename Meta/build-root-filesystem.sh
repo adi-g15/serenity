@@ -26,19 +26,19 @@ if [ "$(id -u)" != 0 ]; then
     die "this script needs to run as root"
 fi
 
-[ -z "$SERENITY_ROOT" ] && die "SERENITY_ROOT is not set"
-[ -d "$SERENITY_ROOT/Base" ] || die "$SERENITY_ROOT/Base doesn't exist"
+[ -z "$SERENITY_SOURCE_DIR" ] && die "SERENITY_SOURCE_DIR is not set"
+[ -d "$SERENITY_SOURCE_DIR/Base" ] || die "$SERENITY_SOURCE_DIR/Base doesn't exist"
 
 umask 0022
 
 printf "installing base system... "
-$CP -PdR "$SERENITY_ROOT"/Base/* mnt/
-$CP "$SERENITY_ROOT"/Toolchain/Local/i686/i686-pc-serenity/lib/libgcc_s.so mnt/usr/lib/
+$CP -PdR "$SERENITY_SOURCE_DIR"/Base/* mnt/
+$CP "$SERENITY_SOURCE_DIR"/Toolchain/Local/i686/i686-pc-serenity/lib/libgcc_s.so mnt/usr/lib/
 $CP -PdR Root/* mnt/
 # If umask was 027 or similar when the repo was cloned,
 # file permissions in Base/ are too restrictive. Restore
 # the permissions needed in the image.
-chmod -R g+rX,o+rX "$SERENITY_ROOT"/Base/* mnt/
+chmod -R g+rX,o+rX "$SERENITY_SOURCE_DIR"/Base/* mnt/
 
 chmod 660 mnt/etc/WindowServer/WindowServer.ini
 chown $window_uid:$window_gid mnt/etc/WindowServer/WindowServer.ini
@@ -56,6 +56,7 @@ chmod 0400 mnt/boot/Kernel
 chmod 4750 mnt/bin/su
 chmod 4755 mnt/bin/passwd
 chmod 4755 mnt/bin/ping
+chmod 4755 mnt/bin/traceroute
 chmod 4750 mnt/bin/reboot
 chmod 4750 mnt/bin/shutdown
 chmod 4750 mnt/bin/keymap
@@ -95,9 +96,9 @@ mkdir -p mnt/home/anon
 mkdir -p mnt/home/anon/Desktop
 mkdir -p mnt/home/anon/Downloads
 mkdir -p mnt/home/nona
-cp "$SERENITY_ROOT"/ReadMe.md mnt/home/anon/
-cp -r "$SERENITY_ROOT"/Userland/Libraries/LibJS/Tests mnt/home/anon/js-tests
-cp -r "$SERENITY_ROOT"/Userland/Libraries/LibWeb/Tests mnt/home/anon/web-tests
+cp "$SERENITY_SOURCE_DIR"/README.md mnt/home/anon/
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibJS/Tests mnt/home/anon/js-tests
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibWeb/Tests mnt/home/anon/web-tests
 chmod 700 mnt/root
 chmod 700 mnt/home/anon
 chmod 700 mnt/home/nona
@@ -125,22 +126,7 @@ ln -s checksum mnt/bin/sha256sum
 ln -s checksum mnt/bin/sha512sum
 echo "done"
 
-if [ -f "${SERENITY_ROOT}/Kernel/sync-local.sh" ] || [ -f "${SERENITY_ROOT}/Build/sync-local.sh" ]; then
-    # TODO: Deprecated on 2021-01-30. In a few months, remove this 'if'.
-    tput setaf 1
-    echo
-    echo "   +-----------------------------------------------------------------------------+"
-    echo "   |                                                                             |"
-    echo "   |  WARNING: sync-local.sh, previously located in Kernel/ and later Build/     |"
-    echo "   |           must be moved to \$SERENITY_ROOT!                                  |"
-    echo "   |           See https://github.com/SerenityOS/serenity/pull/5172 for details. |"
-    echo "   |                                                                             |"
-    echo "   +-----------------------------------------------------------------------------+"
-    echo
-    tput sgr 0
-fi
-
 # Run local sync script, if it exists
-if [ -f "${SERENITY_ROOT}/sync-local.sh" ]; then
-    sh "${SERENITY_ROOT}/sync-local.sh"
+if [ -f "${SERENITY_SOURCE_DIR}/sync-local.sh" ]; then
+    sh "${SERENITY_SOURCE_DIR}/sync-local.sh"
 fi

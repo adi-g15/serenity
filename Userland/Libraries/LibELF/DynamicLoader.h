@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2019-2020, Andrew Kaster <andrewdkaster@gmail.com>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -31,17 +11,40 @@
 #include <AK/OwnPtr.h>
 #include <AK/RefCounted.h>
 #include <AK/String.h>
+#include <LibC/elf.h>
 #include <LibELF/DynamicObject.h>
 #include <LibELF/Image.h>
-#include <LibELF/exec_elf.h>
 #include <sys/mman.h>
 
 namespace ELF {
+
+class LoadedSegment {
+public:
+    LoadedSegment(VirtualAddress address, size_t size)
+        : m_address(address)
+        , m_size(size)
+    {
+    }
+
+    VirtualAddress address() const { return m_address; }
+    size_t size() const { return m_size; }
+
+private:
+    VirtualAddress m_address;
+    size_t m_size;
+};
+
+enum class ShouldInitializeWeak {
+    Yes,
+    No
+};
 
 class DynamicLoader : public RefCounted<DynamicLoader> {
 public:
     static RefPtr<DynamicLoader> try_create(int fd, String filename);
     ~DynamicLoader();
+
+    const String& filename() const { return m_filename; }
 
     bool is_valid() const { return m_valid; }
 
@@ -55,8 +58,12 @@ public:
     // Stage 2 of loading: dynamic object loading and primary relocations
     bool load_stage_2(unsigned flags, size_t total_tls_size);
 
-    // Stage 3 of loading: lazy relocations and initializers
+    // Stage 3 of loading: lazy relocations
     RefPtr<DynamicObject> load_stage_3(unsigned flags, size_t total_tls_size);
+
+    // Stage 4 of loading: initializers
+    void load_stage_4();
+
     // Intended for use by dlsym or other internal methods
     void* symbol_for_name(const StringView&);
 
@@ -68,7 +75,8 @@ public:
     template<typename F>
     void for_each_needed_library(F) const;
 
-    VirtualAddress text_segment_load_address() const { return m_text_segment_load_address; }
+    VirtualAddress base_address() const { return m_base_address; }
+    const Vector<LoadedSegment> text_segments() const { return m_text_segments; }
     bool is_dynamic() const { return m_elf_image.is_dynamic(); }
 
     static Optional<DynamicObject::SymbolLookupResult> lookup_symbol(const ELF::DynamicObject::Symbol&);
@@ -111,6 +119,8 @@ private:
     // Stage 3
     void do_lazy_relocations(size_t total_tls_size);
     void setup_plt_trampoline();
+
+    // Stage 4
     void call_object_init_functions();
 
     bool validate();
@@ -120,7 +130,7 @@ private:
         Success = 1,
         ResolveLater = 2,
     };
-    RelocationResult do_relocation(size_t total_tls_size, const DynamicObject::Relocation&);
+    RelocationResult do_relocation(size_t total_tls_size, const DynamicObject::Relocation&, ShouldInitializeWeak should_initialize_weak);
     size_t calculate_tls_size() const;
 
     String m_filename;
@@ -133,8 +143,8 @@ private:
 
     RefPtr<DynamicObject> m_dynamic_object;
 
-    VirtualAddress m_text_segment_load_address;
-    size_t m_text_segment_size { 0 };
+    VirtualAddress m_base_address;
+    Vector<LoadedSegment> m_text_segments;
 
     VirtualAddress m_relro_segment_address;
     size_t m_relro_segment_size { 0 };

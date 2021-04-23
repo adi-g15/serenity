@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
@@ -33,6 +13,8 @@
 #include <LibCore/IODeviceStreamReader.h>
 
 namespace Audio {
+
+static constexpr size_t maximum_wav_size = 1 * GiB; // FIXME: is there a more appropriate size limit?
 
 WavLoaderPlugin::WavLoaderPlugin(const StringView& path)
     : m_file(Core::File::construct(path))
@@ -125,7 +107,7 @@ bool WavLoaderPlugin::parse_header()
                 ok = false;
         } else {
             *m_stream >> value;
-            if (m_stream->has_any_error())
+            if (m_stream->handle_any_error())
                 ok = false;
         }
         return value;
@@ -139,7 +121,7 @@ bool WavLoaderPlugin::parse_header()
                 ok = false;
         } else {
             *m_stream >> value;
-            if (m_stream->has_any_error())
+            if (m_stream->handle_any_error())
                 ok = false;
         }
         return value;
@@ -153,7 +135,7 @@ bool WavLoaderPlugin::parse_header()
                 ok = false;
         } else {
             *m_stream >> value;
-            if (m_stream->has_any_error())
+            if (m_stream->handle_any_error())
                 ok = false;
         }
         return value;
@@ -192,8 +174,8 @@ bool WavLoaderPlugin::parse_header()
     u16 audio_format = read_u16();
     CHECK_OK("Audio format");     // incomplete read check
     ok = ok && audio_format == 1; // WAVE_FORMAT_PCM
+    CHECK_OK("Audio format");     // value check
     VERIFY(audio_format == 1);
-    CHECK_OK("Audio format"); // value check
 
     m_num_channels = read_u16();
     ok = ok && (m_num_channels == 1 || m_num_channels == 2);
@@ -211,8 +193,8 @@ bool WavLoaderPlugin::parse_header()
     m_bits_per_sample = read_u16();
     CHECK_OK("Bits per sample"); // incomplete read check
     ok = ok && (m_bits_per_sample == 8 || m_bits_per_sample == 16 || m_bits_per_sample == 24);
-    VERIFY(m_bits_per_sample == 8 || m_bits_per_sample == 16 || m_bits_per_sample == 24);
     CHECK_OK("Bits per sample"); // value check
+    VERIFY(m_bits_per_sample == 8 || m_bits_per_sample == 16 || m_bits_per_sample == 24);
 
     // Read chunks until we find DATA
     bool found_data = false;
@@ -243,7 +225,7 @@ bool WavLoaderPlugin::parse_header()
     CHECK_OK("Found no data chunk");
     VERIFY(found_data);
 
-    ok = ok && data_sz < INT32_MAX;
+    ok = ok && data_sz < maximum_wav_size;
     CHECK_OK("Data was too large");
 
     int bytes_per_sample = (m_bits_per_sample / 8) * m_num_channels;

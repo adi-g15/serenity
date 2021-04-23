@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Checked.h>
@@ -64,8 +44,9 @@ size_t Bitmap::minimum_pitch(size_t physical_width, BitmapFormat format)
     case StorageFormat::Indexed8:
         element_size = 1;
         break;
-    case StorageFormat::RGB32:
-    case StorageFormat::RGBA32:
+    case StorageFormat::BGRx8888:
+    case StorageFormat::BGRA8888:
+    case StorageFormat::RGBA8888:
         element_size = 4;
         break;
     default:
@@ -142,7 +123,7 @@ RefPtr<Bitmap> Bitmap::create_wrapper(BitmapFormat format, const IntSize& size, 
     return adopt(*new Bitmap(format, size, scale_factor, pitch, data));
 }
 
-RefPtr<Bitmap> Bitmap::load_from_file(const StringView& path, int scale_factor)
+RefPtr<Bitmap> Bitmap::load_from_file(String const& path, int scale_factor)
 {
     if (scale_factor > 1 && path.starts_with("/res/")) {
         LexicalPath lexical_path { path };
@@ -248,7 +229,7 @@ RefPtr<Bitmap> Bitmap::create_with_anon_fd(BitmapFormat format, int anon_fd, con
 /// - scale_factor
 /// - format
 /// - palette count
-/// - palette data (= palette count * RGBA32)
+/// - palette data (= palette count * BGRA8888)
 /// - image data (= actual size * u8)
 RefPtr<Bitmap> Bitmap::create_from_serialized_byte_buffer(ByteBuffer&& buffer)
 {
@@ -270,7 +251,7 @@ RefPtr<Bitmap> Bitmap::create_from_serialized_byte_buffer(ByteBuffer&& buffer)
     if (!read(actual_size) || !read(width) || !read(height) || !read(scale_factor) || !read(format) || !read(palette_size))
         return nullptr;
 
-    if (format > BitmapFormat::RGBA32 || format < BitmapFormat::Indexed1)
+    if (format > BitmapFormat::BGRA8888 || format < BitmapFormat::Indexed1)
         return nullptr;
 
     if (!check_size({ width, height }, scale_factor, format, actual_size))
@@ -438,11 +419,11 @@ Bitmap::~Bitmap()
     delete[] m_palette;
 }
 
-void Bitmap::set_mmap_name([[maybe_unused]] const StringView& name)
+void Bitmap::set_mmap_name([[maybe_unused]] String const& name)
 {
     VERIFY(m_needs_munmap);
 #ifdef __serenity__
-    ::set_mmap_name(m_data, size_in_bytes(), name.to_string().characters());
+    ::set_mmap_name(m_data, size_in_bytes(), name.characters());
 #endif
 }
 
@@ -510,7 +491,7 @@ Optional<BackingStore> Bitmap::allocate_backing_store(BitmapFormat format, const
     if (purgeable == Purgeable::Yes)
         map_flags |= MAP_NORESERVE;
 #ifdef __serenity__
-    void* data = mmap_with_name(nullptr, data_size_in_bytes, PROT_READ | PROT_WRITE, map_flags, 0, 0, String::format("GraphicsBitmap [%dx%d]", size.width(), size.height()).characters());
+    void* data = mmap_with_name(nullptr, data_size_in_bytes, PROT_READ | PROT_WRITE, map_flags, 0, 0, String::formatted("GraphicsBitmap [{}]", size).characters());
 #else
     void* data = mmap(nullptr, data_size_in_bytes, PROT_READ | PROT_WRITE, map_flags, 0, 0);
 #endif

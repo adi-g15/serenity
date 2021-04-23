@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
@@ -37,7 +17,7 @@
 #include <LibGUI/Menu.h>
 #include <LibGUI/Painter.h>
 #include <LibGUI/RegularEditingEngine.h>
-#include <LibGUI/ScrollBar.h>
+#include <LibGUI/Scrollbar.h>
 #include <LibGUI/TextEditor.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
@@ -59,6 +39,7 @@ TextEditor::TextEditor(Type type)
     : m_type(type)
 {
     REGISTER_STRING_PROPERTY("text", text, set_text);
+    REGISTER_STRING_PROPERTY("placeholder", placeholder, set_placeholder);
     REGISTER_ENUM_PROPERTY("mode", mode, set_mode, Mode,
         { Editable, "Editable" },
         { ReadOnly, "ReadOnly" },
@@ -225,6 +206,9 @@ void TextEditor::doubleclick_event(MouseEvent& event)
         return;
 
     if (is_displayonly())
+        return;
+
+    if (!current_line().can_select())
         return;
 
     // NOTE: This ensures that spans are updated before we look at them.
@@ -399,7 +383,7 @@ void TextEditor::paint_event(PaintEvent& event)
     painter.add_clip_rect(event.rect());
     painter.fill_rect(event.rect(), widget_background_color);
 
-    if (is_displayonly() && (is_focused() || has_visible_list())) {
+    if (is_displayonly() && is_focused()) {
         widget_background_color = palette().selection();
         Gfx::IntRect display_rect {
             widget_inner_rect().x() + 1,
@@ -455,6 +439,16 @@ void TextEditor::paint_event(PaintEvent& event)
     text_clip_rect.move_by(horizontal_scrollbar().value(), vertical_scrollbar().value());
     painter.add_clip_rect(text_clip_rect);
 
+    size_t span_index = 0;
+    if (document().has_spans()) {
+        for (;;) {
+            if (span_index >= document().spans().size() || document().spans()[span_index].range.end().line() >= first_visible_line) {
+                break;
+            }
+            ++span_index;
+        }
+    }
+
     for (size_t line_index = first_visible_line; line_index <= last_visible_line; ++line_index) {
         auto& line = this->line(line_index);
 
@@ -491,39 +485,121 @@ void TextEditor::paint_event(PaintEvent& event)
             } else if (!document().has_spans()) {
                 // Fast-path for plain text
                 auto color = palette().color(is_enabled() ? foreground_role() : Gfx::ColorRole::DisabledText);
-                if (is_displayonly() && (is_focused() || has_visible_list()))
+                if (is_displayonly() && is_focused())
                     color = palette().color(is_enabled() ? Gfx::ColorRole::SelectionText : Gfx::ColorRole::DisabledText);
                 painter.draw_text(visual_line_rect, visual_line_text, m_text_alignment, color);
             } else {
-                Gfx::IntRect character_rect = { visual_line_rect.location(), { 0, line_height() } };
-                for (size_t i = 0; i < visual_line_text.length(); ++i) {
-                    u32 code_point = visual_line_text.substring_view(i, 1).code_points()[0];
-                    RefPtr<Gfx::Font> font = this->font();
-                    Color color;
-                    Optional<Color> background_color;
-                    bool underline = false;
-                    TextPosition physical_position(line_index, start_of_visual_line + i);
-                    // FIXME: This is *horribly* inefficient.
-                    for (auto& span : document().spans()) {
-                        if (!span.range.contains(physical_position))
-                            continue;
-                        color = span.attributes.color;
-                        if (span.attributes.bold) {
-                            if (auto bold_font = Gfx::FontDatabase::the().get(font->family(), font->presentation_size(), 700))
-                                font = bold_font;
-                        }
-                        background_color = span.attributes.background_color;
-                        underline = span.attributes.underline;
+                auto unspanned_color = palette().color(is_enabled() ? foreground_role() : Gfx::ColorRole::DisabledText);
+                if (is_displayonly() && is_focused())
+                    unspanned_color = palette().color(is_enabled() ? Gfx::ColorRole::SelectionText : Gfx::ColorRole::DisabledText);
+                RefPtr<Gfx::Font> unspanned_font = this->font();
+
+                size_t next_column = 0;
+                Gfx::IntRect span_rect = { visual_line_rect.location(), { 0, line_height() } };
+
+                auto draw_text_helper = [&](size_t start, size_t end, RefPtr<Gfx::Font>& font, Color& color, Optional<Color> background_color = {}, bool underline = false) {
+                    size_t length = end - start + 1;
+                    auto text = visual_line_text.substring_view(start, length);
+                    span_rect.set_width(font->width(text));
+                    if (background_color.has_value()) {
+                        painter.fill_rect(span_rect, background_color.value());
+                    }
+                    painter.draw_text(span_rect, text, *font, m_text_alignment, color);
+                    if (underline) {
+                        painter.draw_line(span_rect.bottom_left().translated(0, 1), span_rect.bottom_right().translated(0, 1), color);
+                    }
+                    span_rect.move_by(span_rect.width(), 0);
+                };
+                for (;;) {
+                    if (span_index >= document().spans().size()) {
                         break;
                     }
-                    character_rect.set_width(font->glyph_width(code_point) + font->glyph_spacing());
-                    if (background_color.has_value())
-                        painter.fill_rect(character_rect, background_color.value());
-                    painter.draw_text(character_rect, visual_line_text.substring_view(i, 1), *font, m_text_alignment, color);
-                    if (underline) {
-                        painter.draw_line(character_rect.bottom_left().translated(0, 1), character_rect.bottom_right().translated(0, 1), color);
+                    auto& span = document().spans()[span_index];
+                    if (!span.range.is_valid()) {
+                        ++span_index;
+                        continue;
                     }
-                    character_rect.move_by(character_rect.width(), 0);
+                    if (span.range.end().line() < line_index) {
+                        dbgln("spans not sorted (span end {}:{} is before current line {}) => ignoring", span.range.end().line(), span.range.end().column(), line_index);
+                        ++span_index;
+                        continue;
+                    }
+                    if (span.range.start().line() > line_index
+                        || (span.range.start().line() == line_index && span.range.start().column() >= start_of_visual_line + visual_line_text.length())) {
+                        // no more spans in this line, moving on
+                        break;
+                    }
+                    if (span.range.start().line() == span.range.end().line() && span.range.end().column() < span.range.start().column()) {
+                        if (span.range.end().column() == span.range.start().column() - 1) {
+                            // span length is zero, just ignore
+                        } else {
+                            dbgln("span form {}:{} to {}:{} has negative length => ignoring", span.range.start().line(), span.range.start().column(), span.range.end().line(), span.range.end().column());
+                        }
+                        ++span_index;
+                        continue;
+                    }
+                    if (span.range.end().line() == line_index && span.range.end().column() < start_of_visual_line + next_column) {
+                        dbgln("spans not sorted (span end {}:{} is before current position {}:{}) => ignoring",
+                            span.range.end().line(), span.range.end().column(), line_index, start_of_visual_line + next_column);
+                        ++span_index;
+                        continue;
+                    }
+                    size_t span_start;
+                    if (span.range.start().line() < line_index || span.range.start().column() < start_of_visual_line) {
+                        span_start = 0;
+                    } else {
+                        span_start = span.range.start().column() - start_of_visual_line;
+                    }
+                    if (span_start < next_column) {
+                        dbgln("span started before the current position, maybe two spans overlap? (span start {} is before current position {}) => ignoring", span_start, next_column);
+                        ++span_index;
+                        continue;
+                    }
+                    size_t span_end;
+                    bool span_consumned;
+                    if (span.range.end().line() > line_index || span.range.end().column() >= start_of_visual_line + visual_line_text.length()) {
+                        if (visual_line_text.length() == 0) {
+                            // subtracting 1 would wrap around
+                            // since there is nothing to draw here just move on
+                            break;
+                        }
+                        span_end = visual_line_text.length() - 1;
+                        span_consumned = false;
+                    } else {
+                        span_end = span.range.end().column() - start_of_visual_line;
+                        span_consumned = true;
+                    }
+                    if (span_start != next_column) {
+                        // draw unspanned text between spans
+                        draw_text_helper(next_column, span_start - 1, unspanned_font, unspanned_color);
+                    }
+                    auto font = unspanned_font;
+                    if (span.attributes.bold) {
+                        if (auto bold_font = Gfx::FontDatabase::the().get(font->family(), font->presentation_size(), 700))
+                            font = bold_font;
+                    }
+                    draw_text_helper(span_start, span_end, font, span.attributes.color, span.attributes.background_color, span.attributes.underline);
+                    next_column = span_end + 1;
+                    if (!span_consumned) {
+                        // continue with same span on next line
+                        break;
+                    } else {
+                        ++span_index;
+                    }
+                }
+                // draw unspanned text after last span
+                if (next_column < visual_line_text.length()) {
+                    draw_text_helper(next_column, visual_line_text.length() - 1, unspanned_font, unspanned_color);
+                }
+                // consume all spans that should end this line
+                // this is necessary since the spans can include the new line character
+                while (is_last_visual_line && span_index < document().spans().size()) {
+                    auto& span = document().spans()[span_index];
+                    if (span.range.end().line() == line_index) {
+                        ++span_index;
+                    } else {
+                        break;
+                    }
                 }
             }
 
@@ -544,6 +620,21 @@ void TextEditor::paint_event(PaintEvent& event)
                         visual_line_rect.height()
                     };
                     painter.fill_rect_with_dither_pattern(whitespace_rect, Color(), Color(255, 192, 192));
+                }
+            }
+
+            if (m_visualize_leading_whitespace && line.leading_spaces() > 0) {
+                size_t physical_column = line.leading_spaces();
+                size_t end_of_leading_whitespace = (start_of_visual_line + physical_column);
+                size_t end_of_visual_line = (start_of_visual_line + visual_line_text.length());
+                if (end_of_leading_whitespace < end_of_visual_line) {
+                    Gfx::IntRect whitespace_rect {
+                        content_x_for_position({ line_index, start_of_visual_line }),
+                        visual_line_rect.y(),
+                        font().width(visual_line_text.substring_view(0, end_of_leading_whitespace)),
+                        visual_line_rect.height()
+                    };
+                    painter.fill_rect_with_dither_pattern(whitespace_rect, Color(), Color(192, 255, 192));
                 }
             }
 
@@ -671,24 +762,24 @@ void TextEditor::keydown_event(KeyEvent& event)
             return;
         }
 
-    } else if (is_multi_line()) {
-        ArmedScopeGuard update_autocomplete { [&] {
-            if (m_autocomplete_box && m_autocomplete_box->is_visible()) {
-                m_autocomplete_provider->provide_completions([&](auto completions) {
-                    m_autocomplete_box->update_suggestions(move(completions));
-                });
-            }
-        } };
-
-        if (!event.shift() && !event.alt() && event.ctrl() && event.key() == KeyCode::Key_Space) {
-            if (m_autocomplete_provider) {
-                try_show_autocomplete();
-                update_autocomplete.disarm();
-                return;
-            }
-        }
-    } else {
+    } else if (!is_multi_line()) {
         VERIFY_NOT_REACHED();
+    }
+
+    ArmedScopeGuard update_autocomplete { [&] {
+        if (m_autocomplete_box && m_autocomplete_box->is_visible()) {
+            m_autocomplete_provider->provide_completions([&](auto completions) {
+                m_autocomplete_box->update_suggestions(move(completions));
+            });
+        }
+    } };
+
+    if (is_multi_line() && !event.shift() && !event.alt() && event.ctrl() && event.key() == KeyCode::Key_Space) {
+        if (m_autocomplete_provider) {
+            try_show_autocomplete();
+            update_autocomplete.disarm();
+            return;
+        }
     }
 
     if (m_editing_engine->on_key(event))
@@ -1040,6 +1131,8 @@ void TextEditor::focusin_event(FocusEvent& event)
 
 void TextEditor::focusout_event(FocusEvent&)
 {
+    if (is_displayonly() && has_selection())
+        m_selection.clear();
     stop_timer();
     if (on_focusout)
         on_focusout();
@@ -1205,7 +1298,7 @@ void TextEditor::try_show_autocomplete()
         m_autocomplete_provider->provide_completions([&](auto completions) {
             auto has_completions = !completions.is_empty();
             m_autocomplete_box->update_suggestions(move(completions));
-            auto position = content_rect_for_position(cursor()).bottom_right().translated(screen_relative_rect().top_left().translated(ruler_width(), 0).translated(10, 5));
+            auto position = content_rect_for_position(cursor()).translated(0, -visible_content_rect().y()).bottom_right().translated(screen_relative_rect().top_left().translated(ruler_width(), 0).translated(10, 5));
             if (has_completions)
                 m_autocomplete_box->show(position);
         });
@@ -1234,8 +1327,9 @@ void TextEditor::did_change()
     m_undo_action->set_enabled(can_undo());
     m_redo_action->set_enabled(can_redo());
     if (m_autocomplete_box && !m_should_keep_autocomplete_box) {
-        m_autocomplete_timer->stop();
         m_autocomplete_box->close();
+        if (m_autocomplete_timer)
+            m_autocomplete_timer->stop();
     }
     if (!m_has_pending_change_notification) {
         m_has_pending_change_notification = true;
@@ -1277,13 +1371,6 @@ void TextEditor::set_mode(const Mode mode)
         set_override_cursor(Gfx::StandardCursor::IBeam);
     else
         set_override_cursor(Gfx::StandardCursor::None);
-}
-
-void TextEditor::set_has_visible_list(bool visible)
-{
-    if (m_has_visible_list == visible)
-        return;
-    m_has_visible_list = visible;
 }
 
 void TextEditor::did_update_selection()
@@ -1675,6 +1762,14 @@ void TextEditor::set_visualize_trailing_whitespace(bool enabled)
     update();
 }
 
+void TextEditor::set_visualize_leading_whitespace(bool enabled)
+{
+    if (m_visualize_leading_whitespace == enabled)
+        return;
+    m_visualize_leading_whitespace = enabled;
+    update();
+}
+
 void TextEditor::set_should_autocomplete_automatically(bool value)
 {
     if (value == should_autocomplete_automatically())
@@ -1692,6 +1787,15 @@ void TextEditor::set_should_autocomplete_automatically(bool value)
 int TextEditor::number_of_visible_lines() const
 {
     return visible_content_rect().height() / line_height();
+}
+
+void TextEditor::set_ruler_visible(bool visible)
+{
+    if (m_ruler_visible == visible)
+        return;
+    m_ruler_visible = visible;
+    recompute_all_visual_lines();
+    update();
 }
 
 }

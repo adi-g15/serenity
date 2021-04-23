@@ -1,14 +1,52 @@
 #!/usr/bin/env bash
 set -eu
 
-SCRIPT=`dirname $0`
-export SERENITY_ROOT=`realpath $SCRIPT/../`
-packagesdb="$SERENITY_ROOT/Build/packages.db"
+SCRIPT="$(dirname "${0}")"
+export SERENITY_ARCH="${SERENITY_ARCH:-i686}"
 
-export CC=i686-pc-serenity-gcc
-export CXX=i686-pc-serenity-g++
-export PATH=$SERENITY_ROOT/Toolchain/Local/i686/bin:$PATH
-export SERENITY_ARCH=i686
+HOST_CC="${CC:=cc}"
+HOST_CXX="${CXX:=c++}"
+HOST_AR="${AR:=ar}"
+HOST_RANLIB="${RANLIB:=ranlib}"
+HOST_PATH="${PATH:=}"
+HOST_PKG_CONFIG_DIR="${PKG_CONFIG_DIR:=}"
+HOST_PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:=}"
+HOST_PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:=}"
+
+DESTDIR="/"
+
+maybe_source() {
+    if [ -f "$1" ]; then
+        . "$1"
+    fi
+}
+
+enable_ccache() {
+    if command -v ccache &>/dev/null; then
+        export CC="ccache ${CC}"
+        export CXX="ccache ${CXX}"
+    fi
+}
+
+target_env() {
+    maybe_source "${SCRIPT}/.hosted_defs.sh"
+}
+
+target_env
+
+host_env() {
+    export CC="${HOST_CC}"
+    export CXX="${HOST_CXX}"
+    export AR="${HOST_AR}"
+    export RANLIB="${HOST_RANLIB}"
+    export PATH="${HOST_PATH}"
+    export PKG_CONFIG_DIR="${HOST_PKG_CONFIG_DIR}"
+    export PKG_CONFIG_SYSROOT_DIR="${HOST_PKG_CONFIG_SYSROOT_DIR}"
+    export PKG_CONFIG_LIBDIR="${HOST_PKG_CONFIG_LIBDIR}"
+    enable_ccache
+}
+
+packagesdb="${DESTDIR}/usr/Ports/packages.db"
 
 MD5SUM=md5sum
 
@@ -30,6 +68,9 @@ shift
 : "${auth_type:=md5}"
 : "${auth_import_key:=}"
 : "${auth_opts:=}"
+: "${launcher_name:=}"
+: "${launcher_category:=}"
+: "${launcher_command:=}"
 
 run_nocd() {
     echo "+ $@ (nocd)"
@@ -39,8 +80,33 @@ run() {
     echo "+ $@"
     (cd "$workdir" && "$@")
 }
-run_replace_in_file(){
+run_replace_in_file() {
     run perl -p -i -e "$1" $2
+}
+install_launcher() {
+    if [ -z "$launcher_name" ] || [ -z "${launcher_category}" ] || [ -z "${launcher_command}" ]; then
+        return
+    fi
+    script_name="${launcher_name,,}"
+    script_name="${script_name// /}"
+    mkdir -p $DESTDIR/usr/local/libexec
+    cat >$DESTDIR/usr/local/libexec/$script_name <<SCRIPT
+#!/bin/sh
+set -e
+cd -- "\$(dirname -- "\$(which -- $(printf %q "${launcher_command%% *}"))")"
+exec $(printf '%q ' $launcher_command)
+SCRIPT
+    chmod +x $DESTDIR/usr/local/libexec/$script_name
+
+    chmod +x $DESTDIR/usr/local/libexec
+    mkdir -p $DESTDIR/res/apps
+    cat >$DESTDIR/res/apps/$script_name.af <<CONFIG
+[App]
+Name=$launcher_name
+Executable=/usr/local/libexec/$script_name
+Category=$launcher_category
+CONFIG
+    unset script_name
 }
 # Checks if a function is defined. In this case, if the function is not defined in the port's script, then we will use our defaults. This way, ports don't need to include these functions every time, but they can override our defaults if needed.
 func_defined() {
@@ -64,11 +130,22 @@ fetch() {
         IFS=$OLDIFS
         read url filename auth_sum<<< $(echo "$f")
         echo "URL: ${url}"
+
+        # FIXME: Serenity's curl port does not support https, even with openssl installed.
+        if which curl && ! curl https://example.com -so /dev/null; then
+            url=$(echo "$url" | sed "s/^https:\/\//http:\/\//")
+        fi
+
+
         # download files
         if [ -f "$filename" ]; then
             echo "$filename already exists"
         else
-            run_nocd curl ${curlopts:-} "$url" -L -o "$filename"
+            if which curl; then
+                run_nocd curl ${curlopts:-} "$url" -L -o "$filename"
+            else
+                run_nocd pro "$url" > "$filename"
+            fi
         fi
 
         # check md5sum if given
@@ -95,8 +172,12 @@ fetch() {
         # extract
         if [ ! -f "$workdir"/.${filename}_extracted ]; then
             case "$filename" in
+                *.tar.gz|*.tgz)
+                    run_nocd tar -xzf "$filename"
+                    run touch .${filename}_extracted
+                    ;;
                 *.tar.gz|*.tar.bz|*.tar.bz2|*.tar.xz|*.tar.lz|.tbz*|*.txz|*.tgz)
-                    run_nocd tar xf "$filename"
+                    run_nocd tar -xf "$filename"
                     run touch .${filename}_extracted
                     ;;
                 *.gz)
@@ -119,16 +200,20 @@ fetch() {
 
     # check signature
     if [ "$auth_type" == "sig" ]; then
-        if $(gpg --verify $auth_opts); then
-            echo "- Signature check OK."
+        if $NO_GPG; then
+            echo "WARNING: gpg signature check was disabled by --no-gpg-verification"
         else
-            echo "- Signature check NOT OK"
-            for f in $files; do
-                rm -f $f
-            done
-            rm -rf "$workdir"
-            echo "  Signature mismatching, removed erronous download. Please run script again."
-            exit 1
+            if $(gpg --verify $auth_opts); then
+                echo "- Signature check OK."
+            else
+                echo "- Signature check NOT OK"
+                for f in $files; do
+                    rm -f $f
+                done
+                rm -rf "$workdir"
+                echo "  Signature mismatching, removed erronous download. Please run script again."
+                exit 1
+            fi
         fi
     fi
 
@@ -152,7 +237,7 @@ func_defined pre_configure || pre_configure() {
 }
 func_defined configure || configure() {
     chmod +x "${workdir}"/"$configscript"
-    run ./"$configscript" --host=i686-pc-serenity $configopts
+    run ./"$configscript" --host="${SERENITY_ARCH}-pc-serenity" $configopts
 }
 func_defined post_configure || post_configure() {
     :
@@ -161,7 +246,8 @@ func_defined build || build() {
     run make $makeopts
 }
 func_defined install || install() {
-    run make DESTDIR="$SERENITY_ROOT"/Build/Root $installopts install
+    run make DESTDIR=$DESTDIR $installopts install
+    install_launcher
 }
 func_defined post_install || post_install() {
     echo
@@ -191,6 +277,7 @@ func_defined clean_all || clean_all() {
 addtodb() {
     if [ ! -f "$packagesdb" ]; then
         echo "Note: $packagesdb does not exist. Creating."
+        mkdir -p "${DESTDIR}/usr/Ports/"
         touch "$packagesdb"
     fi
     if ! grep -E "^(auto|manual) $port $version" "$packagesdb" > /dev/null; then
@@ -223,10 +310,10 @@ uninstall() {
             for f in `cat plist`; do
                 case $f in
                     */)
-                        run rmdir "$SERENITY_ROOT/Build/Root/$f" || true
+                        run rmdir "${DESTDIR}/$f" || true
                         ;;
                     *)
-                        run rm -rf "$SERENITY_ROOT/Build/Root/$f"
+                        run rm -rf "${DESTDIR}/$f"
                         ;;
                 esac
             done
@@ -288,6 +375,9 @@ do_uninstall() {
     echo "Uninstalling $port!"
     uninstall
 }
+do_showdepends() {
+    echo -n $depends
+}
 do_all() {
     do_installdepends
     do_fetch
@@ -297,19 +387,29 @@ do_all() {
     do_install "${1:-}"
 }
 
-if [ -z "${1:-}" ]; then
-    do_all
-else
-    case "$1" in
-        fetch|patch|configure|build|install|installdepends|clean|clean_dist|clean_all|uninstall)
-            do_$1
-            ;;
-        --auto)
-            do_all $1
-            ;;
-        *)
-            >&2 echo "I don't understand $1! Supported arguments: fetch, patch, configure, build, install, installdepends, clean, clean_dist, clean_all, uninstall."
-            exit 1
-            ;;
-    esac
-fi
+NO_GPG=false
+parse_arguments() {
+    if [ -z "${1:-}" ]; then
+        do_all
+    else
+        case "$1" in
+            fetch|patch|configure|build|install|installdepends|clean|clean_dist|clean_all|uninstall|showdepends)
+                do_$1
+                ;;
+            --auto)
+                do_all $1
+                ;;
+            --no-gpg-verification)
+                NO_GPG=true
+                shift
+                parse_arguments $@
+                ;;
+            *)
+                >&2 echo "I don't understand $1! Supported arguments: fetch, patch, configure, build, install, installdepends, clean, clean_dist, clean_all, uninstall, showdepends."
+                exit 1
+                ;;
+        esac
+    fi
+}
+
+parse_arguments $@

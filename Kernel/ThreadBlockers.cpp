@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, The SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <Kernel/Debug.h>
@@ -32,6 +12,21 @@
 #include <Kernel/Thread.h>
 
 namespace Kernel {
+
+Thread::BlockTimeout::BlockTimeout(bool is_absolute, const Time* time, const Time* start_time, clockid_t clock_id)
+    : m_clock_id(clock_id)
+    , m_infinite(!time)
+{
+    if (!m_infinite) {
+        if (*time > Time::zero()) {
+            m_time = *time;
+            m_should_block = true;
+        }
+        m_start_time = start_time ? *start_time : TimeManagement::the().current_time(clock_id).value();
+        if (!is_absolute)
+            m_time = m_time + m_start_time;
+    }
+}
 
 bool Thread::Blocker::set_block_condition(Thread::BlockCondition& block_condition, void* data)
 {
@@ -250,17 +245,17 @@ const FileDescription& Thread::FileDescriptionBlocker::blocked_description() con
 }
 
 Thread::AcceptBlocker::AcceptBlocker(FileDescription& description, BlockFlags& unblocked_flags)
-    : FileDescriptionBlocker(description, (BlockFlags)((u32)BlockFlags::Accept | (u32)BlockFlags::Exception), unblocked_flags)
+    : FileDescriptionBlocker(description, BlockFlags::Accept | BlockFlags::Exception, unblocked_flags)
 {
 }
 
 Thread::ConnectBlocker::ConnectBlocker(FileDescription& description, BlockFlags& unblocked_flags)
-    : FileDescriptionBlocker(description, (BlockFlags)((u32)BlockFlags::Connect | (u32)BlockFlags::Exception), unblocked_flags)
+    : FileDescriptionBlocker(description, BlockFlags::Connect | BlockFlags::Exception, unblocked_flags)
 {
 }
 
 Thread::WriteBlocker::WriteBlocker(FileDescription& description, BlockFlags& unblocked_flags)
-    : FileDescriptionBlocker(description, (BlockFlags)((u32)BlockFlags::Write | (u32)BlockFlags::Exception), unblocked_flags)
+    : FileDescriptionBlocker(description, BlockFlags::Write | BlockFlags::Exception, unblocked_flags)
 {
 }
 
@@ -270,7 +265,8 @@ auto Thread::WriteBlocker::override_timeout(const BlockTimeout& timeout) -> cons
     if (description.is_socket()) {
         auto& socket = *description.socket();
         if (socket.has_send_timeout()) {
-            m_timeout = BlockTimeout(false, &socket.send_timeout(), timeout.start_time(), timeout.clock_id());
+            Time send_timeout = socket.send_timeout();
+            m_timeout = BlockTimeout(false, &send_timeout, timeout.start_time(), timeout.clock_id());
             if (timeout.is_infinite() || (!m_timeout.is_infinite() && m_timeout.absolute_time() < timeout.absolute_time()))
                 return m_timeout;
         }
@@ -279,7 +275,7 @@ auto Thread::WriteBlocker::override_timeout(const BlockTimeout& timeout) -> cons
 }
 
 Thread::ReadBlocker::ReadBlocker(FileDescription& description, BlockFlags& unblocked_flags)
-    : FileDescriptionBlocker(description, (BlockFlags)((u32)BlockFlags::Read | (u32)BlockFlags::Exception), unblocked_flags)
+    : FileDescriptionBlocker(description, BlockFlags::Read | BlockFlags::Exception, unblocked_flags)
 {
 }
 
@@ -289,7 +285,8 @@ auto Thread::ReadBlocker::override_timeout(const BlockTimeout& timeout) -> const
     if (description.is_socket()) {
         auto& socket = *description.socket();
         if (socket.has_receive_timeout()) {
-            m_timeout = BlockTimeout(false, &socket.receive_timeout(), timeout.start_time(), timeout.clock_id());
+            Time receive_timeout = socket.receive_timeout();
+            m_timeout = BlockTimeout(false, &receive_timeout, timeout.start_time(), timeout.clock_id());
             if (timeout.is_infinite() || (!m_timeout.is_infinite() && m_timeout.absolute_time() < timeout.absolute_time()))
                 return m_timeout;
         }
@@ -297,7 +294,7 @@ auto Thread::ReadBlocker::override_timeout(const BlockTimeout& timeout) -> const
     return timeout;
 }
 
-Thread::SleepBlocker::SleepBlocker(const BlockTimeout& deadline, timespec* remaining)
+Thread::SleepBlocker::SleepBlocker(const BlockTimeout& deadline, Time* remaining)
     : m_deadline(deadline)
     , m_remaining(remaining)
 {
@@ -331,7 +328,7 @@ void Thread::SleepBlocker::calculate_remaining()
         return;
     auto time_now = TimeManagement::the().current_time(m_deadline.clock_id()).value();
     if (time_now < m_deadline.absolute_time())
-        timespec_sub(m_deadline.absolute_time(), time_now, *m_remaining);
+        *m_remaining = m_deadline.absolute_time() - time_now;
     else
         *m_remaining = {};
 }
@@ -368,7 +365,7 @@ void Thread::SelectBlocker::not_blocking(bool timeout_in_past)
     // Either the timeout was in the past or we didn't add all blockers
     VERIFY(timeout_in_past || !m_should_block);
     ScopedSpinLock lock(m_lock);
-    if (!m_did_unblock) {
+    if (!m_should_block || !m_did_unblock) {
         m_did_unblock = true;
         if (!timeout_in_past) {
             auto count = collect_unblocked_flags();

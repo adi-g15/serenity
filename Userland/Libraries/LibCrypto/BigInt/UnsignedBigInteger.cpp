@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "UnsignedBigInteger.h"
@@ -154,6 +134,13 @@ size_t UnsignedBigInteger::trimmed_length() const
         m_cached_trimmed_length = length() - num_leading_zeroes;
     }
     return m_cached_trimmed_length.value();
+}
+
+void UnsignedBigInteger::clamp_to_trimmed_length()
+{
+    auto length = trimmed_length();
+    if (m_words.size() > length)
+        m_words.resize(length);
 }
 
 FLATTEN UnsignedBigInteger UnsignedBigInteger::plus(const UnsignedBigInteger& other) const
@@ -578,7 +565,7 @@ FLATTEN void UnsignedBigInteger::shift_left_without_allocation(
 
         // output += (carry_word << temp_result.length())
         // FIXME : Using temp_plus this way to transform carry_word into a bigint is not
-        // efficient nor pretty. Maybe we should have an "add_with_shift" method ?
+        //         efficient nor pretty. Maybe we should have an "add_with_shift" method ?
         temp_plus.set_to_0();
         temp_plus.m_words.append(carry_word);
         shift_left_by_n_words(temp_plus, temp_result.length(), temp_result);
@@ -592,7 +579,7 @@ FLATTEN void UnsignedBigInteger::shift_left_without_allocation(
  * Multiplication method:
  * An integer is equal to the sum of the powers of two
  * according to the indexes of its 'on' bits.
- * So to multiple x*y, we go over each '1' bit in x (say the i'th bit), 
+ * So to multiple x*y, we go over each '1' bit in x (say the i'th bit),
  * and add y<<i to the result.
  */
 FLATTEN void UnsignedBigInteger::multiply_without_allocation(

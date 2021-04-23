@@ -1,32 +1,12 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include <AK/Bitmap.h>
+#include <AK/BitmapView.h>
 #include <AK/HashMap.h>
 #include <Kernel/FileSystem/BlockBasedFileSystem.h>
 #include <Kernel/FileSystem/Inode.h>
@@ -49,7 +29,7 @@ class Ext2FSInode final : public Inode {
 public:
     virtual ~Ext2FSInode() override;
 
-    size_t size() const { return m_raw_inode.i_size; }
+    u64 size() const;
     bool is_symlink() const { return Kernel::is_symlink(m_raw_inode.i_mode); }
     bool is_directory() const { return Kernel::is_directory(m_raw_inode.i_mode); }
 
@@ -76,12 +56,21 @@ private:
     virtual KResult chmod(mode_t) override;
     virtual KResult chown(uid_t, gid_t) override;
     virtual KResult truncate(u64) override;
-
     virtual KResultOr<int> get_block_address(int) override;
 
     KResult write_directory(const Vector<Ext2FSDirectoryEntry>&);
     bool populate_lookup_cache() const;
     KResult resize(u64);
+    KResult write_indirect_block(BlockBasedFS::BlockIndex, Span<BlockBasedFS::BlockIndex>);
+    KResult grow_doubly_indirect_block(BlockBasedFS::BlockIndex, size_t, Span<BlockBasedFS::BlockIndex>, Vector<BlockBasedFS::BlockIndex>&, unsigned&);
+    KResult shrink_doubly_indirect_block(BlockBasedFS::BlockIndex, size_t, size_t, unsigned&);
+    KResult grow_triply_indirect_block(BlockBasedFS::BlockIndex, size_t, Span<BlockBasedFS::BlockIndex>, Vector<BlockBasedFS::BlockIndex>&, unsigned&);
+    KResult shrink_triply_indirect_block(BlockBasedFS::BlockIndex, size_t, size_t, unsigned&);
+    KResult flush_block_list();
+    Vector<BlockBasedFS::BlockIndex> compute_block_list() const;
+    Vector<BlockBasedFS::BlockIndex> compute_block_list_with_meta_blocks() const;
+    Vector<BlockBasedFS::BlockIndex> compute_block_list_impl(bool include_block_list_blocks) const;
+    Vector<BlockBasedFS::BlockIndex> compute_block_list_impl_internal(const ext2_inode& e2inode, bool include_block_list_blocks) const;
 
     Ext2FS& fs();
     const Ext2FS& fs() const;
@@ -96,6 +85,11 @@ class Ext2FS final : public BlockBasedFS {
     friend class Ext2FSInode;
 
 public:
+    enum class FeaturesReadOnly : u32 {
+        None = 0,
+        FileSize64bits = 1 << 1,
+    };
+
     static NonnullRefPtr<Ext2FS> create(FileDescription&);
 
     virtual ~Ext2FS() override;
@@ -111,6 +105,8 @@ public:
     virtual bool supports_watchers() const override { return true; }
 
     virtual u8 internal_file_type_to_directory_entry_type(const DirectoryEntryView& entry) const override;
+
+    FeaturesReadOnly get_features_readonly() const;
 
 private:
     TYPEDEF_DISTINCT_ORDERED_ID(unsigned, GroupIndex);
@@ -140,18 +136,14 @@ private:
     virtual void flush_writes() override;
 
     BlockIndex first_block_index() const;
-    InodeIndex find_a_free_inode(GroupIndex preferred_group = 0);
-    Vector<BlockIndex> allocate_blocks(GroupIndex preferred_group_index, size_t count);
+    KResultOr<InodeIndex> allocate_inode(GroupIndex preferred_group = 0);
+    KResultOr<Vector<BlockIndex>> allocate_blocks(GroupIndex preferred_group_index, size_t count);
     GroupIndex group_index_from_inode(InodeIndex) const;
     GroupIndex group_index_from_block_index(BlockIndex) const;
 
-    Vector<BlockIndex> block_list_for_inode_impl(const ext2_inode&, bool include_block_list_blocks = false) const;
-    Vector<BlockIndex> block_list_for_inode(const ext2_inode&, bool include_block_list_blocks = false) const;
-    KResult write_block_list_for_inode(InodeIndex, ext2_inode&, const Vector<BlockIndex>&);
-
-    bool get_inode_allocation_state(InodeIndex) const;
-    bool set_inode_allocation_state(InodeIndex, bool);
-    bool set_block_allocation_state(BlockIndex, bool);
+    KResultOr<bool> get_inode_allocation_state(InodeIndex) const;
+    KResult set_inode_allocation_state(InodeIndex, bool);
+    KResult set_block_allocation_state(BlockIndex, bool);
 
     void uncache_inode(InodeIndex);
     void free_inode(Ext2FSInode&);
@@ -185,10 +177,11 @@ private:
         BlockIndex bitmap_block_index { 0 };
         bool dirty { false };
         KBuffer buffer;
-        Bitmap bitmap(u32 blocks_per_group) { return Bitmap::wrap(buffer.data(), blocks_per_group); }
+        BitmapView bitmap(u32 blocks_per_group) { return BitmapView { buffer.data(), blocks_per_group }; }
     };
 
-    CachedBitmap& get_bitmap_block(BlockIndex);
+    KResultOr<CachedBitmap*> get_bitmap_block(BlockIndex);
+    KResult update_bitmap_block(BlockIndex bitmap_block, size_t bit_index, bool new_state, u32& super_block_counter, u16& group_descriptor_counter);
 
     Vector<OwnPtr<CachedBitmap>> m_cached_bitmaps;
 };

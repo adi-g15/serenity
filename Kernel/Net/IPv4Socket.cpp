@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Singleton.h>
@@ -46,6 +26,8 @@
 namespace Kernel {
 
 static AK::Singleton<Lockable<HashTable<IPv4Socket*>>> s_table;
+
+using BlockFlags = Thread::FileDescriptionBlocker::BlockFlags;
 
 Lockable<HashTable<IPv4Socket*>>& IPv4Socket::all_sockets()
 {
@@ -110,7 +92,7 @@ KResult IPv4Socket::bind(Userspace<const sockaddr*> user_address, socklen_t addr
 
     auto requested_local_port = ntohs(address.sin_port);
     if (!Process::current()->is_superuser()) {
-        if (requested_local_port < 1024) {
+        if (requested_local_port > 0 && requested_local_port < 1024) {
             dbgln("UID {} attempted to bind {} to port {}", Process::current()->uid(), class_name(), requested_local_port);
             return EACCES;
         }
@@ -201,7 +183,7 @@ KResultOr<size_t> IPv4Socket::sendto(FileDescription&, const UserOrKernelBuffer&
             return EFAULT;
 
         if (ia.sin_family != AF_INET) {
-            klog() << "sendto: Bad address family: " << ia.sin_family << " is not AF_INET!";
+            dmesgln("sendto: Bad address family: {} is not AF_INET", ia.sin_family);
             return EAFNOSUPPORT;
         }
 
@@ -220,9 +202,7 @@ KResultOr<size_t> IPv4Socket::sendto(FileDescription&, const UserOrKernelBuffer&
     if (rc < 0)
         return rc;
 
-#if IPV4_SOCKET_DEBUG
-    klog() << "sendto: destination=" << m_peer_address.to_string().characters() << ":" << m_peer_port;
-#endif
+    dbgln_if(IPV4_SOCKET_DEBUG, "sendto: destination={}:{}", m_peer_address, m_peer_port);
 
     if (type() == SOCK_RAW) {
         auto result = routing_decision.adapter->send_ipv4(routing_decision.next_hop, m_peer_address, (IPv4Protocol)protocol(), data, data_length, m_ttl);
@@ -247,11 +227,11 @@ KResultOr<size_t> IPv4Socket::receive_byte_buffered(FileDescription& description
             return EAGAIN;
 
         locker.unlock();
-        auto unblocked_flags = Thread::FileDescriptionBlocker::BlockFlags::None;
+        auto unblocked_flags = BlockFlags::None;
         auto res = Thread::current()->block<Thread::ReadBlocker>({}, description, unblocked_flags);
         locker.lock();
 
-        if (!((u32)unblocked_flags & (u32)Thread::FileDescriptionBlocker::BlockFlags::Read)) {
+        if (!has_flag(unblocked_flags, BlockFlags::Read)) {
             if (res.was_interrupted())
                 return EINTR;
 
@@ -269,7 +249,7 @@ KResultOr<size_t> IPv4Socket::receive_byte_buffered(FileDescription& description
     return nreceived;
 }
 
-KResultOr<size_t> IPv4Socket::receive_packet_buffered(FileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> addr, Userspace<socklen_t*> addr_length, timeval& packet_timestamp)
+KResultOr<size_t> IPv4Socket::receive_packet_buffered(FileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> addr, Userspace<socklen_t*> addr_length, Time& packet_timestamp)
 {
     Locker locker(lock());
     ReceivedPacket packet;
@@ -300,11 +280,11 @@ KResultOr<size_t> IPv4Socket::receive_packet_buffered(FileDescription& descripti
         }
 
         locker.unlock();
-        auto unblocked_flags = Thread::FileDescriptionBlocker::BlockFlags::None;
+        auto unblocked_flags = BlockFlags::None;
         auto res = Thread::current()->block<Thread::ReadBlocker>({}, description, unblocked_flags);
         locker.lock();
 
-        if (!((u32)unblocked_flags & (u32)Thread::FileDescriptionBlocker::BlockFlags::Read)) {
+        if (!has_flag(unblocked_flags, BlockFlags::Read)) {
             if (res.was_interrupted())
                 return EINTR;
 
@@ -352,7 +332,7 @@ KResultOr<size_t> IPv4Socket::receive_packet_buffered(FileDescription& descripti
     return protocol_receive(ReadonlyBytes { packet.data.value().data(), packet.data.value().size() }, buffer, buffer_length, flags);
 }
 
-KResultOr<size_t> IPv4Socket::recvfrom(FileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> user_addr, Userspace<socklen_t*> user_addr_length, timeval& packet_timestamp)
+KResultOr<size_t> IPv4Socket::recvfrom(FileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> user_addr, Userspace<socklen_t*> user_addr_length, Time& packet_timestamp)
 {
     if (user_addr_length) {
         socklen_t addr_length;
@@ -362,9 +342,7 @@ KResultOr<size_t> IPv4Socket::recvfrom(FileDescription& description, UserOrKerne
             return EINVAL;
     }
 
-#if IPV4_SOCKET_DEBUG
-    klog() << "recvfrom: type=" << type() << ", local_port=" << local_port();
-#endif
+    dbgln_if(IPV4_SOCKET_DEBUG, "recvfrom: type={}, local_port={}", type(), local_port());
 
     KResultOr<size_t> nreceived = 0;
     if (buffer_mode() == BufferMode::Bytes)
@@ -377,7 +355,7 @@ KResultOr<size_t> IPv4Socket::recvfrom(FileDescription& description, UserOrKerne
     return nreceived;
 }
 
-bool IPv4Socket::did_receive(const IPv4Address& source_address, u16 source_port, KBuffer&& packet, const timeval& packet_timestamp)
+bool IPv4Socket::did_receive(const IPv4Address& source_address, u16 source_port, KBuffer&& packet, const Time& packet_timestamp)
 {
     LOCKER(lock());
 
@@ -580,6 +558,17 @@ int IPv4Socket::ioctl(FileDescription&, unsigned request, FlatPtr arg)
             return 0;
         }
 
+        case SIOCGIFNETMASK: {
+            u16 sa_family = AF_INET;
+            if (!copy_to_user(&user_ifr->ifr_addr.sa_family, &sa_family))
+                return -EFAULT;
+            auto ip4_netmask = adapter->ipv4_netmask().to_u32();
+            // NOTE: NOT ifr_netmask.
+            if (!copy_to_user(&((sockaddr_in&)user_ifr->ifr_addr).sin_addr.s_addr, &ip4_netmask, sizeof(ip4_netmask)))
+                return -EFAULT;
+            return 0;
+        }
+
         case SIOCGIFHWADDR: {
             u16 sa_family = AF_INET;
             if (!copy_to_user(&user_ifr->ifr_hwaddr.sa_family, &sa_family))
@@ -588,6 +577,51 @@ int IPv4Socket::ioctl(FileDescription&, unsigned request, FlatPtr arg)
             if (!copy_to_user(ifr.ifr_hwaddr.sa_data, &mac_address, sizeof(MACAddress)))
                 return -EFAULT;
             return 0;
+        }
+
+        case SIOCGIFBRDADDR: {
+            u16 sa_family = AF_INET;
+            if (!copy_to_user(&user_ifr->ifr_addr.sa_family, &sa_family))
+                return -EFAULT;
+
+            // Broadcast address is basically the reverse of the netmask, i.e.
+            // instead of zeroing out the end, you OR with 1 instead.
+            auto ip4_netmask = adapter->ipv4_netmask().to_u32();
+            auto broadcast_addr = adapter->ipv4_address().to_u32() | ~ip4_netmask;
+
+            if (!copy_to_user(&((sockaddr_in&)user_ifr->ifr_addr).sin_addr.s_addr, &broadcast_addr, sizeof(broadcast_addr)))
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCGIFMTU: {
+            u16 sa_family = AF_INET;
+            if (!copy_to_user(&user_ifr->ifr_addr.sa_family, &sa_family))
+                return -EFAULT;
+
+            auto ip4_metric = adapter->mtu();
+
+            if (!copy_to_user(&user_ifr->ifr_metric, &ip4_metric, sizeof(ip4_metric)))
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCGIFFLAGS: {
+            u16 sa_family = AF_INET;
+            if (!copy_to_user(&user_ifr->ifr_addr.sa_family, &sa_family))
+                return -EFAULT;
+
+            // FIXME: stub!
+            short flags = 1;
+
+            if (!copy_to_user(&user_ifr->ifr_flags, &flags, sizeof(flags)))
+                return -EFAULT;
+            return 0;
+        }
+
+        case SIOCGIFCONF: {
+            // FIXME: stub!
+            return -EINVAL;
         }
         }
 
@@ -599,6 +633,11 @@ int IPv4Socket::ioctl(FileDescription&, unsigned request, FlatPtr arg)
     case SIOCSIFNETMASK:
     case SIOCGIFADDR:
     case SIOCGIFHWADDR:
+    case SIOCGIFNETMASK:
+    case SIOCGIFBRDADDR:
+    case SIOCGIFMTU:
+    case SIOCGIFFLAGS:
+    case SIOCGIFCONF:
         return ioctl_interface();
 
     case SIOCADDRT:

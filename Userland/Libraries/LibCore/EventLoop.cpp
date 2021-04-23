@@ -1,32 +1,13 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Badge.h>
 #include <AK/ByteBuffer.h>
 #include <AK/Debug.h>
+#include <AK/Format.h>
 #include <AK/IDAllocator.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonValue.h>
@@ -40,7 +21,6 @@
 #include <LibCore/LocalSocket.h>
 #include <LibCore/Notifier.h>
 #include <LibCore/Object.h>
-#include <LibCore/SyscallUtils.h>
 #include <LibThread/Lock.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -154,9 +134,7 @@ public:
             u32 length;
             int nread = m_socket->read((u8*)&length, sizeof(length));
             if (nread == 0) {
-#    ifdef EVENTLOOP_DEBUG
-                dbgln("RPC client disconnected");
-#    endif
+                dbgln_if(EVENTLOOP_DEBUG, "RPC client disconnected");
                 shutdown();
                 return;
             }
@@ -307,9 +285,7 @@ EventLoop::EventLoop()
 #endif
     }
 
-#if EVENTLOOP_DEBUG
-    dbgln("{} Core::EventLoop constructed :)", getpid());
-#endif
+    dbgln_if(EVENTLOOP_DEBUG, "{} Core::EventLoop constructed :)", getpid());
 }
 
 EventLoop::~EventLoop()
@@ -345,18 +321,14 @@ EventLoop& EventLoop::current()
 
 void EventLoop::quit(int code)
 {
-#if EVENTLOOP_DEBUG
-    dbgln("Core::EventLoop::quit({})", code);
-#endif
+    dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop::quit({})", code);
     m_exit_requested = true;
     m_exit_code = code;
 }
 
 void EventLoop::unquit()
 {
-#if EVENTLOOP_DEBUG
-    dbgln("Core::EventLoop::unquit()");
-#endif
+    dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop::unquit()");
     m_exit_requested = false;
     m_exit_code = 0;
 }
@@ -408,19 +380,16 @@ void EventLoop::pump(WaitMode mode)
         auto& queued_event = events.at(i);
         auto receiver = queued_event.receiver.strong_ref();
         auto& event = *queued_event.event;
-#if EVENTLOOP_DEBUG
         if (receiver)
-            dbgln("Core::EventLoop: {} event {}", *receiver, event.type());
-#endif
+            dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop: {} event {}", *receiver, event.type());
+
         if (!receiver) {
             switch (event.type()) {
             case Event::Quit:
                 VERIFY_NOT_REACHED();
                 return;
             default:
-#if EVENTLOOP_DEBUG
-                dbgln("Event type {} with no receiver :(", event.type());
-#endif
+                dbgln_if(EVENTLOOP_DEBUG, "Event type {} with no receiver :(", event.type());
                 break;
             }
         } else if (event.type() == Event::Type::DeferredInvoke) {
@@ -435,9 +404,7 @@ void EventLoop::pump(WaitMode mode)
 
         if (m_exit_requested) {
             LOCKER(m_private->lock);
-#if EVENTLOOP_DEBUG
-            dbgln("Core::EventLoop: Exit requested. Rejigging {} events.", events.size() - i);
-#endif
+            dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop: Exit requested. Rejigging {} events.", events.size() - i);
             decltype(m_queued_events) new_event_queue;
             new_event_queue.ensure_capacity(m_queued_events.size() + events.size());
             for (++i; i < events.size(); ++i)
@@ -452,9 +419,7 @@ void EventLoop::pump(WaitMode mode)
 void EventLoop::post_event(Object& receiver, NonnullOwnPtr<Event>&& event)
 {
     LOCKER(m_private->lock);
-#if EVENTLOOP_DEBUG
-    dbgln("Core::EventLoop::post_event: ({}) << receivier={}, event={}", m_queued_events.size(), receiver, event);
-#endif
+    dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop::post_event: ({}) << receivier={}, event={}", m_queued_events.size(), receiver, event);
     m_queued_events.empend(receiver, move(event));
 }
 
@@ -462,16 +427,12 @@ SignalHandlers::SignalHandlers(int signo, void (*handle_signal)(int))
     : m_signo(signo)
     , m_original_handler(signal(signo, handle_signal))
 {
-#if EVENTLOOP_DEBUG
-    dbgln("Core::EventLoop: Registered handler for signal {}", m_signo);
-#endif
+    dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop: Registered handler for signal {}", m_signo);
 }
 
 SignalHandlers::~SignalHandlers()
 {
-#if EVENTLOOP_DEBUG
-    dbgln("Core::EventLoop: Unregistering handler for signal {}", m_signo);
-#endif
+    dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop: Unregistering handler for signal {}", m_signo);
     signal(m_signo, m_original_handler);
 }
 
@@ -535,9 +496,7 @@ void EventLoop::dispatch_signal(int signo)
         // This allows a handler to unregister/register while the handlers
         // are being called!
         auto handler = handlers->value;
-#if EVENTLOOP_DEBUG
-        dbgln("Core::EventLoop: dispatching signal {}", signo);
-#endif
+        dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop: dispatching signal {}", signo);
         handler->dispatch();
     }
 }
@@ -677,10 +636,7 @@ try_select_again:
                 return;
             goto try_select_again;
         }
-#if EVENTLOOP_DEBUG
-        dbgln("Core::EventLoop::wait_for_event: {} ({}: {})", marked_fd_count, saved_errno, strerror(saved_errno));
-#endif
-        // Blow up, similar to Core::safe_syscall.
+        dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop::wait_for_event: {} ({}: {})", marked_fd_count, saved_errno, strerror(saved_errno));
         VERIFY_NOT_REACHED();
     }
     if (FD_ISSET(s_wake_pipe_fds[0], &rfds)) {
@@ -720,9 +676,9 @@ try_select_again:
             && owner && !owner->is_visible_for_timer_purposes()) {
             continue;
         }
-#if EVENTLOOP_DEBUG
-        dbgln("Core::EventLoop: Timer {} has expired, sending Core::TimerEvent to {}", timer.timer_id, *owner);
-#endif
+
+        dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop: Timer {} has expired, sending Core::TimerEvent to {}", timer.timer_id, *owner);
+
         if (owner)
             post_event(*owner, make<TimerEvent>(timer.timer_id));
         if (timer.should_reload) {

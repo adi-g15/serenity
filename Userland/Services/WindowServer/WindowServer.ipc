@@ -9,9 +9,6 @@ endpoint WindowServer = 2
     DestroyMenu(i32 menu_id) => ()
 
     AddMenuToMenubar(i32 menubar_id, i32 menu_id) => ()
-    SetApplicationMenubar(i32 menubar_id) => ()
-
-    SetSystemMenu(i32 menu_id) => ()
 
     AddMenuItem(
         i32 menu_id,
@@ -52,6 +49,8 @@ endpoint WindowServer = 2
 
     DestroyWindow(i32 window_id) => (Vector<i32> destroyed_window_ids)
 
+    SetWindowMenubar(i32 window_id, i32 menubar_id) => ()
+
     SetWindowTitle(i32 window_id, [UTF8] String title) => ()
     GetWindowTitle(i32 window_id) => ([UTF8] String title)
 
@@ -63,7 +62,7 @@ endpoint WindowServer = 2
     SetWindowMinimumSize(i32 window_id, Gfx::IntSize size) => ()
     GetWindowMinimumSize(i32 window_id) => (Gfx::IntSize size)
 
-    GetWindowRectInMenubar(i32 window_id) => (Gfx::IntRect rect)
+    GetAppletRectOnScreen(i32 window_id) => (Gfx::IntRect rect)
 
     StartWindowResize(i32 window_id) =|
 
@@ -78,12 +77,6 @@ endpoint WindowServer = 2
     SetWindowAlphaHitThreshold(i32 window_id, float threshold) => ()
 
     SetWindowBackingStore(i32 window_id, i32 bpp, i32 pitch, IPC::File anon_file, i32 serial, bool has_alpha_channel, Gfx::IntSize size, bool flush_immediately) => ()
-
-    WM_SetActiveWindow(i32 client_id, i32 window_id) =|
-    WM_SetWindowMinimized(i32 client_id, i32 window_id, bool minimized) =|
-    WM_StartWindowResize(i32 client_id, i32 window_id) =|
-    WM_PopupWindowMenu(i32 client_id, i32 window_id, Gfx::IntPoint screen_position) =|
-    WM_SetWindowTaskbarRect(i32 client_id, i32 window_id, Gfx::IntRect rect) =|
 
     SetWindowHasAlphaChannel(i32 window_id, bool has_alpha_channel) => ()
     MoveWindowToFront(i32 window_id) => ()
@@ -124,5 +117,10 @@ endpoint WindowServer = 2
     SetScrollStepSize(u32 step_size) => ()
     GetScrollStepSize() => (u32 step_size)
 
+    GetScreenBitmap() => (Gfx::ShareableBitmap bitmap)
+
     Pong() =|
+
+    SetDoubleClickSpeed(int speed) => ()
+    GetDoubleClickSpeed() => (int speed)
 }

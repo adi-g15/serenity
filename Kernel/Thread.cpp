@@ -1,38 +1,19 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Demangle.h>
 #include <AK/ScopeGuard.h>
 #include <AK/StringBuilder.h>
 #include <AK/Time.h>
-#include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Arch/x86/SmapDisabler.h>
 #include <Kernel/Debug.h>
 #include <Kernel/FileSystem/FileDescription.h>
 #include <Kernel/KSyms.h>
+#include <Kernel/Panic.h>
 #include <Kernel/PerformanceEventBuffer.h>
 #include <Kernel/Process.h>
 #include <Kernel/Scheduler.h>
@@ -333,13 +314,13 @@ void Thread::relock_process(LockMode previous_locked, u32 lock_count_to_restore)
     }
 }
 
-auto Thread::sleep(clockid_t clock_id, const timespec& duration, timespec* remaining_time) -> BlockResult
+auto Thread::sleep(clockid_t clock_id, const Time& duration, Time* remaining_time) -> BlockResult
 {
     VERIFY(state() == Thread::Running);
     return Thread::current()->block<Thread::SleepBlocker>({}, Thread::BlockTimeout(false, &duration, nullptr, clock_id), remaining_time);
 }
 
-auto Thread::sleep_until(clockid_t clock_id, const timespec& deadline) -> BlockResult
+auto Thread::sleep_until(clockid_t clock_id, const Time& deadline) -> BlockResult
 {
     VERIFY(state() == Thread::Running);
     return Thread::current()->block<Thread::SleepBlocker>({}, Thread::BlockTimeout(true, &deadline, nullptr, clock_id));
@@ -366,9 +347,7 @@ const char* Thread::state_string() const
         return m_blocker->state_string();
     }
     }
-    klog() << "Thread::state_string(): Invalid state: " << state();
-    VERIFY_NOT_REACHED();
-    return nullptr;
+    PANIC("Thread::state_string(): Invalid state: {}", (int)state());
 }
 
 void Thread::finalize()
@@ -700,9 +679,7 @@ DispatchSignalResult Thread::dispatch_signal(u8 signal)
     VERIFY(process().is_user_process());
     VERIFY(this == Thread::current());
 
-#if SIGNAL_DEBUG
-    klog() << "signal: dispatch signal " << signal << " to " << *this << " state: " << state_string();
-#endif
+    dbgln_if(SIGNAL_DEBUG, "Dispatch signal {} to {}, state: {}", signal, *this, state_string());
 
     if (m_state == Invalid || !is_initialized()) {
         // Thread has barely been created, we need to wait until it is
@@ -725,7 +702,7 @@ DispatchSignalResult Thread::dispatch_signal(u8 signal)
     auto& process = this->process();
     auto tracer = process.tracer();
     if (signal == SIGSTOP || (tracer && default_signal_action(signal) == DefaultSignalAction::DumpCore)) {
-        dbgln_if(SIGNAL_DEBUG, "signal: signal {} sopping thread {}", signal, *this);
+        dbgln_if(SIGNAL_DEBUG, "Signal {} stopping this thread", signal);
         set_state(State::Stopped, signal);
         return DispatchSignalResult::Yield;
     }
@@ -771,9 +748,7 @@ DispatchSignalResult Thread::dispatch_signal(u8 signal)
     }
 
     if (handler_vaddr.as_ptr() == SIG_IGN) {
-#if SIGNAL_DEBUG
-        klog() << "signal: " << *this << " ignored signal " << signal;
-#endif
+        dbgln_if(SIGNAL_DEBUG, "Ignored signal {}", signal);
         return DispatchSignalResult::Continue;
     }
 
@@ -795,16 +770,14 @@ DispatchSignalResult Thread::dispatch_signal(u8 signal)
     auto setup_stack = [&](RegisterState& state) {
 #if ARCH(I386)
         FlatPtr* stack = &state.userspace_esp;
-#elif ARCH(X86_64)
-        FlatPtr* stack = &state.userspace_esp;
-#endif
         FlatPtr old_esp = *stack;
         FlatPtr ret_eip = state.eip;
         FlatPtr ret_eflags = state.eflags;
-
-#if SIGNAL_DEBUG
-        klog() << "signal: setting up user stack to return to eip: " << String::format("%p", (void*)ret_eip) << " esp: " << String::format("%p", (void*)old_esp);
+#elif ARCH(X86_64)
+        FlatPtr* stack = &state.userspace_esp;
 #endif
+
+        dbgln_if(SIGNAL_DEBUG, "Setting up user stack to return to EIP {:p}, ESP {:p}", ret_eip, old_esp);
 
 #if ARCH(I386)
         // Align the stack to 16 bytes.
@@ -847,9 +820,7 @@ DispatchSignalResult Thread::dispatch_signal(u8 signal)
     setup_stack(regs);
     regs.eip = process.signal_trampoline().get();
 
-#if SIGNAL_DEBUG
-    dbgln("signal: Thread in state '{}' has been primed with signal handler {:04x}:{:08x} to deliver {}", state_string(), m_tss.cs, m_tss.eip, signal);
-#endif
+    dbgln_if(SIGNAL_DEBUG, "Thread in state '{}' has been primed with signal handler {:04x}:{:08x} to deliver {}", state_string(), m_tss.cs, m_tss.eip, signal);
     return DispatchSignalResult::Continue;
 }
 
@@ -920,6 +891,10 @@ void Thread::set_state(State new_state, u8 stop_signal)
                 return IterationDecision::Continue;
             });
             process.unblock_waiters(Thread::WaitBlocker::UnblockFlags::Continued);
+            // Tell the parent process (if any) about this change.
+            if (auto parent = Process::from_pid(process.ppid())) {
+                [[maybe_unused]] auto result = parent->send_signal(SIGCHLD, &process);
+            }
         }
     }
 
@@ -939,6 +914,10 @@ void Thread::set_state(State new_state, u8 stop_signal)
                 return IterationDecision::Continue;
             });
             process.unblock_waiters(Thread::WaitBlocker::UnblockFlags::Stopped, stop_signal);
+            // Tell the parent process (if any) about this change.
+            if (auto parent = Process::from_pid(process.ppid())) {
+                [[maybe_unused]] auto result = parent->send_signal(SIGCHLD, &process);
+            }
         }
     } else if (m_state == Dying) {
         VERIFY(previous_state != Blocked);
@@ -1014,7 +993,7 @@ size_t Thread::thread_specific_region_size() const
 
 KResult Thread::make_thread_specific_region(Badge<Process>)
 {
-    // The process may not require a TLS region
+    // The process may not require a TLS region, or allocate TLS later with sys$allocate_tls (which is what dynamically loaded programs do)
     if (!process().m_master_tls_region)
         return KSuccess;
 
@@ -1031,14 +1010,11 @@ KResult Thread::make_thread_specific_region(Badge<Process>)
     auto* thread_local_storage = (u8*)((u8*)thread_specific_data) - align_up_to(process().m_master_tls_size, process().m_master_tls_alignment);
     m_thread_specific_data = VirtualAddress(thread_specific_data);
     thread_specific_data->self = thread_specific_data;
+
     if (process().m_master_tls_size)
         memcpy(thread_local_storage, process().m_master_tls_region.unsafe_ptr()->vaddr().as_ptr(), process().m_master_tls_size);
-    return KSuccess;
-}
 
-const LogStream& operator<<(const LogStream& stream, const Thread& value)
-{
-    return stream << value.process().name() << "(" << value.pid().value() << ":" << value.tid().value() << ")";
+    return KSuccess;
 }
 
 RefPtr<Thread> Thread::from_tid(ThreadID tid)

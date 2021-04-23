@@ -1,33 +1,13 @@
 /*
  * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Optional.h>
 #include <AK/StringView.h>
 #include <Kernel/ACPI/MultiProcessorParser.h>
-#include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Interrupts/APIC.h>
 #include <Kernel/Interrupts/IOAPIC.h>
@@ -54,9 +34,9 @@ UNMAP_AFTER_INIT IOAPIC::IOAPIC(PhysicalAddress address, u32 gsi_base)
     , m_redirection_entries_count((read_register(0x1) >> 16) + 1)
 {
     InterruptDisabler disabler;
-    klog() << "IOAPIC ID: 0x" << String::format("%x", m_id);
-    klog() << "IOAPIC Version: 0x" << String::format("%x", m_version) << ", Redirection Entries count - " << m_redirection_entries_count;
-    klog() << "IOAPIC Arbitration ID 0x" << String::format("%x", read_register(0x2));
+    dmesgln("IOAPIC ID: {:#x}", m_id);
+    dmesgln("IOAPIC Version: {:#x}, redirection entries: {}", m_version, m_redirection_entries_count);
+    dmesgln("IOAPIC Arbitration ID {:#x}", read_register(0x2));
     mask_all_redirection_entries();
 }
 
@@ -129,7 +109,7 @@ void IOAPIC::spurious_eoi(const GenericInterruptHandler& handler) const
     InterruptDisabler disabler;
     VERIFY(handler.type() == HandlerType::SpuriousInterruptHandler);
     VERIFY(handler.interrupt_number() == APIC::spurious_interrupt_vector());
-    klog() << "IOAPIC::spurious_eoi - Spurious Interrupt occurred";
+    dbgln("IOAPIC: Spurious interrupt");
 }
 
 void IOAPIC::map_isa_interrupts()

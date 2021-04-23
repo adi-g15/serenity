@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringBuilder.h>
@@ -54,14 +34,17 @@ Interpreter::~Interpreter()
 {
 }
 
-Value Interpreter::run(GlobalObject& global_object, const Program& program)
+void Interpreter::run(GlobalObject& global_object, const Program& program)
 {
     auto& vm = this->vm();
     VERIFY(!vm.exception());
 
     VM::InterpreterExecutionScope scope(*this);
 
+    vm.set_last_value({}, {});
+
     CallFrame global_call_frame;
+    global_call_frame.current_node = &program;
     global_call_frame.this_value = &global_object;
     static FlyString global_execution_context_name = "(global execution context)";
     global_call_frame.function_name = global_execution_context_name;
@@ -70,9 +53,13 @@ Value Interpreter::run(GlobalObject& global_object, const Program& program)
     global_call_frame.is_strict_mode = program.is_strict_mode();
     vm.push_call_frame(global_call_frame, global_object);
     VERIFY(!vm.exception());
-    auto result = program.execute(*this, global_object);
+    program.execute(*this, global_object);
     vm.pop_call_frame();
-    return result;
+
+    // Whatever the promise jobs do should not affect the effective 'last value'.
+    auto last_value = vm.last_value();
+    vm.run_queued_promise_jobs();
+    vm.set_last_value({}, last_value.value_or(js_undefined()));
 }
 
 GlobalObject& Interpreter::global_object()
@@ -135,17 +122,7 @@ void Interpreter::exit_scope(const ScopeNode& scope_node)
 
     // If we unwind all the way, just reset m_unwind_until so that future "return" doesn't break.
     if (m_scope_stack.is_empty())
-        vm().unwind(ScopeType::None);
-}
-
-void Interpreter::enter_node(const ASTNode& node)
-{
-    vm().push_ast_node(node);
-}
-
-void Interpreter::exit_node(const ASTNode&)
-{
-    vm().pop_ast_node();
+        vm().stop_unwind();
 }
 
 void Interpreter::push_scope(ScopeFrame frame)
@@ -161,11 +138,10 @@ Value Interpreter::execute_statement(GlobalObject& global_object, const Statemen
     auto& block = static_cast<const ScopeNode&>(statement);
     enter_scope(block, scope_type, global_object);
 
-    if (block.children().is_empty())
-        vm().set_last_value({}, js_undefined());
-
     for (auto& node : block.children()) {
-        vm().set_last_value({}, node.execute(*this, global_object));
+        auto value = node.execute(*this, global_object);
+        if (!value.is_empty())
+            vm().set_last_value({}, value);
         if (vm().should_unwind()) {
             if (!block.label().is_null() && vm().should_unwind_until(ScopeType::Breakable, block.label()))
                 vm().stop_unwind();
@@ -173,14 +149,18 @@ Value Interpreter::execute_statement(GlobalObject& global_object, const Statemen
         }
     }
 
-    bool did_return = vm().unwind_until() == ScopeType::Function;
+    if (scope_type == ScopeType::Function) {
+        bool did_return = vm().unwind_until() == ScopeType::Function;
+        if (!did_return)
+            vm().set_last_value({}, js_undefined());
+    }
 
     if (vm().unwind_until() == scope_type)
-        vm().unwind(ScopeType::None);
+        vm().stop_unwind();
 
     exit_scope(block);
 
-    return did_return ? vm().last_value() : js_undefined();
+    return vm().last_value();
 }
 
 LexicalEnvironment* Interpreter::current_environment()

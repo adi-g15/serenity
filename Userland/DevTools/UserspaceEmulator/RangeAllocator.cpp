@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "RangeAllocator.h"
@@ -81,8 +61,7 @@ Optional<Range> RangeAllocator::allocate_randomized(size_t size, size_t alignmen
     // FIXME: I'm sure there's a smarter way to do this.
     static constexpr size_t maximum_randomization_attempts = 1000;
     for (size_t i = 0; i < maximum_randomization_attempts; ++i) {
-        VirtualAddress random_address { AK::get_random<FlatPtr>() };
-        random_address.mask(PAGE_MASK);
+        VirtualAddress random_address { round_up_to_power_of_two(get_random<FlatPtr>(), alignment) };
 
         if (!m_total_range.contains(random_address, size))
             continue;
@@ -137,7 +116,7 @@ Optional<Range> RangeAllocator::allocate_anywhere(size_t size, size_t alignment)
         carve_at_index(i, allocated_range);
         return allocated_range;
     }
-    klog() << "RangeAllocator: Failed to allocate anywhere: " << size << ", " << alignment;
+    dbgln("RangeAllocator: Failed to allocate anywhere: size={}, alignment={}", size, alignment);
     return {};
 }
 
@@ -150,9 +129,12 @@ Optional<Range> RangeAllocator::allocate_specific(VirtualAddress base, size_t si
     VERIFY((size % PAGE_SIZE) == 0);
 
     Range allocated_range(base, size);
+    if (!m_total_range.contains(allocated_range)) {
+        dbgln("Unallocatable mmap request?! {:p}+{:p}", base.get(), size);
+        return {};
+    }
     for (size_t i = 0; i < m_available_ranges.size(); ++i) {
         auto& available_range = m_available_ranges[i];
-        VERIFY(m_total_range.contains(allocated_range));
         if (!available_range.contains(base, size))
             continue;
         if (available_range == allocated_range) {

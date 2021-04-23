@@ -1,27 +1,8 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringBuilder.h>
@@ -33,6 +14,7 @@
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/CSS/StyleResolver.h>
+#include <LibWeb/Cookie/ParsedCookie.h>
 #include <LibWeb/DOM/Comment.h>
 #include <LibWeb/DOM/DOMException.h>
 #include <LibWeb/DOM/Document.h>
@@ -42,12 +24,15 @@
 #include <LibWeb/DOM/ElementFactory.h>
 #include <LibWeb/DOM/Event.h>
 #include <LibWeb/DOM/ExceptionOr.h>
+#include <LibWeb/DOM/HTMLCollection.h>
 #include <LibWeb/DOM/Range.h>
+#include <LibWeb/DOM/ShadowRoot.h>
 #include <LibWeb/DOM/Text.h>
 #include <LibWeb/DOM/Window.h>
 #include <LibWeb/Dump.h>
 #include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/EventNames.h>
+#include <LibWeb/HTML/HTMLAnchorElement.h>
 #include <LibWeb/HTML/HTMLBodyElement.h>
 #include <LibWeb/HTML/HTMLFrameSetElement.h>
 #include <LibWeb/HTML/HTMLHeadElement.h>
@@ -62,6 +47,7 @@
 #include <LibWeb/Origin.h>
 #include <LibWeb/Page/Frame.h>
 #include <LibWeb/SVG/TagNames.h>
+#include <LibWeb/UIEvents/MouseEvent.h>
 #include <ctype.h>
 
 namespace Web::DOM {
@@ -114,7 +100,7 @@ void Document::removed_last_ref()
             // Gather up all the descendants of this document and prune them from the tree.
             // FIXME: This could definitely be more elegant.
             NonnullRefPtrVector<Node> descendants;
-            for_each_in_subtree([&](auto& node) {
+            for_each_in_inclusive_subtree([&](auto& node) {
                 if (&node != this)
                     descendants.append(node);
                 return IterationDecision::Continue;
@@ -124,7 +110,7 @@ void Document::removed_last_ref()
                 VERIFY(&node.document() == this);
                 VERIFY(!node.is_document());
                 if (node.parent())
-                    node.parent()->remove_child(node);
+                    node.remove();
             }
         }
 
@@ -282,13 +268,13 @@ void Document::set_title(const String& title)
         head_element->append_child(*title_element);
     }
 
-    while (RefPtr<Node> child = title_element->first_child())
-        title_element->remove_child(child.release_nonnull());
-
+    title_element->remove_all_children(true);
     title_element->append_child(adopt(*new Text(*this, title)));
 
-    if (auto* page = this->page())
-        page->client().page_did_change_title(title);
+    if (auto* page = this->page()) {
+        if (frame() == &page->main_frame())
+            page->client().page_did_change_title(title);
+    }
 }
 
 void Document::attach_to_frame(Badge<Frame>, Frame& frame)
@@ -314,7 +300,7 @@ void Document::tear_down_layout_tree()
 
     NonnullRefPtrVector<Layout::Node> layout_nodes;
 
-    m_layout_root->for_each_in_subtree([&](auto& layout_node) {
+    m_layout_root->for_each_in_inclusive_subtree([&](auto& layout_node) {
         layout_nodes.append(layout_node);
         return IterationDecision::Continue;
     });
@@ -358,6 +344,32 @@ RefPtr<Gfx::Bitmap> Document::background_image() const
     if (!background_image)
         return {};
     return background_image->bitmap();
+}
+
+CSS::Repeat Document::background_repeat_x() const
+{
+    auto* body_element = body();
+    if (!body_element)
+        return CSS::Repeat::Repeat;
+
+    auto* body_layout_node = body_element->layout_node();
+    if (!body_layout_node)
+        return CSS::Repeat::Repeat;
+
+    return body_layout_node->computed_values().background_repeat_x();
+}
+
+CSS::Repeat Document::background_repeat_y() const
+{
+    auto* body_element = body();
+    if (!body_element)
+        return CSS::Repeat::Repeat;
+
+    auto* body_layout_node = body_element->layout_node();
+    if (!body_layout_node)
+        return CSS::Repeat::Repeat;
+
+    return body_layout_node->computed_values().background_repeat_y();
 }
 
 URL Document::complete_url(const String& string) const
@@ -474,42 +486,45 @@ void Document::set_hovered_node(Node* node)
     invalidate_style();
 }
 
-NonnullRefPtrVector<Element> Document::get_elements_by_name(const String& name) const
+NonnullRefPtr<HTMLCollection> Document::get_elements_by_name(String const& name)
 {
-    NonnullRefPtrVector<Element> elements;
-    for_each_in_subtree_of_type<Element>([&](auto& element) {
-        if (element.attribute(HTML::AttributeNames::name) == name)
-            elements.append(element);
-        return IterationDecision::Continue;
+    return HTMLCollection::create(*this, [name](Element const& element) {
+        return element.name() == name;
     });
-    return elements;
 }
 
-NonnullRefPtrVector<Element> Document::get_elements_by_tag_name(const FlyString& tag_name) const
+NonnullRefPtr<HTMLCollection> Document::get_elements_by_tag_name(FlyString const& tag_name)
 {
     // FIXME: Support "*" for tag_name
     // https://dom.spec.whatwg.org/#concept-getelementsbytagname
-    NonnullRefPtrVector<Element> elements;
-    for_each_in_subtree_of_type<Element>([&](auto& element) {
-        if (element.namespace_() == Namespace::HTML
-                ? element.local_name().to_lowercase() == tag_name.to_lowercase()
-                : element.local_name() == tag_name) {
-            elements.append(element);
-        }
-        return IterationDecision::Continue;
+    return HTMLCollection::create(*this, [tag_name](Element const& element) {
+        if (element.namespace_() == Namespace::HTML)
+            return element.local_name().to_lowercase() == tag_name.to_lowercase();
+        return element.local_name() == tag_name;
     });
-    return elements;
 }
 
-NonnullRefPtrVector<Element> Document::get_elements_by_class_name(const FlyString& class_name) const
+NonnullRefPtr<HTMLCollection> Document::get_elements_by_class_name(FlyString const& class_name)
 {
-    NonnullRefPtrVector<Element> elements;
-    for_each_in_subtree_of_type<Element>([&](auto& element) {
-        if (element.has_class(class_name, in_quirks_mode() ? CaseSensitivity::CaseInsensitive : CaseSensitivity::CaseSensitive))
-            elements.append(element);
-        return IterationDecision::Continue;
+    return HTMLCollection::create(*this, [class_name, quirks_mode = document().in_quirks_mode()](Element const& element) {
+        return element.has_class(class_name, quirks_mode ? CaseSensitivity::CaseInsensitive : CaseSensitivity::CaseSensitive);
     });
-    return elements;
+}
+
+NonnullRefPtr<HTMLCollection> Document::applets()
+{
+    // FIXME: This should return the same HTMLCollection object every time,
+    //        but that would cause a reference cycle since HTMLCollection refs the root.
+    return HTMLCollection::create(*this, [] { return false; });
+}
+
+NonnullRefPtr<HTMLCollection> Document::anchors()
+{
+    // FIXME: This should return the same HTMLCollection object every time,
+    //        but that would cause a reference cycle since HTMLCollection refs the root.
+    return HTMLCollection::create(*this, [](Element const& element) {
+        return is<HTML::HTMLAnchorElement>(element) && element.has_attribute(HTML::AttributeNames::name);
+    });
 }
 
 Color Document::link_color() const
@@ -541,24 +556,29 @@ Color Document::visited_link_color() const
 
 JS::Interpreter& Document::interpreter()
 {
-    if (!m_interpreter)
-        m_interpreter = JS::Interpreter::create<Bindings::WindowObject>(Bindings::main_thread_vm(), *m_window);
+    if (!m_interpreter) {
+        auto& vm = Bindings::main_thread_vm();
+        // TODO: Hook up vm.on_promise_unhandled_rejection and vm.on_promise_rejection_handled
+        // See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Using_promises#promise_rejection_events
+        m_interpreter = JS::Interpreter::create<Bindings::WindowObject>(vm, *m_window);
+    }
     return *m_interpreter;
 }
 
-JS::Value Document::run_javascript(const StringView& source)
+JS::Value Document::run_javascript(const StringView& source, const StringView& filename)
 {
-    auto parser = JS::Parser(JS::Lexer(source));
+    auto parser = JS::Parser(JS::Lexer(source, filename));
     auto program = parser.parse_program();
     if (parser.has_errors()) {
         parser.print_errors();
         return JS::js_undefined();
     }
     auto& interpreter = document().interpreter();
-    auto result = interpreter.run(interpreter.global_object(), *program);
-    if (interpreter.exception())
-        interpreter.vm().clear_exception();
-    return result;
+    auto& vm = interpreter.vm();
+    interpreter.run(interpreter.global_object(), *program);
+    if (vm.exception())
+        vm.clear_exception();
+    return vm.last_value();
 }
 
 // https://dom.spec.whatwg.org/#dom-document-createelement
@@ -596,6 +616,61 @@ NonnullRefPtr<Range> Document::create_range()
     return Range::create(*this);
 }
 
+// https://dom.spec.whatwg.org/#dom-document-createevent
+NonnullRefPtr<Event> Document::create_event(const String& interface)
+{
+    auto interface_lowercase = interface.to_lowercase();
+    RefPtr<Event> event;
+    if (interface_lowercase == "beforeunloadevent") {
+        event = Event::create(""); // FIXME: Create BeforeUnloadEvent
+    } else if (interface_lowercase == "compositionevent") {
+        event = Event::create(""); // FIXME: Create CompositionEvent
+    } else if (interface_lowercase == "customevent") {
+        event = Event::create(""); // FIXME: Create CustomEvent
+    } else if (interface_lowercase == "devicemotionevent") {
+        event = Event::create(""); // FIXME: Create DeviceMotionEvent
+    } else if (interface_lowercase == "deviceorientationevent") {
+        event = Event::create(""); // FIXME: Create DeviceOrientationEvent
+    } else if (interface_lowercase == "dragevent") {
+        event = Event::create(""); // FIXME: Create DragEvent
+    } else if (interface_lowercase.is_one_of("event", "events")) {
+        event = Event::create("");
+    } else if (interface_lowercase == "focusevent") {
+        event = Event::create(""); // FIXME: Create FocusEvent
+    } else if (interface_lowercase == "hashchangeevent") {
+        event = Event::create(""); // FIXME: Create HashChangeEvent
+    } else if (interface_lowercase == "htmlevents") {
+        event = Event::create("");
+    } else if (interface_lowercase == "keyboardevent") {
+        event = Event::create(""); // FIXME: Create KeyboardEvent
+    } else if (interface_lowercase == "messageevent") {
+        event = Event::create(""); // FIXME: Create MessageEvent
+    } else if (interface_lowercase.is_one_of("mouseevent", "mouseevents")) {
+        event = UIEvents::MouseEvent::create("", 0, 0, 0, 0);
+    } else if (interface_lowercase == "storageevent") {
+        event = Event::create(""); // FIXME: Create StorageEvent
+    } else if (interface_lowercase == "svgevents") {
+        event = Event::create("");
+    } else if (interface_lowercase == "textevent") {
+        event = Event::create(""); // FIXME: Create CompositionEvent
+    } else if (interface_lowercase == "touchevent") {
+        event = Event::create(""); // FIXME: Create TouchEvent
+    } else if (interface_lowercase.is_one_of("uievent", "uievents")) {
+        event = UIEvents::UIEvent::create("");
+    } else {
+        // FIXME:
+        // 3. If constructor is null, then throw a "NotSupportedError" DOMException.
+        // 4. If the interface indicated by constructor is not exposed on the relevant global object of this, then throw a "NotSupportedError" DOMException.
+        TODO();
+    }
+    // Setting type to empty string is handled by each constructor.
+    // FIXME:
+    // 7. Initialize event’s timeStamp attribute to a DOMHighResTimeStamp representing the high resolution time from the time origin to now.
+    event->set_is_trusted(false);
+    event->set_initialized(false);
+    return event.release_nonnull();
+}
+
 void Document::set_pending_parsing_blocking_script(Badge<HTML::HTMLScriptElement>, HTML::HTMLScriptElement* script)
 {
     m_pending_parsing_blocking_script = script;
@@ -626,12 +701,48 @@ NonnullRefPtrVector<HTML::HTMLScriptElement> Document::take_scripts_to_execute_a
     return move(m_scripts_to_execute_as_soon_as_possible);
 }
 
-void Document::adopt_node(Node& subtree_root)
+// https://dom.spec.whatwg.org/#concept-node-adopt
+void Document::adopt_node(Node& node)
 {
-    subtree_root.for_each_in_subtree([&](auto& node) {
-        node.set_document({}, *this);
-        return IterationDecision::Continue;
-    });
+    auto& old_document = node.document();
+    if (node.parent())
+        node.remove();
+
+    if (&old_document != this) {
+        // FIXME: This should be shadow-including.
+        node.for_each_in_inclusive_subtree([&](auto& inclusive_descendant) {
+            inclusive_descendant.set_document({}, *this);
+            // FIXME: If inclusiveDescendant is an element, then set the node document of each attribute in inclusiveDescendant’s attribute list to document.
+            return IterationDecision::Continue;
+        });
+
+        // FIXME: For each inclusiveDescendant in node’s shadow-including inclusive descendants that is custom,
+        //        enqueue a custom element callback reaction with inclusiveDescendant, callback name "adoptedCallback",
+        //        and an argument list containing oldDocument and document.
+
+        // FIXME: This should be shadow-including.
+        node.for_each_in_inclusive_subtree([&](auto& inclusive_descendant) {
+            inclusive_descendant.adopted_from(old_document);
+            return IterationDecision::Continue;
+        });
+    }
+}
+
+// https://dom.spec.whatwg.org/#dom-document-adoptnode
+ExceptionOr<NonnullRefPtr<Node>> Document::adopt_node_binding(NonnullRefPtr<Node> node)
+{
+    if (is<Document>(*node))
+        return DOM ::NotSupportedError::create("Cannot adopt a document into a document");
+
+    if (is<ShadowRoot>(*node))
+        return DOM::HierarchyRequestError::create("Cannot adopt a shadow root into a document");
+
+    if (is<DocumentFragment>(*node) && downcast<DocumentFragment>(*node).host())
+        return node;
+
+    adopt_node(*node);
+
+    return node;
 }
 
 const DocumentType* Document::doctype() const
@@ -694,6 +805,23 @@ void Document::completely_finish_loading()
 {
     // FIXME: This needs to handle iframes.
     dispatch_event(DOM::Event::create(HTML::EventNames::load));
+}
+
+String Document::cookie(Cookie::Source source)
+{
+    if (auto* page = this->page())
+        return page->client().page_did_request_cookie(m_url, source);
+    return {};
+}
+
+void Document::set_cookie(String cookie_string, Cookie::Source source)
+{
+    auto cookie = Cookie::parse_cookie(cookie_string);
+    if (!cookie.has_value())
+        return;
+
+    if (auto* page = this->page())
+        page->client().page_did_set_cookie(m_url, cookie.value(), source);
 }
 
 }

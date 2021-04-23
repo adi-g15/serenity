@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -29,7 +9,7 @@
 #include <AK/HashTable.h>
 #include <AK/NonnullRefPtrVector.h>
 #include <AK/String.h>
-#include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Forward.h>
 #include <Kernel/SpinLock.h>
 #include <Kernel/VM/AllocationStrategy.h>
@@ -57,12 +37,12 @@ constexpr FlatPtr page_round_down(FlatPtr x)
     return ((FlatPtr)(x)) & ~(PAGE_SIZE - 1);
 }
 
-inline u32 low_physical_to_virtual(u32 physical)
+inline FlatPtr low_physical_to_virtual(FlatPtr physical)
 {
     return physical + 0xc0000000;
 }
 
-inline u32 virtual_to_low_physical(u32 physical)
+inline FlatPtr virtual_to_low_physical(FlatPtr physical)
 {
     return physical - 0xc0000000;
 }
@@ -105,8 +85,6 @@ struct PhysicalMemoryRange {
     size_t length {};
 };
 
-const LogStream& operator<<(const LogStream& stream, const UsedMemoryRange& value);
-
 #define MM Kernel::MemoryManager::the()
 
 struct MemoryManagerData {
@@ -126,6 +104,7 @@ class MemoryManager {
     friend class PhysicalRegion;
     friend class AnonymousVMObject;
     friend class Region;
+    friend class ScatterGatherList;
     friend class VMObject;
 
 public:
@@ -140,6 +119,8 @@ public:
     }
 
     PageFaultResponse handle_page_fault(const PageFault&);
+
+    void set_page_writable_direct(VirtualAddress, bool);
 
     void protect_readonly_after_init_memory();
     void unmap_memory_after_init();
@@ -163,12 +144,12 @@ public:
     void deallocate_user_physical_page(const PhysicalPage&);
     void deallocate_supervisor_physical_page(const PhysicalPage&);
 
-    OwnPtr<Region> allocate_contiguous_kernel_region(size_t, String name, u8 access, size_t physical_alignment = PAGE_SIZE, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region(size_t, String name, u8 access, AllocationStrategy strategy = AllocationStrategy::Reserve, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region(PhysicalAddress, size_t, String name, u8 access, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region_identity(PhysicalAddress, size_t, String name, u8 access, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region_with_vmobject(VMObject&, size_t, String name, u8 access, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region_with_vmobject(const Range&, VMObject&, String name, u8 access, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_contiguous_kernel_region(size_t, String name, Region::Access access, size_t physical_alignment = PAGE_SIZE, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region(size_t, String name, Region::Access access, AllocationStrategy strategy = AllocationStrategy::Reserve, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region(PhysicalAddress, size_t, String name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region_identity(PhysicalAddress, size_t, String name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region_with_vmobject(VMObject&, size_t, String name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region_with_vmobject(const Range&, VMObject&, String name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
 
     unsigned user_physical_pages() const { return m_user_physical_pages; }
     unsigned user_physical_pages_used() const { return m_user_physical_pages_used; }
@@ -187,6 +168,7 @@ public:
     }
 
     static Region* find_region_from_vaddr(Space&, VirtualAddress);
+    static Region* find_user_region_from_vaddr(Space&, VirtualAddress);
 
     void dump_kernel_regions();
 
@@ -214,7 +196,6 @@ private:
     static void flush_tlb_local(VirtualAddress, size_t page_count = 1);
     static void flush_tlb(const PageDirectory*, VirtualAddress, size_t page_count = 1);
 
-    static Region* user_region_from_vaddr(Space&, VirtualAddress);
     static Region* kernel_region_from_vaddr(VirtualAddress);
 
     static Region* find_region_from_vaddr(VirtualAddress);

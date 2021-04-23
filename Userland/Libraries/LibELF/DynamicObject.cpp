@@ -1,46 +1,27 @@
 /*
  * Copyright (c) 2019-2020, Andrew Kaster <andrewdkaster@gmail.com>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
+#include <LibC/elf.h>
 #include <LibELF/DynamicLoader.h>
 #include <LibELF/DynamicObject.h>
 #include <LibELF/Hashes.h>
-#include <LibELF/exec_elf.h>
 #include <string.h>
 
 namespace ELF {
 
 static const char* name_for_dtag(Elf32_Sword d_tag);
 
-DynamicObject::DynamicObject(VirtualAddress base_address, VirtualAddress dynamic_section_addresss)
-    : m_base_address(base_address)
-    , m_dynamic_address(dynamic_section_addresss)
+DynamicObject::DynamicObject(const String& filename, VirtualAddress base_address, VirtualAddress dynamic_section_address)
+    : m_filename(filename)
+    , m_base_address(base_address)
+    , m_dynamic_address(dynamic_section_address)
 {
     auto* header = (Elf32_Ehdr*)base_address.as_ptr();
     auto* pheader = (Elf32_Phdr*)(base_address.as_ptr() + header->e_phoff);
@@ -72,6 +53,10 @@ void DynamicObject::dump() const
 
     if (m_has_soname)
         builder.appendff("DT_SONAME: {}\n", soname()); // FIXME: Validate that this string is null terminated?
+    if (m_has_rpath)
+        builder.appendff("DT_RPATH: {}\n", rpath());
+    if (m_has_runpath)
+        builder.appendff("DT_RUNPATH: {}\n", runpath());
 
     dbgln_if(DYNAMIC_LOAD_DEBUG, "Dynamic section at address {} contains {} entries:", m_dynamic_address.as_ptr(), num_dynamic_sections);
     dbgln_if(DYNAMIC_LOAD_DEBUG, "{}", builder.string_view());
@@ -163,12 +148,22 @@ void DynamicObject::parse()
         case DT_BIND_NOW:
             m_dt_flags |= DF_BIND_NOW;
             break;
+        case DT_RPATH:
+            m_rpath_index = entry.val();
+            m_has_rpath = true;
+            break;
+        case DT_RUNPATH:
+            m_runpath_index = entry.val();
+            m_has_runpath = true;
+            break;
         case DT_DEBUG:
             break;
         case DT_FLAGS_1:
             break;
         case DT_NEEDED:
             // We handle these in for_each_needed_library
+            break;
+        case DT_SYMBOLIC:
             break;
         default:
             dbgln("DynamicObject: DYNAMIC tag handling not implemented for DT_{}", name_for_dtag(entry.tag()));
@@ -241,6 +236,18 @@ DynamicObject::RelocationSection DynamicObject::relocation_section() const
 DynamicObject::RelocationSection DynamicObject::plt_relocation_section() const
 {
     return RelocationSection(Section(*this, m_plt_relocation_offset_location, m_size_of_plt_relocation_entry_list, m_size_of_relocation_entry, "DT_JMPREL"sv));
+}
+
+Elf32_Half DynamicObject::program_header_count() const
+{
+    auto* header = (const Elf32_Ehdr*)m_base_address.as_ptr();
+    return header->e_phnum;
+}
+
+const Elf32_Phdr* DynamicObject::program_headers() const
+{
+    auto* header = (const Elf32_Ehdr*)m_base_address.as_ptr();
+    return (const Elf32_Phdr*)(m_base_address.as_ptr() + header->e_phoff);
 }
 
 auto DynamicObject::HashSection::lookup_sysv_symbol(const StringView& name, u32 hash_value) const -> Optional<Symbol>
@@ -435,9 +442,9 @@ auto DynamicObject::lookup_symbol(const StringView& name, u32 gnu_hash, u32 sysv
     return SymbolLookupResult { symbol.value(), symbol.address(), symbol.bind(), this };
 }
 
-NonnullRefPtr<DynamicObject> DynamicObject::create(VirtualAddress base_address, VirtualAddress dynamic_section_address)
+NonnullRefPtr<DynamicObject> DynamicObject::create(const String& filename, VirtualAddress base_address, VirtualAddress dynamic_section_address)
 {
-    return adopt(*new DynamicObject(base_address, dynamic_section_address));
+    return adopt(*new DynamicObject(filename, base_address, dynamic_section_address));
 }
 
 // offset is in PLT relocation table
@@ -450,7 +457,7 @@ VirtualAddress DynamicObject::patch_plt_entry(u32 relocation_offset)
 
     auto result = DynamicLoader::lookup_symbol(symbol);
     if (!result.has_value()) {
-        dbgln("did not find symbol: {}", symbol.name());
+        dbgln("did not find symbol while doing relocations for library {}: {}", m_filename, symbol.name());
         VERIFY_NOT_REACHED();
     }
 

@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * 2018-2021, the SerenityOS developers
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Editor.h"
@@ -40,8 +20,9 @@
 #include <LibGUI/GMLSyntaxHighlighter.h>
 #include <LibGUI/INISyntaxHighlighter.h>
 #include <LibGUI/Label.h>
+#include <LibGUI/MessageBox.h>
 #include <LibGUI/Painter.h>
-#include <LibGUI/ScrollBar.h>
+#include <LibGUI/Scrollbar.h>
 #include <LibGUI/Window.h>
 #include <LibJS/SyntaxHighlighter.h>
 #include <LibMarkdown/Document.h>
@@ -141,7 +122,7 @@ static HashMap<String, String>& man_paths()
         // FIXME: This should also search man3, possibly other places..
         Core::DirIterator it("/usr/share/man/man2", Core::DirIterator::Flags::SkipDots);
         while (it.has_next()) {
-            auto path = String::formatted("/usr/share/man/man2/{}", it.next_path());
+            auto path = it.next_full_path();
             auto title = LexicalPath(path).title();
             paths.set(title, path);
         }
@@ -271,10 +252,10 @@ void Editor::mousedown_event(GUI::MouseEvent& event)
     if (event.button() == GUI::MouseButton::Left && event.position().x() < ruler_line_rect.width()) {
         if (!breakpoint_lines().contains_slow(text_position.line())) {
             breakpoint_lines().append(text_position.line());
-            Debugger::on_breakpoint_change(wrapper().filename_label().text(), text_position.line(), BreakpointChange::Added);
+            Debugger::the().on_breakpoint_change(wrapper().filename_label().text(), text_position.line(), BreakpointChange::Added);
         } else {
             breakpoint_lines().remove_first_matching([&](size_t line) { return line == text_position.line(); });
-            Debugger::on_breakpoint_change(wrapper().filename_label().text(), text_position.line(), BreakpointChange::Removed);
+            Debugger::the().on_breakpoint_change(wrapper().filename_label().text(), text_position.line(), BreakpointChange::Removed);
         }
     }
 
@@ -300,6 +281,23 @@ void Editor::mousedown_event(GUI::MouseEvent& event)
     }
 
     GUI::TextEditor::mousedown_event(event);
+}
+
+void Editor::drop_event(GUI::DropEvent& event)
+{
+    event.accept();
+    window()->move_to_front();
+
+    if (event.mime_data().has_urls()) {
+        auto urls = event.mime_data().urls();
+        if (urls.is_empty())
+            return;
+        if (urls.size() > 1) {
+            GUI::MessageBox::show(window(), "HackStudio can only open one file at a time!", "One at a time please!", GUI::MessageBox::Type::Error);
+            return;
+        }
+        open_file(urls.first().path());
+    }
 }
 
 void Editor::enter_event(Core::Event& event)
@@ -426,6 +424,11 @@ void Editor::set_document(GUI::TextDocument& doc)
 
     if (m_language_client) {
         set_autocomplete_provider(make<LanguageServerAidedAutocompleteProvider>(*m_language_client));
+        // NOTE:
+        // When a file is opened for the first time in HackStudio, its content is already synced with the filesystem.
+        // Otherwise, if the file has already been opened before in some Editor instance, it should exist in the LanguageServer's
+        // FileDB, and the LanguageServer should already have its up-to-date content.
+        // So it's OK to just pass an fd here (rather than the TextDocument's content).
         int fd = open(code_document.file_path().characters(), O_RDONLY | O_NOCTTY);
         if (fd < 0) {
             perror("open");
@@ -522,19 +525,19 @@ void Editor::on_navigatable_link_click(const GUI::TextDocumentSpan& span)
     navigate_to_include_if_available(header_path);
 }
 
-void Editor::open_and_set_cursor(const String& file, size_t line, size_t column)
-{
-    if (code_document().file_path() != file)
-        on_open(file);
-    set_cursor(GUI::TextPosition { line, column });
-}
-
 void Editor::on_identifier_click(const GUI::TextDocumentSpan& span)
 {
+    if (!m_language_client)
+        return;
+
     m_language_client->on_declaration_found = [this](const String& file, size_t line, size_t column) {
-        open_and_set_cursor(file, line, column);
+        HackStudio::open_file(file, line, column);
     };
     m_language_client->search_declaration(code_document().file_path(), span.range.start().line(), span.range.start().column());
+}
+void Editor::set_cursor(const GUI::TextPosition& a_position)
+{
+    TextEditor::set_cursor(a_position);
 }
 
 }

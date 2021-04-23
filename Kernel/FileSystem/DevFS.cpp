@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Singleton.h>
@@ -304,7 +284,6 @@ KResultOr<NonnullRefPtr<Inode>> DevFSRootDirectoryInode::create_child(const Stri
             if (link.name() == name)
                 return EEXIST;
         }
-        dbgln("DevFS: Success on create new symlink");
         auto new_link_inode = adopt(*new DevFSLinkInode(m_parent_fs, name));
         m_links.append(new_link_inode);
         m_parent_fs.m_nodes.append(new_link_inode);
@@ -363,7 +342,7 @@ ssize_t DevFSDeviceInode::read_bytes(off_t offset, ssize_t count, UserOrKernelBu
     LOCKER(m_lock);
     VERIFY(!!description);
     if (!m_attached_device->can_read(*description, offset))
-        return -EIO;
+        return 0;
     auto nread = const_cast<Device&>(*m_attached_device).read(*description, offset, buffer, count);
     if (nread.is_error())
         return -EIO;
@@ -388,8 +367,8 @@ ssize_t DevFSDeviceInode::write_bytes(off_t offset, ssize_t count, const UserOrK
 {
     LOCKER(m_lock);
     VERIFY(!!description);
-    if (!m_attached_device->can_read(*description, offset))
-        return -EIO;
+    if (!m_attached_device->can_write(*description, offset))
+        return 0;
     auto nread = const_cast<Device&>(*m_attached_device).write(*description, offset, buffer, count);
     if (nread.is_error())
         return -EIO;

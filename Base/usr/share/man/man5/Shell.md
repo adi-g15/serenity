@@ -16,7 +16,7 @@ The shell operates according to the following general steps:
 * Should a command be executed, the shell applies the redirections, and executes the command with the flattened argument list
 * Should a command need waiting, the shell shall wait for the command to finish, and continue execution
 
-Any text below is superceded by the formal grammar defined in the _formal grammar_ section.
+Any text below is superseded by the formal grammar defined in the _formal grammar_ section.
 
 ## General Token Recognition
 
@@ -45,7 +45,43 @@ Any sequence of _Double Quoted String Part_ tokens:
 * Escaped sequences
 
 ##### Variable Reference
-Any sequence of _Identifier_ characters, or a _Special Variable_ following a `$`
+Any sequence of _Identifier_ characters, or a _Special Variable_ following a `$`.
+Variables may be followed by a _Slice_ (see [Slice](#Slice))
+
+##### Slice
+Variables may be sliced into, which will allow the user to select a subset of entries in the contents of the variable.
+An expression of the form $_identifier_[_slice-contents_] can be used to slice into a variable, where _slice-contents_ has semantics similar to _Brace Expansions_, but it may only evaluate to numeric values, that are used to index into the variable being sliced.
+Negative indices are allowed, and will index the contents from the end. It should be noted that the shell will always perform bounds-checking on the indices, and raise an error on out-of-bound accesses. Slices can slice into both lists and strings.
+
+For example, `$lst[1..-2]` can be used to select a permutation of a 4-element list referred to by the variable `lst`, as the slice will evaluate to the list `(1 0 -1 -2)`, which will select the indices 1, 0, 3, 2 (in that order).
+
+
+##### Immediate Expressions
+An expression of the form '${identifier expression...}', such expressions are expanded to other kinds of nodes before resolution, and are internal functions provided by the shell.
+Currently, the following functions are exposed:
+- ${length (string|list)? _expression_}
+Finds the length of the given _expression_. if either `string` or `list` is given, the shell will attempt to treat _expression_ as that type, otherwise the type of _expression_ will be inferred.
+
+- ${length\_across (string|list) _expression_}
+Finds the lengths of the entries in _expression_, this requires _expression_ to be a list.
+If either `string` or `list` is given, the shell attempts to treat the elements of _expression_ as that type, otherwise the types are individually inferred.
+
+- ${split _delimiter_ _string_}
+Splits the _string_ with _delimiter_, and evaluates to a list.
+Both _string_ and _delimiter_ must be strings.
+
+- ${remove\_suffix _suffix_ _string_}
+Removes the suffix _suffix_ (if present) from the given _string_.
+
+- ${remove\_prefix _prefix_ _string_}
+Removes the prefix _prefix_ (if present) from the given _string_.
+
+- ${concat\_lists _list_...}
+Concatenates all the given expressions as lists, and evaluates to a list.
+
+- ${regex\_replace _pattern_ _replacement-template_ _string_}
+Replaces all occurrences of the regular expression _pattern_ in the given _string_, using the given _replacement-template_.
+Capture groups in _pattern_ can be referred to as `\<group_number>` in the _replacement template_, for example, to reference capture group 1, use `\1`.
 
 ##### Evaluate expression
 Any expression following a `$` that is not a variable reference:
@@ -136,7 +172,7 @@ Any bareword starting with a tilde (`~`) and spanning up to the first path separ
 ### Evaluate
 Evaluate expressions take the general form of a dollar sign (`$`) followed by some _expression_, which is evaluated by the rules below.
 - Should the _expression_ be a string, it shall be evaluated as a dynamic variable lookup by first evaluating the string, and then looking up the given variable.
-- Should the _expression_ be a list or a command, it shall be converted to a command, whose output (from the standard output) shall be captured, and split to a list with the shell local variable `IFS` (or the default splitter `\n` (newline, 0x0a)). It should be noted that the shell option `inline_exec_keep_empty_segments` will determine whether empty segments in the split list shall be preserved when this expression is evaluated, this behaviour is disabled by default.
+- Should the _expression_ be a list or a command, it shall be converted to a command, whose output (from the standard output) shall be captured, and split to a list with the shell local variable `IFS` (or the default splitter `\n` (newline, 0x0a)). It should be noted that the shell option `inline_exec_keep_empty_segments` will determine whether empty segments in the split list shall be preserved when this expression is evaluated, this behavior is disabled by default.
 
 ## Commands
 
@@ -148,7 +184,7 @@ Commands can be either calls to Shell builtins, or external programs.
 The commands can be composed into semantic elements, producing composite commands:
 
 ### Sequences
-A sequence of commands, executed serially independent of each other: `Commanad ; Command ; Command ...` 
+A sequence of commands, executed serially independent of each other: `Commanad ; Command ; Command ...`
 
 It should be noted that a newline (`\\n`) can be substituted for the semicolon (`;`).
 
@@ -211,9 +247,12 @@ if A {
 ##### For Loops
 For Loops evaluate a sequence of commands once per element in a given list.
 The shell has two forms of _for loops_, one with an explicitly named iteration variable, and one with an implicitly named one.
-The general syntax follows the form `for name in expr { sequence }`, and allows omitting the `name in` part to implicitly name the variable `it`.
+The general syntax follows the form `for index index_name name in expr { sequence }`, and allows omitting the `index index_name name in` part to implicitly name the variable `it`.
 
-A for-loop evaluates the _sequence_ once per every element in the _expr_, seetting the local variable _name_ to the element being processed.
+It should be noted that the `index index_name` section is optional, but if supplied, will require an explicit iteration variable as well.
+In other words, `for index i in foo` is not valid syntax.
+
+A for-loop evaluates the _sequence_ once per every element in the _expr_, seetting the local variable _name_ to the element being processed, and the local variable _enum name_ to the enumeration index (if set).
 
 The Shell shall cancel the for loop if two consecutive commands are interrupted via SIGINT (\^C), and any other terminating signal aborts the loop entirely.
 
@@ -224,12 +263,15 @@ $ for * { mv $it 1-$it }
 
 # Iterate over a sequence and write each element to a file
 $ for i in $(seq 1 100) { echo $i >> foo }
+
+# Iterate over some files and get their index
+$ for index i x in * { echo file at index $i is named $x }
 ```
 
 ##### Infinite Loops
 Infinite loops (as denoted by the keyword `loop`) can be used to repeat a block until the block runs `break`, or the loop terminates by external sources (interrupts, program exit, and terminating signals).
 
-The behaviour regarding SIGINT and other signals is the same as for loops (mentioned above).
+The behavior regarding SIGINT and other signals is the same as for loops (mentioned above).
 
 ###### Examples
 ```sh
@@ -306,7 +348,7 @@ match "$(make_some_value)" {
 ```
 
 ### History Event Designators
-History expansion may be utilised to reuse previously typed words or commands.
+History expansion may be utilized to reuse previously typed words or commands.
 Such expressions are of the general form `!<event_designator>(:<word_designator>)`, where `event_designator` would select an entry in the shell history, and `word_designator` would select a word (or a range of words) from that entry.
 
 | Event designator | effect                      |
@@ -365,7 +407,7 @@ control_structure[c] :: for_expr
 continuation_control :: 'break'
                       | 'continue'
 
-for_expr :: 'for' ws+ (identifier ' '+ 'in' ws*)? expression ws+ '{' [c] toplevel '}'
+for_expr :: 'for' ws+ (('enum' ' '+ identifier)? identifier ' '+ 'in' ws*)? expression ws+ '{' [c] toplevel '}'
 
 loop_expr :: 'loop' ws* '{' [c] toplevel '}'
 
@@ -397,6 +439,7 @@ list_expression :: ' '* expression (' '+ list_expression)?
 expression :: evaluate expression?
             | string_composite expression?
             | comment expression?
+            | immediate_expression expression?
             | history_designator expression?
             | '(' list_expression ')' expression?
 
@@ -418,14 +461,22 @@ dquoted_string_inner :: '\' . dquoted_string_inner?       {concat}
                       | '\' 'x' digit digit dquoted_string_inner?
                       | '\' [abefrn] dquoted_string_inner?
 
-variable :: '$' identifier
+variable :: variable_ref slice?
+
+variable_ref :: '$' identifier
           | '$' '$'
           | '$' '?'
           | '$' '*'
           | '$' '#'
           | ...
 
+slice :: '[' brace_expansion_spec ']'
+
 comment :: '#' [^\n]*
+
+immediate_expression :: '$' '{' immediate_function expression* '}'
+
+immediate_function :: identifier    { predetermined list of names, see Shell.h:ENUMERATE_SHELL_IMMEDIATE_FUNCTIONS }
 
 history_designator :: '!' event_selector (':' word_selector_composite)?
 

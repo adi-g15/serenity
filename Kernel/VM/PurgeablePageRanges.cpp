@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/BinarySearch.h>
@@ -33,23 +13,26 @@
 #include <Kernel/VM/PhysicalPage.h>
 #include <Kernel/VM/PurgeablePageRanges.h>
 
-namespace Kernel {
-
-#if VOLATILE_PAGE_RANGES_DEBUG
-inline LogStream& operator<<(const LogStream& stream, const VolatilePageRange& range)
-{
-    stream << "{" << range.base << " (" << range.count << ") purged: " << range.was_purged << "}";
-    return const_cast<LogStream&>(stream);
+namespace AK {
+template<>
+struct Formatter<Kernel::VolatilePageRange> : Formatter<String> {
+    void format(FormatBuilder& builder, const Kernel::VolatilePageRange& value)
+    {
+        return Formatter<String>::format(builder, String::formatted("{{{} ({}) purged: {}}}", value.base, value.count, value.was_purged));
+    }
+};
 }
+
+namespace Kernel {
 
 static void dump_volatile_page_ranges(const Vector<VolatilePageRange>& ranges)
 {
-    for (size_t i = 0; i < ranges.size(); i++) {
-        const auto& range = ranges[i];
-        klog() << "  [" << i << "] " << range;
+    if constexpr (VOLATILE_PAGE_RANGES_DEBUG) {
+        for (size_t i = 0; i < ranges.size(); i++) {
+            dbgln("[{}] {}", i, ranges[i]);
+        }
     }
 }
-#endif
 
 void VolatilePageRanges::add_unchecked(const VolatilePageRange& range)
 {
@@ -66,15 +49,15 @@ bool VolatilePageRanges::add(const VolatilePageRange& range)
         return false;
     add_range.was_purged = range.was_purged;
 
-#if VOLATILE_PAGE_RANGES_DEBUG
-    klog() << "ADD " << range << " (total range: " << m_total_range << ") -->";
-    dump_volatile_page_ranges(m_ranges);
-    ScopeGuard debug_guard([&]() {
-        klog() << "After adding " << range << " (total range: " << m_total_range << ")";
+    if constexpr (VOLATILE_PAGE_RANGES_DEBUG) {
+        dbgln("ADD {} (total range: {}) -->", range, m_total_range);
         dump_volatile_page_ranges(m_ranges);
-        klog() << "<-- ADD " << range << " (total range: " << m_total_range << ")";
-    });
-#endif
+        ScopeGuard debug_guard([&]() {
+            dbgln("After adding {} (total range: {})", range, m_total_range);
+            dump_volatile_page_ranges(m_ranges);
+            dbgln("<-- ADD {} (total range: {})", range, m_total_range);
+        });
+    }
 
     size_t nearby_index = 0;
     auto* existing_range = binary_search(
@@ -140,15 +123,15 @@ bool VolatilePageRanges::remove(const VolatilePageRange& range, bool& was_purged
     if (remove_range.is_empty())
         return false;
 
-#if VOLATILE_PAGE_RANGES_DEBUG
-    klog() << "REMOVE " << range << " (total range: " << m_total_range << ") -->";
-    dump_volatile_page_ranges(m_ranges);
-    ScopeGuard debug_guard([&]() {
-        klog() << "After removing " << range << " (total range: " << m_total_range << ")";
+    if constexpr (VOLATILE_PAGE_RANGES_DEBUG) {
+        dbgln("REMOVE {} (total range: {}) -->", range, m_total_range);
         dump_volatile_page_ranges(m_ranges);
-        klog() << "<-- REMOVE " << range << " (total range: " << m_total_range << ") was_purged: " << was_purged;
-    });
-#endif
+        ScopeGuard debug_guard([&]() {
+            dbgln("After removing {} (total range: {})", range, m_total_range);
+            dump_volatile_page_ranges(m_ranges);
+            dbgln("<-- REMOVE {} (total range: {}) was_purged: {}", range, m_total_range, was_purged);
+        });
+    }
 
     size_t nearby_index = 0;
     auto* existing_range = binary_search(

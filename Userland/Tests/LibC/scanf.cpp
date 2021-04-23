@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2021, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Array.h>
@@ -31,6 +11,7 @@
 
 typedef long double longdouble;
 typedef long long longlong;
+typedef unsigned long long unsignedlonglong;
 typedef unsigned long unsignedlong;
 typedef char charstar[32];
 
@@ -145,6 +126,7 @@ DECL_WITH_TYPE(float);
 DECL_WITH_TYPE(double);
 DECL_WITH_TYPE(longdouble);
 DECL_WITH_TYPE(unsignedlong);
+DECL_WITH_TYPE(unsignedlonglong);
 
 #undef DECL_WITH_TYPE
 
@@ -168,6 +150,7 @@ const TestSuite test_suites[] {
     { "%d", "", 0, 0, {}, {} },
     { "%x", "0x519", 1, 1, { unsignedarg0 }, { to_value_t(0x519) } },
     { "%x", "0x51g", 1, 1, { unsignedarg0 }, { to_value_t(0x51u) } },
+    { "%06x", "0xabcdef", 1, 1, { unsignedarg0 }, { to_value_t(0xabcdefu) } },
     { "\"%%%d#", "\"%42#", 1, 1, { intarg0 }, { to_value_t(42) } },
     { "  %d", "42", 1, 1, { intarg0 }, { to_value_t(42) } },
     { "%d", "  42", 1, 1, { intarg0 }, { to_value_t(42) } },
@@ -184,6 +167,10 @@ const TestSuite test_suites[] {
     // GCC failure tests
     { "%d.%d.%d", "10.2.0", 3, 3, { intarg0, intarg1, intarg2 }, { to_value_t(10), to_value_t(2), to_value_t(0) } },
     { "%lu", "3054       ", 1, 1, { unsignedlongarg0 }, { to_value_t(3054ul) } },
+    // "actual" long long and unsigned long long, from #6096
+    // Note: '9223372036854775806' is the max value for 'long long'.
+    { "%lld", "9223372036854775805", 1, 1, { longlongarg0 }, { to_value_t(9223372036854775805LL) } },
+    { "%llu", "9223372036854775810", 1, 1, { unsignedlonglongarg0 }, { to_value_t(9223372036854775810ULL) } },
 };
 
 bool g_any_failed = false;

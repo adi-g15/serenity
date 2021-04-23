@@ -1,36 +1,20 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibWeb/DOM/Document.h>
+#include <LibWeb/DOM/Event.h>
+#include <LibWeb/DOM/HTMLCollection.h>
+#include <LibWeb/DOM/Window.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
 #include <LibWeb/InProcessWebView.h>
 #include <LibWeb/Layout/BreakNode.h>
 #include <LibWeb/Layout/InitialContainingBlockBox.h>
 #include <LibWeb/Layout/TextNode.h>
 #include <LibWeb/Page/Frame.h>
+#include <LibWeb/UIEvents/EventNames.h>
 
 namespace Web {
 
@@ -99,7 +83,7 @@ void Frame::set_document(DOM::Document* document)
 
     if (m_document) {
         m_document->attach_to_frame({}, *this);
-        if (m_page)
+        if (m_page && is_main_frame())
             m_page->client().page_did_change_title(m_document->title());
     }
 
@@ -113,8 +97,10 @@ void Frame::set_viewport_rect(const Gfx::IntRect& rect)
 
     if (m_size != rect.size()) {
         m_size = rect.size();
-        if (m_document)
+        if (m_document) {
+            m_document->window().dispatch_event(DOM::Event::create(UIEvents::EventNames::resize));
             m_document->update_layout();
+        }
         did_change = true;
     }
 
@@ -134,8 +120,10 @@ void Frame::set_size(const Gfx::IntSize& size)
     if (m_size == size)
         return;
     m_size = size;
-    if (m_document)
+    if (m_document) {
+        m_document->window().dispatch_event(DOM::Event::create(UIEvents::EventNames::resize));
         m_document->update_layout();
+    }
 
     for (auto* client : m_viewport_clients)
         client->frame_did_set_viewport_rect(viewport_rect());
@@ -174,9 +162,9 @@ void Frame::scroll_to_anchor(const String& fragment)
     auto element = document()->get_element_by_id(fragment);
     if (!element) {
         auto candidates = document()->get_elements_by_name(fragment);
-        for (auto& candidate : candidates) {
-            if (is<HTML::HTMLAnchorElement>(candidate)) {
-                element = downcast<HTML::HTMLAnchorElement>(candidate);
+        for (auto& candidate : candidates->collect_matching_elements()) {
+            if (is<HTML::HTMLAnchorElement>(*candidate)) {
+                element = downcast<HTML::HTMLAnchorElement>(*candidate);
                 break;
             }
         }

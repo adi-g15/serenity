@@ -1,32 +1,11 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
 #include <AK/InlineLinkedList.h>
-#include <AK/LogStream.h>
 #include <AK/ScopedValueRollback.h>
 #include <AK/Vector.h>
 #include <LibELF/AuxiliaryVector.h>
@@ -39,27 +18,13 @@
 #include <string.h>
 #include <sys/internals.h>
 #include <sys/mman.h>
+#include <syscall.h>
 
 // FIXME: Thread safety.
 
 #define RECYCLE_BIG_ALLOCATIONS
 
 #define PAGE_ROUND_UP(x) ((((size_t)(x)) + PAGE_SIZE - 1) & (~(PAGE_SIZE - 1)))
-
-ALWAYS_INLINE static void ue_notify_malloc(const void* ptr, size_t size)
-{
-    send_secret_data_to_userspace_emulator(1, size, (FlatPtr)ptr);
-}
-
-ALWAYS_INLINE static void ue_notify_free(const void* ptr)
-{
-    send_secret_data_to_userspace_emulator(2, (FlatPtr)ptr, 0);
-}
-
-ALWAYS_INLINE static void ue_notify_realloc(const void* ptr, size_t size)
-{
-    send_secret_data_to_userspace_emulator(3, size, (FlatPtr)ptr);
-}
 
 static LibThread::Lock& malloc_lock()
 {
@@ -74,6 +39,25 @@ static bool s_log_malloc = false;
 static bool s_scrub_malloc = true;
 static bool s_scrub_free = true;
 static bool s_profiling = false;
+static bool s_in_userspace_emulator = false;
+
+ALWAYS_INLINE static void ue_notify_malloc(const void* ptr, size_t size)
+{
+    if (s_in_userspace_emulator)
+        syscall(SC_emuctl, 1, size, (FlatPtr)ptr);
+}
+
+ALWAYS_INLINE static void ue_notify_free(const void* ptr)
+{
+    if (s_in_userspace_emulator)
+        syscall(SC_emuctl, 2, (FlatPtr)ptr, 0);
+}
+
+ALWAYS_INLINE static void ue_notify_realloc(const void* ptr, size_t size)
+{
+    if (s_in_userspace_emulator)
+        syscall(SC_emuctl, 3, size, (FlatPtr)ptr);
+}
 
 struct MallocStats {
     size_t number_of_malloc_calls;
@@ -424,6 +408,14 @@ void* realloc(void* ptr, size_t size)
 void __malloc_init()
 {
     new (&malloc_lock()) LibThread::Lock();
+
+    s_in_userspace_emulator = (int)syscall(SC_emuctl, 0) != -ENOSYS;
+    if (s_in_userspace_emulator) {
+        // Don't bother scrubbing memory if we're running in UE since it
+        // keeps track of heap memory anyway.
+        s_scrub_malloc = false;
+        s_scrub_free = false;
+    }
 
     if (secure_getenv("LIBC_NOSCRUB_MALLOC"))
         s_scrub_malloc = false;

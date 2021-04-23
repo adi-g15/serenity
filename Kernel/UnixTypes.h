@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -63,6 +43,7 @@ enum {
     _SC_TTY_NAME_MAX,
     _SC_PAGESIZE,
     _SC_GETPW_R_SIZE_MAX,
+    _SC_CLK_TCK,
 };
 
 #define PERF_EVENT_SAMPLE 0
@@ -423,9 +404,7 @@ struct sigaction {
 #define CLD_STOPPED 4
 #define CLD_CONTINUED 5
 
-#define OFF_T_MAX 2147483647
-
-typedef ssize_t off_t;
+typedef i64 off_t;
 typedef i64 time_t;
 
 struct utimbuf {
@@ -452,20 +431,25 @@ struct termios {
     speed_t c_ospeed;
 };
 
+struct timespec {
+    time_t tv_sec; /* Seconds */
+    long tv_nsec;  /* Nanoseconds */
+};
+
 struct stat {
-    dev_t st_dev;         /* ID of device containing file */
-    ino_t st_ino;         /* inode number */
-    mode_t st_mode;       /* protection */
-    nlink_t st_nlink;     /* number of hard links */
-    uid_t st_uid;         /* user ID of owner */
-    gid_t st_gid;         /* group ID of owner */
-    dev_t st_rdev;        /* device ID (if special file) */
-    off_t st_size;        /* total size, in bytes */
-    blksize_t st_blksize; /* blocksize for file system I/O */
-    blkcnt_t st_blocks;   /* number of 512B blocks allocated */
-    time_t st_atime;      /* time of last access */
-    time_t st_mtime;      /* time of last modification */
-    time_t st_ctime;      /* time of last status change */
+    dev_t st_dev;            /* ID of device containing file */
+    ino_t st_ino;            /* inode number */
+    mode_t st_mode;          /* protection */
+    nlink_t st_nlink;        /* number of hard links */
+    uid_t st_uid;            /* user ID of owner */
+    gid_t st_gid;            /* group ID of owner */
+    dev_t st_rdev;           /* device ID (if special file) */
+    off_t st_size;           /* total size, in bytes */
+    blksize_t st_blksize;    /* blocksize for file system I/O */
+    blkcnt_t st_blocks;      /* number of 512B blocks allocated */
+    struct timespec st_atim; /* time of last access */
+    struct timespec st_mtim; /* time of last modification */
+    struct timespec st_ctim; /* time of last status change */
 };
 
 #define POLLIN (1u << 0)
@@ -576,11 +560,6 @@ struct timeval {
     suseconds_t tv_usec;
 };
 
-struct timespec {
-    time_t tv_sec;
-    long tv_nsec;
-};
-
 typedef enum {
     P_ALL = 1,
     P_PID,
@@ -648,7 +627,6 @@ struct ifreq {
         unsigned int ifru_index;
     } ifr_ifru;
 
-    // clang-format off
 #define ifr_addr ifr_ifru.ifru_addr           // address
 #define ifr_dstaddr ifr_ifru.ifru_dstaddr     // other end of p-to-p link
 #define ifr_broadaddr ifr_ifru.ifru_broadaddr // broadcast address
@@ -665,7 +643,6 @@ struct ifreq {
 #define ifr_index ifr_ifru.ifru_index         // interface index
 #define ifr_llprio ifr_ifru.ifru_metric       // link layer priority
 #define ifr_hwaddr ifr_ifru.ifru_hwaddr       // MAC address
-    // clang-format on
 };
 
 struct rtentry {
@@ -693,6 +670,8 @@ struct rtentry {
 #define PT_PEEK 7
 #define PT_POKE 8
 #define PT_SETREGS 9
+#define PT_POKEDEBUG 10
+#define PT_PEEKDEBUG 11
 
 // Used in struct dirent
 enum {

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/TestSuite.h>
@@ -31,8 +11,8 @@
 
 TEST_CASE(is_integral_works_properly)
 {
-    EXPECT(!IsIntegral<const char*>::value);
-    EXPECT(IsIntegral<unsigned long>::value);
+    EXPECT(!IsIntegral<const char*>);
+    EXPECT(IsIntegral<unsigned long>);
 }
 
 TEST_CASE(format_string_literals)
@@ -252,11 +232,11 @@ TEST_CASE(file_descriptor)
 
 TEST_CASE(floating_point_numbers)
 {
-    EXPECT_EQ(String::formatted("{}", 1.12), "1.120000");
-    EXPECT_EQ(String::formatted("{}", 1.), "1.000000");
-    EXPECT_EQ(String::formatted("{:.3}", 1.12), "1.120");
+    EXPECT_EQ(String::formatted("{}", 1.12), "1.12");
+    EXPECT_EQ(String::formatted("{}", 1.), "1");
+    EXPECT_EQ(String::formatted("{:.3}", 1.12), "1.12");
     EXPECT_EQ(String::formatted("{:.1}", 1.12), "1.1");
-    EXPECT_EQ(String::formatted("{}", -1.12), "-1.120000");
+    EXPECT_EQ(String::formatted("{}", -1.12), "-1.12");
 
     // FIXME: There is always the question what we mean with the width field. Do we mean significant digits?
     //        Do we mean the whole width? This is what was the simplest to implement:
@@ -265,12 +245,18 @@ TEST_CASE(floating_point_numbers)
 
 TEST_CASE(no_precision_no_trailing_number)
 {
-    EXPECT_EQ(String::formatted("{:.0}", 0.1), "0.");
+    EXPECT_EQ(String::formatted("{:.0}", 0.1), "0");
 }
 
 TEST_CASE(yay_this_implementation_sucks)
 {
-    EXPECT_EQ(String::formatted("{:.0}", .99999999999), "0.");
+    EXPECT_EQ(String::formatted("{:.0}", .99999999999), "0");
+}
+
+TEST_CASE(magnitude_less_than_zero)
+{
+    EXPECT_EQ(String::formatted("{}", -0.654), "-0.654");
+    EXPECT_EQ(String::formatted("{}", 0.654), "0.654");
 }
 
 TEST_CASE(format_nullptr)
@@ -292,6 +278,17 @@ struct AK::Formatter<C> : AK::Formatter<FormatString> {
 TEST_CASE(use_format_string_formatter)
 {
     EXPECT_EQ(String::formatted("{:*<10}", C { 42 }), "C(i=42)***");
+}
+
+TEST_CASE(long_long_regression)
+{
+    EXPECT_EQ(String::formatted("{}", 0x0123456789abcdefLL), "81985529216486895");
+
+    StringBuilder builder;
+    AK::FormatBuilder fmtbuilder { builder };
+    fmtbuilder.put_i64(0x0123456789abcdefLL);
+
+    EXPECT_EQ(builder.string_view(), "81985529216486895");
 }
 
 TEST_MAIN(Format)

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/LexicalPath.h>
@@ -214,7 +194,7 @@ static KResultOr<FlatPtr> get_interpreter_load_offset(const Elf32_Ehdr& main_pro
     }
 
     if (main_program_header.e_type != ET_EXEC)
-        return -EINVAL;
+        return EINVAL;
 
     auto main_program_load_range_result = get_required_load_range(main_program_description);
     if (main_program_load_range_result.is_error())
@@ -245,7 +225,7 @@ static KResultOr<FlatPtr> get_interpreter_load_offset(const Elf32_Ehdr& main_pro
 
     // If main program is too big and leaves us without enough space for adequate loader randmoization
     if (selected_range.end - selected_range.start < minimum_interpreter_load_offset_randomization_size)
-        return -E2BIG;
+        return E2BIG;
 
     return random_load_offset_in_range(selected_range.start, selected_range.end - selected_range.start);
 }
@@ -255,7 +235,13 @@ enum class ShouldAllocateTls {
     Yes,
 };
 
-static KResultOr<LoadResult> load_elf_object(NonnullOwnPtr<Space> new_space, FileDescription& object_description, FlatPtr load_offset, ShouldAllocateTls should_allocate_tls)
+enum class ShouldAllowSyscalls {
+    No,
+    Yes,
+};
+
+static KResultOr<LoadResult> load_elf_object(NonnullOwnPtr<Space> new_space, FileDescription& object_description,
+    FlatPtr load_offset, ShouldAllocateTls should_allocate_tls, ShouldAllowSyscalls should_allow_syscalls)
 {
     auto& inode = *(object_description.inode());
     auto vmobject = SharedInodeVMObject::create_with_inode(inode);
@@ -310,6 +296,7 @@ static KResultOr<LoadResult> load_elf_object(NonnullOwnPtr<Space> new_space, Fil
                 ph_load_result = region_or_error.error();
                 return IterationDecision::Break;
             }
+
             master_tls_region = region_or_error.value();
             master_tls_size = program_header.size_in_memory();
             master_tls_alignment = program_header.alignment();
@@ -340,7 +327,11 @@ static KResultOr<LoadResult> load_elf_object(NonnullOwnPtr<Space> new_space, Fil
             if (program_header.is_writable())
                 prot |= PROT_WRITE;
             auto region_name = String::formatted("{} (data-{}{})", elf_name, program_header.is_readable() ? "r" : "", program_header.is_writable() ? "w" : "");
-            auto range = new_space->allocate_range(program_header.vaddr().offset(load_offset), program_header.size_in_memory());
+
+            auto range_base = VirtualAddress { page_round_down(program_header.vaddr().offset(load_offset).get()) };
+            auto range_end = VirtualAddress { page_round_up(program_header.vaddr().offset(load_offset).offset(program_header.size_in_memory()).get()) };
+
+            auto range = new_space->allocate_range(range_base, range_end.get() - range_base.get());
             if (!range.has_value()) {
                 ph_load_result = ENOMEM;
                 return IterationDecision::Break;
@@ -387,6 +378,8 @@ static KResultOr<LoadResult> load_elf_object(NonnullOwnPtr<Space> new_space, Fil
             ph_load_result = region_or_error.error();
             return IterationDecision::Break;
         }
+        if (should_allow_syscalls == ShouldAllowSyscalls::Yes)
+            region_or_error.value()->set_syscall_region(true);
         if (program_header.offset() == 0)
             load_base_address = (FlatPtr)region_or_error.value()->vaddr().as_ptr();
         return IterationDecision::Continue;
@@ -437,9 +430,14 @@ KResultOr<LoadResult> Process::load(NonnullRefPtr<FileDescription> main_program_
     });
 
     if (interpreter_description.is_null()) {
-        auto result = load_elf_object(new_space.release_nonnull(), main_program_description, FlatPtr { 0 }, ShouldAllocateTls::Yes);
+        auto result = load_elf_object(new_space.release_nonnull(), main_program_description, FlatPtr { 0 }, ShouldAllocateTls::Yes, ShouldAllowSyscalls::No);
         if (result.is_error())
             return result.error();
+
+        m_master_tls_region = result.value().tls_region;
+        m_master_tls_size = result.value().tls_size;
+        m_master_tls_alignment = result.value().tls_alignment;
+
         return result;
     }
 
@@ -448,7 +446,7 @@ KResultOr<LoadResult> Process::load(NonnullRefPtr<FileDescription> main_program_
         return interpreter_load_offset.error();
     }
 
-    auto interpreter_load_result = load_elf_object(new_space.release_nonnull(), *interpreter_description, interpreter_load_offset.value(), ShouldAllocateTls::No);
+    auto interpreter_load_result = load_elf_object(new_space.release_nonnull(), *interpreter_description, interpreter_load_offset.value(), ShouldAllocateTls::No, ShouldAllowSyscalls::Yes);
 
     if (interpreter_load_result.is_error())
         return interpreter_load_result.error();
@@ -507,11 +505,15 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     if (!(main_program_description->custody()->mount_flags() & MS_NOSUID)) {
         if (main_program_metadata.is_setuid()) {
             executable_is_setid = true;
-            m_euid = m_suid = main_program_metadata.uid;
+            ProtectedDataMutationScope scope { *this };
+            m_euid = main_program_metadata.uid;
+            m_suid = main_program_metadata.uid;
         }
         if (main_program_metadata.is_setgid()) {
             executable_is_setid = true;
-            m_egid = m_sgid = main_program_metadata.gid;
+            ProtectedDataMutationScope scope { *this };
+            m_egid = main_program_metadata.gid;
+            m_sgid = main_program_metadata.gid;
         }
     }
 
@@ -526,17 +528,10 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     }
 
     signal_trampoline_region.value()->set_syscall_region(true);
-    m_signal_trampoline = signal_trampoline_region.value()->vaddr();
 
     m_executable = main_program_description->custody();
     m_arguments = arguments;
     m_environment = environment;
-
-    m_promises = m_execpromises;
-    m_has_promises = m_has_execpromises;
-
-    m_execpromises = 0;
-    m_has_execpromises = false;
 
     m_veil_state = VeilState::None;
     m_unveiled_paths.clear();
@@ -558,7 +553,8 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     if (interpreter_description) {
         main_program_fd = alloc_fd();
         VERIFY(main_program_fd >= 0);
-        main_program_description->seek(0, SEEK_SET);
+        auto seek_result = main_program_description->seek(0, SEEK_SET);
+        VERIFY(!seek_result.is_error());
         main_program_description->set_readable(true);
         m_fds[main_program_fd].set(move(main_program_description), FD_CLOEXEC);
     }
@@ -574,7 +570,7 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     }
     VERIFY(new_main_thread);
 
-    auto auxv = generate_auxiliary_vector(load_result.load_base, load_result.entry_eip, m_uid, m_euid, m_gid, m_egid, path, main_program_fd);
+    auto auxv = generate_auxiliary_vector(load_result.load_base, load_result.entry_eip, uid(), euid(), gid(), egid(), path, main_program_fd);
 
     // NOTE: We create the new stack before disabling interrupts since it will zero-fault
     //       and we don't want to deal with faults after this point.
@@ -599,8 +595,20 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     m_name = parts.take_last();
     new_main_thread->set_name(m_name);
 
-    // FIXME: PID/TID ISSUE
-    m_pid = new_main_thread->tid().value();
+    {
+        ProtectedDataMutationScope scope { *this };
+        m_promises = m_execpromises;
+        m_has_promises = m_has_execpromises;
+
+        m_execpromises = 0;
+        m_has_execpromises = false;
+
+        m_signal_trampoline = signal_trampoline_region.value()->vaddr();
+
+        // FIXME: PID/TID ISSUE
+        m_pid = new_main_thread->tid().value();
+    }
+
     auto tsr_result = new_main_thread->make_thread_specific_region({});
     if (tsr_result.is_error()) {
         // FIXME: We cannot fail this late. Refactor this so the allocation happens before we commit to the new executable.
@@ -618,7 +626,7 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     tss.eip = load_result.entry_eip;
     tss.esp = new_userspace_esp;
     tss.cr3 = space().page_directory().cr3();
-    tss.ss2 = m_pid.value();
+    tss.ss2 = pid().value();
 
     // Throw away any recorded performance events in this process.
     if (m_perf_event_buffer)
@@ -876,7 +884,7 @@ KResult Process::exec(String path, Vector<String> arguments, Vector<String> envi
     return KSuccess;
 }
 
-int Process::sys$execve(Userspace<const Syscall::SC_execve_params*> user_params)
+KResultOr<int> Process::sys$execve(Userspace<const Syscall::SC_execve_params*> user_params)
 {
     REQUIRE_PROMISE(exec);
 
@@ -884,10 +892,10 @@ int Process::sys$execve(Userspace<const Syscall::SC_execve_params*> user_params)
     //       On success, the kernel stack will be lost.
     Syscall::SC_execve_params params;
     if (!copy_from_user(&params, user_params))
-        return -EFAULT;
+        return EFAULT;
 
     if (params.arguments.length > ARG_MAX || params.environment.length > ARG_MAX)
-        return -E2BIG;
+        return E2BIG;
 
     String path;
     {
@@ -919,11 +927,11 @@ int Process::sys$execve(Userspace<const Syscall::SC_execve_params*> user_params)
 
     Vector<String> arguments;
     if (!copy_user_strings(params.arguments, arguments))
-        return -EFAULT;
+        return EFAULT;
 
     Vector<String> environment;
     if (!copy_user_strings(params.environment, environment))
-        return -EFAULT;
+        return EFAULT;
 
     auto result = exec(move(path), move(arguments), move(environment));
     VERIFY(result.is_error()); // We should never continue after a successful exec!

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <LibGUI/Event.h>
@@ -39,6 +19,63 @@
 #include <LibWeb/UIEvents/MouseEvent.h>
 
 namespace Web {
+
+static Gfx::StandardCursor cursor_css_to_gfx(Optional<CSS::Cursor> cursor)
+{
+    if (!cursor.has_value()) {
+        return Gfx::StandardCursor::None;
+    }
+    switch (cursor.value()) {
+    case CSS::Cursor::Crosshair:
+    case CSS::Cursor::Cell:
+        return Gfx::StandardCursor::Crosshair;
+    case CSS::Cursor::Grab:
+    case CSS::Cursor::Grabbing:
+        return Gfx::StandardCursor::Drag;
+    case CSS::Cursor::Pointer:
+        return Gfx::StandardCursor::Hand;
+    case CSS::Cursor::Help:
+        return Gfx::StandardCursor::Help;
+    case CSS::Cursor::None:
+        return Gfx::StandardCursor::Hidden;
+    case CSS::Cursor::Text:
+    case CSS::Cursor::VerticalText:
+        return Gfx::StandardCursor::IBeam;
+    case CSS::Cursor::Move:
+    case CSS::Cursor::AllScroll:
+        return Gfx::StandardCursor::Move;
+    case CSS::Cursor::Progress:
+    case CSS::Cursor::Wait:
+        return Gfx::StandardCursor::Wait;
+
+    case CSS::Cursor::ColResize:
+        return Gfx::StandardCursor::ResizeColumn;
+    case CSS::Cursor::EResize:
+    case CSS::Cursor::WResize:
+    case CSS::Cursor::EwResize:
+        return Gfx::StandardCursor::ResizeHorizontal;
+
+    case CSS::Cursor::RowResize:
+        return Gfx::StandardCursor::ResizeRow;
+    case CSS::Cursor::NResize:
+    case CSS::Cursor::SResize:
+    case CSS::Cursor::NsResize:
+        return Gfx::StandardCursor::ResizeVertical;
+
+    case CSS::Cursor::NeResize:
+    case CSS::Cursor::SwResize:
+    case CSS::Cursor::NeswResize:
+        return Gfx::StandardCursor::ResizeDiagonalBLTR;
+
+    case CSS::Cursor::NwResize:
+    case CSS::Cursor::SeResize:
+    case CSS::Cursor::NwseResize:
+        return Gfx::StandardCursor::ResizeDiagonalTLBR;
+
+    default:
+        return Gfx::StandardCursor::None;
+    }
+}
 
 static Gfx::IntPoint compute_mouse_event_offset(const Gfx::IntPoint& position, const Layout::Node& layout_node)
 {
@@ -82,7 +119,12 @@ bool EventHandler::handle_mousewheel(const Gfx::IntPoint& position, unsigned int
 
     auto result = layout_root()->hit_test(position, Layout::HitTestType::Exact);
     if (result.layout_node) {
-        result.layout_node->handle_mousewheel({}, position, buttons, modifiers, wheel_delta);
+        if (result.layout_node->handle_mousewheel({}, position, buttons, modifiers, wheel_delta))
+            return true;
+    }
+
+    if (auto* page = m_frame.page()) {
+        page->client().page_did_request_scroll(wheel_delta);
         return true;
     }
 
@@ -120,7 +162,7 @@ bool EventHandler::handle_mouseup(const Gfx::IntPoint& position, unsigned button
             return false;
         }
         auto offset = compute_mouse_event_offset(position, *result.layout_node);
-        node->dispatch_event(UIEvents::MouseEvent::create(UIEvents::EventNames::mouseup, offset.x(), offset.y()));
+        node->dispatch_event(UIEvents::MouseEvent::create(UIEvents::EventNames::mouseup, offset.x(), offset.y(), position.x(), position.y()));
         handled_event = true;
     }
 
@@ -168,7 +210,7 @@ bool EventHandler::handle_mousedown(const Gfx::IntPoint& position, unsigned butt
             page->set_focused_frame({}, m_frame);
 
         auto offset = compute_mouse_event_offset(position, *result.layout_node);
-        node->dispatch_event(UIEvents::MouseEvent::create(UIEvents::EventNames::mousedown, offset.x(), offset.y()));
+        node->dispatch_event(UIEvents::MouseEvent::create(UIEvents::EventNames::mousedown, offset.x(), offset.y(), position.x(), position.y()));
     }
 
     // NOTE: Dispatching an event may have disturbed the world.
@@ -239,7 +281,7 @@ bool EventHandler::handle_mousemove(const Gfx::IntPoint& position, unsigned butt
 
     bool hovered_node_changed = false;
     bool is_hovering_link = false;
-    bool is_hovering_text = false;
+    Gfx::StandardCursor hovered_node_cursor = Gfx::StandardCursor::None;
     auto result = layout_root()->hit_test(position, Layout::HitTestType::Exact);
     const HTML::HTMLAnchorElement* hovered_link_element = nullptr;
     if (result.layout_node) {
@@ -264,13 +306,18 @@ bool EventHandler::handle_mousemove(const Gfx::IntPoint& position, unsigned butt
         hovered_node_changed = node != document.hovered_node();
         document.set_hovered_node(node);
         if (node) {
-            if (node->is_text())
-                is_hovering_text = true;
             hovered_link_element = node->enclosing_link_element();
             if (hovered_link_element)
                 is_hovering_link = true;
+
+            auto cursor = result.layout_node->computed_values().cursor();
+            if (node->is_text() && cursor == CSS::Cursor::Auto)
+                hovered_node_cursor = Gfx::StandardCursor::IBeam;
+            else
+                hovered_node_cursor = cursor_css_to_gfx(cursor);
+
             auto offset = compute_mouse_event_offset(position, *result.layout_node);
-            node->dispatch_event(UIEvents::MouseEvent::create(UIEvents::EventNames::mousemove, offset.x(), offset.y()));
+            node->dispatch_event(UIEvents::MouseEvent::create(UIEvents::EventNames::mousemove, offset.x(), offset.y(), position.x(), position.y()));
             // NOTE: Dispatching an event may have disturbed the world.
             if (!layout_root() || layout_root() != node->document().layout_node())
                 return true;
@@ -287,15 +334,10 @@ bool EventHandler::handle_mousemove(const Gfx::IntPoint& position, unsigned butt
     }
 
     if (auto* page = m_frame.page()) {
-        if (is_hovering_link)
-            page->client().page_did_request_cursor_change(Gfx::StandardCursor::Hand);
-        else if (is_hovering_text)
-            page->client().page_did_request_cursor_change(Gfx::StandardCursor::IBeam);
-        else
-            page->client().page_did_request_cursor_change(Gfx::StandardCursor::None);
+        page->client().page_did_request_cursor_change(hovered_node_cursor);
 
         if (hovered_node_changed) {
-            RefPtr<HTML::HTMLElement> hovered_html_element = document.hovered_node() ? document.hovered_node()->enclosing_html_element() : nullptr;
+            RefPtr<HTML::HTMLElement> hovered_html_element = document.hovered_node() ? document.hovered_node()->enclosing_html_element_with_attribute(HTML::AttributeNames::title) : nullptr;
             if (hovered_html_element && !hovered_html_element->title().is_null()) {
                 page->client().page_did_enter_tooltip_area(m_frame.to_main_frame_position(position), hovered_html_element->title());
             } else {

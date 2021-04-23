@@ -1,35 +1,15 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Sergey Bugaev <bugaevc@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Format.h>
 #include <AK/PrintfImplementation.h>
 #include <AK/ScopedValueRollback.h>
 #include <AK/StdLibExtras.h>
-#include <AK/kmalloc.h>
+#include <AK/String.h>
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -175,12 +155,12 @@ bool FILE::flush()
     }
     if (m_mode & O_RDONLY) {
         // When open for reading, just drop the buffered data.
-        size_t had_buffered = m_buffer.buffered_size();
+        VERIFY(m_buffer.buffered_size() <= NumericLimits<off_t>::max());
+        off_t had_buffered = m_buffer.buffered_size();
         m_buffer.drop();
         // Attempt to reset the underlying file position to what the user
         // expects.
-        int rc = lseek(m_fd, -had_buffered, SEEK_CUR);
-        if (rc < 0) {
+        if (lseek(m_fd, -had_buffered, SEEK_CUR) < 0) {
             if (errno == ESPIPE) {
                 // We can't set offset on this file; oh well, the user will just
                 // have to cope.
@@ -777,6 +757,8 @@ size_t fread(void* ptr, size_t size, size_t nmemb, FILE* stream)
     VERIFY(!Checked<size_t>::multiplication_would_overflow(size, nmemb));
 
     size_t nread = stream->read(reinterpret_cast<u8*>(ptr), size * nmemb);
+    if (!nread)
+        return 0;
     return nread / size;
 }
 
@@ -786,6 +768,8 @@ size_t fwrite(const void* ptr, size_t size, size_t nmemb, FILE* stream)
     VERIFY(!Checked<size_t>::multiplication_would_overflow(size, nmemb));
 
     size_t nwritten = stream->write(reinterpret_cast<const u8*>(ptr), size * nmemb);
+    if (!nwritten)
+        return 0;
     return nwritten / size;
 }
 
@@ -879,6 +863,29 @@ int printf(const char* fmt, ...)
     int ret = vprintf(fmt, ap);
     va_end(ap);
     return ret;
+}
+
+int vasprintf(char** strp, const char* fmt, va_list ap)
+{
+    StringBuilder builder;
+    builder.appendvf(fmt, ap);
+    VERIFY(builder.length() <= NumericLimits<int>::max());
+    int length = builder.length();
+    *strp = strdup(builder.to_string().characters());
+    return length;
+}
+
+int asprintf(char** strp, const char* fmt, ...)
+{
+    StringBuilder builder;
+    va_list ap;
+    va_start(ap, fmt);
+    builder.appendvf(fmt, ap);
+    va_end(ap);
+    VERIFY(builder.length() <= NumericLimits<int>::max());
+    int length = builder.length();
+    *strp = strdup(builder.to_string().characters());
+    return length;
 }
 
 static void buffer_putch(char*& bufptr, char ch)
@@ -1049,10 +1056,9 @@ void dbgputch(char ch)
     syscall(SC_dbgputch, ch);
 }
 
-int dbgputstr(const char* characters, ssize_t length)
+void dbgputstr(const char* characters, size_t length)
 {
-    int rc = syscall(SC_dbgputstr, characters, length);
-    __RETURN_WITH_ERRNO(rc, rc, -1);
+    syscall(SC_dbgputstr, characters, length);
 }
 
 char* tmpnam(char*)

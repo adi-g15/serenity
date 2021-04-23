@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2019-2020, Sergey Bugaev <bugaevc@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <Kernel/FileSystem/TmpFS.h>
@@ -114,10 +94,10 @@ NonnullRefPtr<TmpFSInode> TmpFSInode::create(TmpFS& fs, InodeMetadata metadata, 
 NonnullRefPtr<TmpFSInode> TmpFSInode::create_root(TmpFS& fs)
 {
     InodeMetadata metadata;
-    auto now = kgettimeofday();
-    metadata.atime = now.tv_sec;
-    metadata.ctime = now.tv_sec;
-    metadata.mtime = now.tv_sec;
+    auto now = kgettimeofday().to_truncated_seconds();
+    metadata.atime = now;
+    metadata.ctime = now;
+    metadata.mtime = now;
     metadata.mode = S_IFDIR | S_ISVTX | 0777;
     return create(fs, metadata, { fs.fsid(), 1 });
 }
@@ -204,13 +184,10 @@ ssize_t TmpFSInode::write_bytes(off_t offset, ssize_t size, const UserOrKernelBu
         m_metadata.size = new_size;
         set_metadata_dirty(true);
         set_metadata_dirty(false);
-        inode_size_changed(old_size, new_size);
     }
 
     if (!buffer.read(m_content->data() + offset, size)) // TODO: partial reads?
         return -EFAULT;
-    inode_contents_changed(offset, size, buffer);
-
     return size;
 }
 
@@ -280,16 +257,15 @@ KResultOr<NonnullRefPtr<Inode>> TmpFSInode::create_child(const String& name, mod
     if (dev != 0)
         return ENOTSUP;
 
-    struct timeval now;
-    kgettimeofday(now);
+    time_t now = kgettimeofday().to_truncated_seconds();
 
     InodeMetadata metadata;
     metadata.mode = mode;
     metadata.uid = uid;
     metadata.gid = gid;
-    metadata.atime = now.tv_sec;
-    metadata.ctime = now.tv_sec;
-    metadata.mtime = now.tv_sec;
+    metadata.atime = now;
+    metadata.ctime = now;
+    metadata.mtime = now;
 
     auto child = TmpFSInode::create(fs(), metadata, identifier());
     auto result = add_child(child, name, mode);
@@ -354,18 +330,8 @@ KResult TmpFSInode::truncate(u64 size)
         m_content = move(tmp);
     }
 
-    size_t old_size = m_metadata.size;
     m_metadata.size = size;
     notify_watchers();
-
-    if (old_size != (size_t)size) {
-        inode_size_changed(old_size, size);
-        if (m_content) {
-            auto buffer = UserOrKernelBuffer::for_kernel_buffer(m_content->data());
-            inode_contents_changed(0, size, buffer);
-        }
-    }
-
     return KSuccess;
 }
 

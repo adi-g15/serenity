@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Memory.h>
@@ -39,7 +19,7 @@
 
 namespace Kernel {
 
-Region::Region(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, u8 access, Cacheable cacheable, bool shared)
+Region::Region(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, Region::Access access, Cacheable cacheable, bool shared)
     : PurgeablePageRanges(vmobject)
     , m_range(range)
     , m_offset_in_vmobject(offset_in_vmobject)
@@ -104,7 +84,7 @@ OwnPtr<Region> Region::clone(Process& new_owner)
 
         // Create a new region backed by the same VMObject.
         auto region = Region::create_user_accessible(
-            &new_owner, m_range, m_vmobject, m_offset_in_vmobject, m_name, m_access, m_cacheable ? Cacheable::Yes : Cacheable::No, m_shared);
+            &new_owner, m_range, m_vmobject, m_offset_in_vmobject, m_name, access(), m_cacheable ? Cacheable::Yes : Cacheable::No, m_shared);
         if (m_vmobject->is_anonymous())
             region->copy_purgeable_page_ranges(*this);
         region->set_mmap(m_mmap);
@@ -123,7 +103,7 @@ OwnPtr<Region> Region::clone(Process& new_owner)
     // Set up a COW region. The parent (this) region becomes COW as well!
     remap();
     auto clone_region = Region::create_user_accessible(
-        &new_owner, m_range, vmobject_clone.release_nonnull(), m_offset_in_vmobject, m_name, m_access, m_cacheable ? Cacheable::Yes : Cacheable::No, m_shared);
+        &new_owner, m_range, vmobject_clone.release_nonnull(), m_offset_in_vmobject, m_name, access(), m_cacheable ? Cacheable::Yes : Cacheable::No, m_shared);
     if (m_vmobject->is_anonymous())
         clone_region->copy_purgeable_page_ranges(*this);
     if (m_stack) {
@@ -228,7 +208,7 @@ size_t Region::amount_shared() const
     return bytes;
 }
 
-NonnullOwnPtr<Region> Region::create_user_accessible(Process* owner, const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, u8 access, Cacheable cacheable, bool shared)
+NonnullOwnPtr<Region> Region::create_user_accessible(Process* owner, const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, Region::Access access, Cacheable cacheable, bool shared)
 {
     auto region = adopt_own(*new Region(range, move(vmobject), offset_in_vmobject, move(name), access, cacheable, shared));
     if (owner)
@@ -236,7 +216,7 @@ NonnullOwnPtr<Region> Region::create_user_accessible(Process* owner, const Range
     return region;
 }
 
-NonnullOwnPtr<Region> Region::create_kernel_only(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, u8 access, Cacheable cacheable)
+NonnullOwnPtr<Region> Region::create_kernel_only(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, Region::Access access, Cacheable cacheable)
 {
     return adopt_own(*new Region(range, move(vmobject), offset_in_vmobject, move(name), access, cacheable, false));
 }
@@ -385,7 +365,7 @@ void Region::set_page_directory(PageDirectory& page_directory)
     m_page_directory = page_directory;
 }
 
-bool Region::map(PageDirectory& page_directory)
+bool Region::map(PageDirectory& page_directory, ShouldFlushTLB should_flush_tlb)
 {
     ScopedSpinLock lock(s_mm_lock);
     ScopedSpinLock page_lock(page_directory.get_lock());
@@ -403,7 +383,8 @@ bool Region::map(PageDirectory& page_directory)
         ++page_index;
     }
     if (page_index > 0) {
-        MM.flush_tlb(m_page_directory, vaddr(), page_index);
+        if (should_flush_tlb == ShouldFlushTLB::Yes)
+            MM.flush_tlb(m_page_directory, vaddr(), page_index);
         return page_index == page_count();
     }
     return false;
@@ -494,14 +475,14 @@ PageFaultResponse Region::handle_zero_fault(size_t page_index_in_region)
     } else {
         page_slot = MM.allocate_user_physical_page(MemoryManager::ShouldZeroFill::Yes);
         if (page_slot.is_null()) {
-            klog() << "MM: handle_zero_fault was unable to allocate a physical page";
+            dmesgln("MM: handle_zero_fault was unable to allocate a physical page");
             return PageFaultResponse::OutOfMemory;
         }
         dbgln_if(PAGE_FAULT_DEBUG, "      >> ALLOCATED {}", page_slot->paddr());
     }
 
     if (!remap_vmobject_page(page_index_in_vmobject)) {
-        klog() << "MM: handle_zero_fault was unable to allocate a page table to map " << page_slot;
+        dmesgln("MM: handle_zero_fault was unable to allocate a page table to map {}", page_slot);
         return PageFaultResponse::OutOfMemory;
     }
     return PageFaultResponse::Continue;
@@ -565,7 +546,7 @@ PageFaultResponse Region::handle_inode_fault(size_t page_index_in_region, Scoped
     mm_lock.lock();
 
     if (nread < 0) {
-        klog() << "MM: handle_inode_fault had error (" << nread << ") while reading!";
+        dmesgln("MM: handle_inode_fault had error ({}) while reading!", nread);
         return PageFaultResponse::ShouldCrash;
     }
     if (nread < PAGE_SIZE) {
@@ -575,7 +556,7 @@ PageFaultResponse Region::handle_inode_fault(size_t page_index_in_region, Scoped
 
     vmobject_physical_page_entry = MM.allocate_user_physical_page(MemoryManager::ShouldZeroFill::No);
     if (vmobject_physical_page_entry.is_null()) {
-        klog() << "MM: handle_inode_fault was unable to allocate a physical page";
+        dmesgln("MM: handle_inode_fault was unable to allocate a physical page");
         return PageFaultResponse::OutOfMemory;
     }
 

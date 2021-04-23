@@ -1,36 +1,18 @@
 /*
  * Copyright (c) 2020, The SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "AST.h"
 #include "Shell.h"
+#include "Shell/Formatter.h"
 #include <AK/LexicalPath.h>
 #include <AK/ScopeGuard.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/EventLoop.h>
 #include <LibCore/File.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -110,7 +92,7 @@ int Shell::builtin_bg(int argc, const char** argv)
 
     job->set_running_in_background(true);
     job->set_should_announce_exit(true);
-    job->set_is_suspended(false);
+    job->set_shell_did_continue(true);
 
     dbgln("Resuming {} ({})", job->pid(), job->cmd());
     warnln("Resuming job {} - {}", job->job_id(), job->cmd().characters());
@@ -124,6 +106,76 @@ int Shell::builtin_bg(int argc, const char** argv)
     }
 
     return 0;
+}
+
+int Shell::builtin_type(int argc, const char** argv)
+{
+
+    Vector<const char*> commands;
+    bool dont_show_function_source = false;
+
+    Core::ArgsParser parser;
+    parser.set_general_help("Display information about commands.");
+    parser.add_positional_argument(commands, "Command(s) to list info about", "command");
+    parser.add_option(dont_show_function_source, "Do not show functions source.", "no-fn-source", 'f');
+
+    if (!parser.parse(argc, const_cast<char**>(argv), false))
+        return 1;
+
+    bool something_not_found = false;
+
+    for (auto& command : commands) {
+        // check if it is an alias
+        if (auto alias = m_aliases.get(command); alias.has_value()) {
+            printf("%s is aliased to `%s`\n", escape_token(command).characters(), escape_token(alias.value()).characters());
+            continue;
+        }
+
+        // check if it is a function
+        if (auto function = m_functions.get(command); function.has_value()) {
+            auto fn = function.value();
+            printf("%s is a function\n", command);
+            if (!dont_show_function_source) {
+                StringBuilder builder;
+                builder.append(fn.name);
+                builder.append("(");
+                for (size_t i = 0; i < fn.arguments.size(); i++) {
+                    builder.append(fn.arguments[i]);
+                    if (!(i == fn.arguments.size() - 1))
+                        builder.append(" ");
+                }
+                builder.append(") {\n");
+                if (fn.body) {
+                    auto formatter = Formatter(*fn.body);
+                    builder.append(formatter.format());
+                    printf("%s\n}\n", builder.build().characters());
+                } else {
+                    printf("%s\n}\n", builder.build().characters());
+                }
+            }
+            continue;
+        }
+
+        // check if its a builtin
+        if (has_builtin(command)) {
+            printf("%s is a shell builtin\n", command);
+            continue;
+        }
+
+        // check if its an executable in PATH
+        auto fullpath = Core::find_executable_in_path(command);
+        if (!fullpath.is_null()) {
+            printf("%s is %s\n", command, escape_token(fullpath).characters());
+            continue;
+        }
+        something_not_found = true;
+        printf("type: %s not found\n", command);
+    }
+
+    if (something_not_found)
+        return 1;
+    else
+        return 0;
 }
 
 int Shell::builtin_cd(int argc, const char** argv)
@@ -146,14 +198,8 @@ int Shell::builtin_cd(int argc, const char** argv)
             if (oldpwd == nullptr)
                 return 1;
             new_path = oldpwd;
-        } else if (arg_path[0] == '/') {
-            new_path = argv[1];
         } else {
-            StringBuilder builder;
-            builder.append(cwd);
-            builder.append('/');
-            builder.append(arg_path);
-            new_path = builder.to_string();
+            new_path = arg_path;
         }
     }
 
@@ -299,9 +345,10 @@ int Shell::builtin_exit(int argc, const char** argv)
         }
     }
     stop_all_jobs();
-    m_editor->save_history(get_history_path());
-    if (m_is_interactive)
+    if (m_is_interactive) {
+        m_editor->save_history(get_history_path());
         printf("Good-bye!\n");
+    }
     exit(exit_code);
     return 0;
 }
@@ -394,7 +441,7 @@ int Shell::builtin_fg(int argc, const char** argv)
     }
 
     job->set_running_in_background(false);
-    job->set_is_suspended(false);
+    job->set_shell_did_continue(true);
 
     dbgln("Resuming {} ({})", job->pid(), job->cmd());
     warnln("Resuming job {} - {}", job->job_id(), job->cmd().characters());
@@ -891,10 +938,15 @@ int Shell::builtin_not(int argc, const char** argv)
 
     auto commands = expand_aliases({ move(command) });
     int exit_code = 1;
+    auto found_a_job = false;
     for (auto& job : run_commands(commands)) {
+        found_a_job = true;
         block_on_job(job);
         exit_code = job.exit_code();
     }
+    // In case it was a function.
+    if (!found_a_job)
+        exit_code = last_return_code;
     return exit_code == 0 ? 1 : 0;
 }
 
@@ -932,6 +984,8 @@ bool Shell::run_builtin(const AST::Command& command, const NonnullRefPtrVector<A
         retval = builtin_##builtin(argv.size() - 1, argv.data());        \
         if (!has_error(ShellError::None))                                \
             raise_error(m_error, m_error_description, command.position); \
+        fflush(stdout);                                                  \
+        fflush(stderr);                                                  \
         return true;                                                     \
     }
 

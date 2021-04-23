@@ -1,33 +1,13 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Assertions.h>
 #include <AK/Memory.h>
 #include <AK/StringView.h>
-#include <Kernel/Arch/i386/CPU.h>
+#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/CMOS.h>
 #include <Kernel/FileSystem/Inode.h>
 #include <Kernel/Heap/kmalloc.h>
@@ -65,11 +45,6 @@ namespace Kernel {
 // the memory manager to be initialized twice!
 static MemoryManager* s_the;
 RecursiveSpinLock s_mm_lock;
-
-const LogStream& operator<<(const LogStream& stream, const UsedMemoryRange& value)
-{
-    return stream << UserMemoryRangeTypeNames[static_cast<int>(value.type)] << " range @ " << value.start << " - " << value.end;
-}
 
 MemoryManager& MM
 {
@@ -217,7 +192,7 @@ UNMAP_AFTER_INIT void MemoryManager::parse_memory_map()
     auto* mmap_end = reinterpret_cast<multiboot_memory_map_t*>(low_physical_to_virtual(multiboot_info_ptr->mmap_addr) + multiboot_info_ptr->mmap_length);
 
     for (auto& used_range : m_used_memory_ranges) {
-        klog() << "MM: " << used_range;
+        dmesgln("MM: {} range @ {} - {}", UserMemoryRangeTypeNames[static_cast<int>(used_range.type)], used_range.start, used_range.end);
     }
 
     for (auto* mmap = mmap_begin; mmap < mmap_end; mmap++) {
@@ -239,7 +214,7 @@ UNMAP_AFTER_INIT void MemoryManager::parse_memory_map()
             m_physical_memory_ranges.append(PhysicalMemoryRange { PhysicalMemoryRangeType::ACPI_NVS, start_address, length });
             break;
         case (MULTIBOOT_MEMORY_BADRAM):
-            klog() << "MM: Warning, detected bad memory range!";
+            dmesgln("MM: Warning, detected bad memory range!");
             m_physical_memory_ranges.append(PhysicalMemoryRange { PhysicalMemoryRangeType::BadMemory, start_address, length });
             break;
         default:
@@ -436,21 +411,16 @@ Region* MemoryManager::kernel_region_from_vaddr(VirtualAddress vaddr)
     return nullptr;
 }
 
-Region* MemoryManager::user_region_from_vaddr(Space& space, VirtualAddress vaddr)
+Region* MemoryManager::find_user_region_from_vaddr(Space& space, VirtualAddress vaddr)
 {
-    // FIXME: Use a binary search tree (maybe red/black?) or some other more appropriate data structure!
     ScopedSpinLock lock(space.get_lock());
-    for (auto& region : space.regions()) {
-        if (region.contains(vaddr))
-            return &region;
-    }
-    return nullptr;
+    return space.find_region_containing({ vaddr, 1 });
 }
 
 Region* MemoryManager::find_region_from_vaddr(Space& space, VirtualAddress vaddr)
 {
     ScopedSpinLock lock(s_mm_lock);
-    if (auto* region = user_region_from_vaddr(space, vaddr))
+    if (auto* region = find_user_region_from_vaddr(space, vaddr))
         return region;
     return kernel_region_from_vaddr(vaddr);
 }
@@ -464,7 +434,7 @@ Region* MemoryManager::find_region_from_vaddr(VirtualAddress vaddr)
     if (!page_directory)
         return nullptr;
     VERIFY(page_directory->space());
-    return user_region_from_vaddr(*page_directory->space(), vaddr);
+    return find_user_region_from_vaddr(*page_directory->space(), vaddr);
 }
 
 PageFaultResponse MemoryManager::handle_page_fault(const PageFault& fault)
@@ -477,19 +447,16 @@ PageFaultResponse MemoryManager::handle_page_fault(const PageFault& fault)
         dump_kernel_regions();
         return PageFaultResponse::ShouldCrash;
     }
-#if PAGE_FAULT_DEBUG
-    dbgln("MM: CPU[{}] handle_page_fault({:#04x}) at {}", Processor::id(), fault.code(), fault.vaddr());
-#endif
+    dbgln_if(PAGE_FAULT_DEBUG, "MM: CPU[{}] handle_page_fault({:#04x}) at {}", Processor::id(), fault.code(), fault.vaddr());
     auto* region = find_region_from_vaddr(fault.vaddr());
     if (!region) {
-        dmesgln("CPU[{}] NP(error) fault at invalid address {}", Processor::id(), fault.vaddr());
         return PageFaultResponse::ShouldCrash;
     }
 
     return region->handle_fault(fault, lock);
 }
 
-OwnPtr<Region> MemoryManager::allocate_contiguous_kernel_region(size_t size, String name, u8 access, size_t physical_alignment, Region::Cacheable cacheable)
+OwnPtr<Region> MemoryManager::allocate_contiguous_kernel_region(size_t size, String name, Region::Access access, size_t physical_alignment, Region::Cacheable cacheable)
 {
     VERIFY(!(size % PAGE_SIZE));
     ScopedSpinLock lock(s_mm_lock);
@@ -500,7 +467,7 @@ OwnPtr<Region> MemoryManager::allocate_contiguous_kernel_region(size_t size, Str
     return allocate_kernel_region_with_vmobject(range.value(), vmobject, move(name), access, cacheable);
 }
 
-OwnPtr<Region> MemoryManager::allocate_kernel_region(size_t size, String name, u8 access, AllocationStrategy strategy, Region::Cacheable cacheable)
+OwnPtr<Region> MemoryManager::allocate_kernel_region(size_t size, String name, Region::Access access, AllocationStrategy strategy, Region::Cacheable cacheable)
 {
     VERIFY(!(size % PAGE_SIZE));
     ScopedSpinLock lock(s_mm_lock);
@@ -513,7 +480,7 @@ OwnPtr<Region> MemoryManager::allocate_kernel_region(size_t size, String name, u
     return allocate_kernel_region_with_vmobject(range.value(), vmobject.release_nonnull(), move(name), access, cacheable);
 }
 
-OwnPtr<Region> MemoryManager::allocate_kernel_region(PhysicalAddress paddr, size_t size, String name, u8 access, Region::Cacheable cacheable)
+OwnPtr<Region> MemoryManager::allocate_kernel_region(PhysicalAddress paddr, size_t size, String name, Region::Access access, Region::Cacheable cacheable)
 {
     VERIFY(!(size % PAGE_SIZE));
     ScopedSpinLock lock(s_mm_lock);
@@ -526,7 +493,7 @@ OwnPtr<Region> MemoryManager::allocate_kernel_region(PhysicalAddress paddr, size
     return allocate_kernel_region_with_vmobject(range.value(), *vmobject, move(name), access, cacheable);
 }
 
-OwnPtr<Region> MemoryManager::allocate_kernel_region_identity(PhysicalAddress paddr, size_t size, String name, u8 access, Region::Cacheable cacheable)
+OwnPtr<Region> MemoryManager::allocate_kernel_region_identity(PhysicalAddress paddr, size_t size, String name, Region::Access access, Region::Cacheable cacheable)
 {
     VERIFY(!(size % PAGE_SIZE));
     ScopedSpinLock lock(s_mm_lock);
@@ -539,7 +506,7 @@ OwnPtr<Region> MemoryManager::allocate_kernel_region_identity(PhysicalAddress pa
     return allocate_kernel_region_with_vmobject(range.value(), *vmobject, move(name), access, cacheable);
 }
 
-OwnPtr<Region> MemoryManager::allocate_kernel_region_with_vmobject(const Range& range, VMObject& vmobject, String name, u8 access, Region::Cacheable cacheable)
+OwnPtr<Region> MemoryManager::allocate_kernel_region_with_vmobject(const Range& range, VMObject& vmobject, String name, Region::Access access, Region::Cacheable cacheable)
 {
     ScopedSpinLock lock(s_mm_lock);
     auto region = Region::create_kernel_only(range, vmobject, 0, move(name), access, cacheable);
@@ -548,7 +515,7 @@ OwnPtr<Region> MemoryManager::allocate_kernel_region_with_vmobject(const Range& 
     return region;
 }
 
-OwnPtr<Region> MemoryManager::allocate_kernel_region_with_vmobject(VMObject& vmobject, size_t size, String name, u8 access, Region::Cacheable cacheable)
+OwnPtr<Region> MemoryManager::allocate_kernel_region_with_vmobject(VMObject& vmobject, size_t size, String name, Region::Access access, Region::Cacheable cacheable)
 {
     VERIFY(!(size % PAGE_SIZE));
     ScopedSpinLock lock(s_mm_lock);
@@ -699,7 +666,7 @@ NonnullRefPtrVector<PhysicalPage> MemoryManager::allocate_contiguous_supervisor_
 {
     VERIFY(!(size % PAGE_SIZE));
     ScopedSpinLock lock(s_mm_lock);
-    size_t count = ceil_div(size, PAGE_SIZE);
+    size_t count = ceil_div(size, static_cast<size_t>(PAGE_SIZE));
     NonnullRefPtrVector<PhysicalPage> physical_pages;
 
     for (auto& region : m_super_physical_regions) {
@@ -868,7 +835,7 @@ bool MemoryManager::validate_user_stack(const Process& process, VirtualAddress v
     if (!is_user_address(vaddr))
         return false;
     ScopedSpinLock lock(s_mm_lock);
-    auto* region = user_region_from_vaddr(const_cast<Process&>(process).space(), vaddr);
+    auto* region = find_user_region_from_vaddr(const_cast<Process&>(process).space(), vaddr);
     return region && region->is_user() && region->is_stack();
 }
 
@@ -920,6 +887,18 @@ void MemoryManager::dump_kernel_regions()
             region.is_syscall_region() ? 'C' : ' ',
             region.name());
     }
+}
+
+void MemoryManager::set_page_writable_direct(VirtualAddress vaddr, bool writable)
+{
+    ScopedSpinLock lock(s_mm_lock);
+    ScopedSpinLock page_lock(kernel_page_directory().get_lock());
+    auto* pte = ensure_pte(kernel_page_directory(), vaddr);
+    VERIFY(pte);
+    if (pte->is_writable() == writable)
+        return;
+    pte->set_writable(writable);
+    flush_tlb(&kernel_page_directory(), vaddr);
 }
 
 }

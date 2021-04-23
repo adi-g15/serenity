@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2021, Nick Vella <nick@nxk.io>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "ProjectTemplate.h"
@@ -250,9 +230,9 @@ bool copy_directory(String src_path, String dst_path, bool link)
     }
 
     String src_rp = Core::File::real_path_for(src_path);
-    src_rp = String::format("%s/", src_rp.characters());
+    src_rp = String::formatted("{}/", src_rp);
     String dst_rp = Core::File::real_path_for(dst_path);
-    dst_rp = String::format("%s/", dst_rp.characters());
+    dst_rp = String::formatted("{}/", dst_rp);
 
     if (!dst_rp.is_empty() && dst_rp.starts_with(src_rp)) {
         fprintf(stderr, "cp: Cannot copy %s into itself (%s)\n",
@@ -268,8 +248,8 @@ bool copy_directory(String src_path, String dst_path, bool link)
     while (di.has_next()) {
         String filename = di.next_path();
         bool is_copied = copy_file_or_directory(
-            String::format("%s/%s", src_path.characters(), filename.characters()),
-            String::format("%s/%s", dst_path.characters(), filename.characters()),
+            String::formatted("{}/{}", src_path, filename),
+            String::formatted("{}/{}", dst_path, filename),
             true, link);
         if (!is_copied) {
             return false;

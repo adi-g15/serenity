@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/IntrusiveList.h>
@@ -32,7 +12,7 @@
 namespace Kernel {
 
 struct CacheEntry {
-    IntrusiveListNode list_node;
+    IntrusiveListNode<CacheEntry> list_node;
     BlockBasedFS::BlockIndex block_index { 0 };
     u8* data { nullptr };
     bool has_data { false };
@@ -51,7 +31,7 @@ public:
         }
     }
 
-    ~DiskCache() { }
+    ~DiskCache() = default;
 
     bool is_dirty() const { return m_dirty; }
     void set_dirty(bool b) { m_dirty = b; }
@@ -117,8 +97,8 @@ private:
     BlockBasedFS& m_fs;
     size_t m_entry_count { 10000 };
     mutable HashMap<BlockBasedFS::BlockIndex, CacheEntry*> m_hash;
-    mutable IntrusiveList<CacheEntry, &CacheEntry::list_node> m_clean_list;
-    mutable IntrusiveList<CacheEntry, &CacheEntry::list_node> m_dirty_list;
+    mutable IntrusiveList<CacheEntry, RawPtr<CacheEntry>, &CacheEntry::list_node> m_clean_list;
+    mutable IntrusiveList<CacheEntry, RawPtr<CacheEntry>, &CacheEntry::list_node> m_dirty_list;
     KBuffer m_cached_block_data;
     KBuffer m_entries;
     bool m_dirty { false };
@@ -136,6 +116,7 @@ BlockBasedFS::~BlockBasedFS()
 
 KResult BlockBasedFS::write_block(BlockIndex index, const UserOrKernelBuffer& data, size_t count, size_t offset, bool allow_cache)
 {
+    LOCKER(m_lock);
     VERIFY(m_logical_block_size);
     VERIFY(offset + count <= block_size());
     dbgln_if(BBFS_DEBUG, "BlockBasedFileSystem::write_block {}, size={}", index, count);
@@ -143,7 +124,9 @@ KResult BlockBasedFS::write_block(BlockIndex index, const UserOrKernelBuffer& da
     if (!allow_cache) {
         flush_specific_block_if_needed(index);
         u32 base_offset = index.value() * block_size() + offset;
-        file_description().seek(base_offset, SEEK_SET);
+        auto seek_result = file_description().seek(base_offset, SEEK_SET);
+        if (seek_result.is_error())
+            return seek_result.error();
         auto nwritten = file_description().write(data, count);
         if (nwritten.is_error())
             return nwritten.error();
@@ -168,17 +151,22 @@ KResult BlockBasedFS::write_block(BlockIndex index, const UserOrKernelBuffer& da
 
 bool BlockBasedFS::raw_read(BlockIndex index, UserOrKernelBuffer& buffer)
 {
+    LOCKER(m_lock);
     u32 base_offset = index.value() * m_logical_block_size;
-    file_description().seek(base_offset, SEEK_SET);
+    auto seek_result = file_description().seek(base_offset, SEEK_SET);
+    VERIFY(!seek_result.is_error());
     auto nread = file_description().read(buffer, m_logical_block_size);
     VERIFY(!nread.is_error());
     VERIFY(nread.value() == m_logical_block_size);
     return true;
 }
+
 bool BlockBasedFS::raw_write(BlockIndex index, const UserOrKernelBuffer& buffer)
 {
+    LOCKER(m_lock);
     size_t base_offset = index.value() * m_logical_block_size;
-    file_description().seek(base_offset, SEEK_SET);
+    auto seek_result = file_description().seek(base_offset, SEEK_SET);
+    VERIFY(!seek_result.is_error());
     auto nwritten = file_description().write(buffer, m_logical_block_size);
     VERIFY(!nwritten.is_error());
     VERIFY(nwritten.value() == m_logical_block_size);
@@ -187,6 +175,7 @@ bool BlockBasedFS::raw_write(BlockIndex index, const UserOrKernelBuffer& buffer)
 
 bool BlockBasedFS::raw_read_blocks(BlockIndex index, size_t count, UserOrKernelBuffer& buffer)
 {
+    LOCKER(m_lock);
     auto current = buffer;
     for (unsigned block = index.value(); block < (index.value() + count); block++) {
         if (!raw_read(BlockIndex { block }, current))
@@ -195,8 +184,10 @@ bool BlockBasedFS::raw_read_blocks(BlockIndex index, size_t count, UserOrKernelB
     }
     return true;
 }
+
 bool BlockBasedFS::raw_write_blocks(BlockIndex index, size_t count, const UserOrKernelBuffer& buffer)
 {
+    LOCKER(m_lock);
     auto current = buffer;
     for (unsigned block = index.value(); block < (index.value() + count); block++) {
         if (!raw_write(block, current))
@@ -208,6 +199,7 @@ bool BlockBasedFS::raw_write_blocks(BlockIndex index, size_t count, const UserOr
 
 KResult BlockBasedFS::write_blocks(BlockIndex index, unsigned count, const UserOrKernelBuffer& data, bool allow_cache)
 {
+    LOCKER(m_lock);
     VERIFY(m_logical_block_size);
     dbgln_if(BBFS_DEBUG, "BlockBasedFileSystem::write_blocks {}, count={}", index, count);
     for (unsigned i = 0; i < count; ++i) {
@@ -220,14 +212,17 @@ KResult BlockBasedFS::write_blocks(BlockIndex index, unsigned count, const UserO
 
 KResult BlockBasedFS::read_block(BlockIndex index, UserOrKernelBuffer* buffer, size_t count, size_t offset, bool allow_cache) const
 {
+    LOCKER(m_lock);
     VERIFY(m_logical_block_size);
     VERIFY(offset + count <= block_size());
     dbgln_if(BBFS_DEBUG, "BlockBasedFileSystem::read_block {}", index);
 
     if (!allow_cache) {
         const_cast<BlockBasedFS*>(this)->flush_specific_block_if_needed(index);
-        size_t base_offset = index.value() * block_size() + offset;
-        file_description().seek(base_offset, SEEK_SET);
+        auto base_offset = index.value() * block_size() + offset;
+        auto seek_result = file_description().seek(base_offset, SEEK_SET);
+        if (seek_result.is_error())
+            return seek_result.error();
         auto nread = file_description().read(*buffer, count);
         if (nread.is_error())
             return nread.error();
@@ -237,8 +232,10 @@ KResult BlockBasedFS::read_block(BlockIndex index, UserOrKernelBuffer* buffer, s
 
     auto& entry = cache().get(index);
     if (!entry.has_data) {
-        size_t base_offset = index.value() * block_size();
-        file_description().seek(base_offset, SEEK_SET);
+        auto base_offset = index.value() * block_size();
+        auto seek_result = file_description().seek(base_offset, SEEK_SET);
+        if (seek_result.is_error())
+            return seek_result.error();
         auto entry_data_buffer = UserOrKernelBuffer::for_kernel_buffer(entry.data);
         auto nread = file_description().read(entry_data_buffer, block_size());
         if (nread.is_error())
@@ -253,6 +250,7 @@ KResult BlockBasedFS::read_block(BlockIndex index, UserOrKernelBuffer* buffer, s
 
 KResult BlockBasedFS::read_blocks(BlockIndex index, unsigned count, UserOrKernelBuffer& buffer, bool allow_cache) const
 {
+    LOCKER(m_lock);
     VERIFY(m_logical_block_size);
     if (!count)
         return EINVAL;
@@ -278,7 +276,8 @@ void BlockBasedFS::flush_specific_block_if_needed(BlockIndex index)
     cache().for_each_dirty_entry([&](CacheEntry& entry) {
         if (entry.block_index != index) {
             size_t base_offset = entry.block_index.value() * block_size();
-            file_description().seek(base_offset, SEEK_SET);
+            auto seek_result = file_description().seek(base_offset, SEEK_SET);
+            VERIFY(!seek_result.is_error());
             // FIXME: Should this error path be surfaced somehow?
             auto entry_data_buffer = UserOrKernelBuffer::for_kernel_buffer(entry.data);
             [[maybe_unused]] auto rc = file_description().write(entry_data_buffer, block_size());
@@ -299,7 +298,8 @@ void BlockBasedFS::flush_writes_impl()
     u32 count = 0;
     cache().for_each_dirty_entry([&](CacheEntry& entry) {
         u32 base_offset = entry.block_index.value() * block_size();
-        file_description().seek(base_offset, SEEK_SET);
+        auto seek_result = file_description().seek(base_offset, SEEK_SET);
+        VERIFY(!seek_result.is_error());
         // FIXME: Should this error path be surfaced somehow?
         auto entry_data_buffer = UserOrKernelBuffer::for_kernel_buffer(entry.data);
         [[maybe_unused]] auto rc = file_description().write(entry_data_buffer, block_size());

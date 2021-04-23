@@ -12,7 +12,7 @@ echo "$DIR"
 ARCH=${ARCH:-"i686"}
 TARGET="$ARCH-pc-serenity"
 PREFIX="$DIR/Local/$ARCH"
-BUILD="$DIR/../Build"
+BUILD="$DIR/../Build/$ARCH"
 SYSROOT="$BUILD/Root"
 
 MAKE="make"
@@ -26,7 +26,15 @@ else
     INSTALL=install
 fi
 
-if [ "$(uname -s)" = "OpenBSD" ]; then
+SYSTEM_NAME="$(uname -s)"
+
+# We *most definitely* don't need debug symbols in the linker/compiler.
+# This cuts the uncompressed size from 1.2 GiB per Toolchain down to about 120 MiB.
+# Hence, this might actually cause marginal speedups, although the point is to not waste space as blatantly.
+export CFLAGS="-g0 -O2"
+export CXXFLAGS="-g0 -O2"
+
+if [ "$SYSTEM_NAME" = "OpenBSD" ]; then
     MAKE=gmake
     MD5SUM="md5 -q"
     NPROC="sysctl -n hw.ncpuonline"
@@ -35,7 +43,7 @@ if [ "$(uname -s)" = "OpenBSD" ]; then
     export CXX=eg++
     export with_gmp=/usr/local
     export LDFLAGS=-Wl,-z,notext
-elif [ "$(uname -s)" = "FreeBSD" ]; then
+elif [ "$SYSTEM_NAME" = "FreeBSD" ]; then
     MAKE=gmake
     MD5SUM="md5 -q"
     NPROC="sysctl -n hw.ncpu"
@@ -63,18 +71,23 @@ echo SYSROOT is "$SYSROOT"
 
 mkdir -p "$DIR/Tarballs"
 
-BINUTILS_VERSION="2.35.1"
-BINUTILS_MD5SUM="bca600eea3b8fc33ad3265c9c1eee8d4"
+BINUTILS_VERSION="2.36.1"
+BINUTILS_MD5SUM="3df9c3bbd944f9b57c1496f06741197b"
 BINUTILS_NAME="binutils-$BINUTILS_VERSION"
 BINUTILS_PKG="${BINUTILS_NAME}.tar.gz"
 BINUTILS_BASE_URL="http://ftp.gnu.org/gnu/binutils"
 
-GCC_VERSION="10.2.0"
-GCC_MD5SUM="941a8674ea2eeb33f5c30ecf08124874"
+GCC_VERSION="10.3.0"
+GCC_MD5SUM="87910940d70e845f2bf1a57997b6220c"
 GCC_NAME="gcc-$GCC_VERSION"
 GCC_PKG="${GCC_NAME}.tar.gz"
 GCC_BASE_URL="http://ftp.gnu.org/gnu/gcc"
 
+buildstep() {
+    NAME=$1
+    shift
+    "$@" 2>&1 | sed $'s|^|\x1b[34m['"${NAME}"$']\x1b[39m |'
+}
 
 # === CHECK CACHE AND REUSE ===
 
@@ -179,7 +192,7 @@ pushd "$DIR/Tarballs"
         $MD5SUM "$DIR/Patches/gcc.patch" > .patch.applied
     popd
 
-    if [ "$(uname)" = "Darwin" ]; then
+    if [ "$SYSTEM_NAME" = "Darwin" ]; then
         pushd "gcc-${GCC_VERSION}"
         ./contrib/download_prerequisites
         popd
@@ -189,88 +202,123 @@ popd
 
 # === COMPILE AND INSTALL ===
 
+rm -rf "$PREFIX"
 mkdir -p "$PREFIX"
-mkdir -p "$DIR/Build/$ARCH/binutils"
-mkdir -p "$DIR/Build/$ARCH/gcc"
 
 if [ -z "$MAKEJOBS" ]; then
     MAKEJOBS=$($NPROC)
 fi
 
+mkdir -p "$DIR/Build/$ARCH"
+
 pushd "$DIR/Build/$ARCH"
     unset PKG_CONFIG_LIBDIR # Just in case
 
+    rm -rf binutils
+    mkdir -p binutils
+
     pushd binutils
         echo "XXX configure binutils"
-        "$DIR"/Tarballs/$BINUTILS_NAME/configure --prefix="$PREFIX" \
+        buildstep "binutils/configure" "$DIR"/Tarballs/$BINUTILS_NAME/configure --prefix="$PREFIX" \
                                                  --target="$TARGET" \
                                                  --with-sysroot="$SYSROOT" \
                                                  --enable-shared \
                                                  --disable-nls \
                                                  ${TRY_USE_LOCAL_TOOLCHAIN:+"--quiet"} || exit 1
-        if [ "$(uname)" = "Darwin" ]; then
+        if [ "$SYSTEM_NAME" = "Darwin" ]; then
             # under macOS generated makefiles are not resolving the "intl"
             # dependency properly to allow linking its own copy of
             # libintl when building with --enable-shared.
-            "$MAKE" -j "$MAKEJOBS" || true
+            buildstep "binutils/build" "$MAKE" -j "$MAKEJOBS" || true
             pushd intl
-            "$MAKE" all-yes
+            buildstep "binutils/build" "$MAKE" all-yes
             popd
         fi
         echo "XXX build binutils"
-        "$MAKE" -j "$MAKEJOBS" || exit 1
-        "$MAKE" install || exit 1
+        buildstep "binutils/build" "$MAKE" -j "$MAKEJOBS" || exit 1
+        buildstep "binutils/install" "$MAKE" install || exit 1
     popd
 
-    pushd gcc
-        if [ "$(uname -s)" = "OpenBSD" ]; then
-            perl -pi -e 's/-no-pie/-nopie/g' "$DIR/Tarballs/gcc-$GCC_VERSION/gcc/configure"
-        fi
+    echo "XXX serenity libc, libm and libpthread headers"
+    mkdir -p "$BUILD"
+    pushd "$BUILD"
+        mkdir -p Root/usr/include/
+        SRC_ROOT=$($REALPATH "$DIR"/..)
+        FILES=$(find "$SRC_ROOT"/Userland/Libraries/LibC "$SRC_ROOT"/Userland/Libraries/LibM "$SRC_ROOT"/Userland/Libraries/LibPthread -name '*.h' -print)
+        for header in $FILES; do
+            target=$(echo "$header" | sed -e "s@$SRC_ROOT/Userland/Libraries/LibC@@" -e "s@$SRC_ROOT/Userland/Libraries/LibM@@" -e "s@$SRC_ROOT/Userland/Libraries/LibPthread@@")
+            buildstep "system_headers" $INSTALL -D "$header" "Root/usr/include/$target"
+        done
+        unset SRC_ROOT
+    popd
 
-        echo "XXX configure gcc and libgcc"
-        "$DIR/Tarballs/gcc-$GCC_VERSION/configure" --prefix="$PREFIX" \
-                                            --target="$TARGET" \
-                                            --with-sysroot="$SYSROOT" \
-                                            --disable-nls \
-                                            --with-newlib \
-                                            --enable-shared \
-                                            --enable-languages=c,c++ \
-                                            --enable-default-pie \
-                                            --enable-lto \
-                                            ${TRY_USE_LOCAL_TOOLCHAIN:+"--quiet"} || exit 1
+    if [ "$SYSTEM_NAME" = "OpenBSD" ]; then
+        perl -pi -e 's/-no-pie/-nopie/g' "$DIR/Tarballs/gcc-$GCC_VERSION/gcc/configure"
+    fi
 
-        echo "XXX build gcc and libgcc"
-        "$MAKE" -j "$MAKEJOBS" all-gcc || exit 1
-        if [ "$(uname -s)" = "OpenBSD" ]; then
-            ln -sf liblto_plugin.so.0.0 gcc/liblto_plugin.so
-        fi
-        "$MAKE" -j "$MAKEJOBS" all-target-libgcc || exit 1
-        echo "XXX install gcc and libgcc"
-        "$MAKE" install-gcc install-target-libgcc || exit 1
+    if [ ! -f $DIR/Tarballs/gcc-$GCC_VERSION/gcc/config/serenity-userland.h ]; then
+        cp $DIR/Tarballs/gcc-$GCC_VERSION/gcc/config/serenity.h $DIR/Tarballs/gcc-$GCC_VERSION/gcc/config/serenity-kernel.h
+    fi
 
-        echo "XXX serenity libc and libm headers"
-        mkdir -p "$BUILD"
-        pushd "$BUILD"
-            mkdir -p Root/usr/include/
-            SRC_ROOT=$($REALPATH "$DIR"/..)
-            FILES=$(find "$SRC_ROOT"/Userland/Libraries/LibC "$SRC_ROOT"/Userland/Libraries/LibM -name '*.h' -print)
-            for header in $FILES; do
-                target=$(echo "$header" | sed -e "s@$SRC_ROOT/Userland/Libraries/LibC@@" -e "s@$SRC_ROOT/Userland/Libraries/LibM@@")
-                $INSTALL -D "$header" "Root/usr/include/$target"
-            done
-            unset SRC_ROOT
+    for STAGE in Userland Kernel; do
+        rm -rf gcc
+        mkdir -p gcc
+
+        pushd gcc
+            TEMPTARGET="$BUILD/Temp"
+            rm -rf "$TEMPTARGET"
+
+            echo "XXX configure gcc and libgcc"
+            if [ "$STAGE" = "Userland" ]; then
+                REALTARGET="$PREFIX"
+            else
+                REALTARGET="$PREFIX/Kernel"
+            fi
+
+            cp $DIR/Tarballs/gcc-$GCC_VERSION/gcc/config/serenity-kernel.h $DIR/Tarballs/gcc-$GCC_VERSION/gcc/config/serenity.h
+            if [ "$STAGE" = "Userland" ]; then
+                sed -i='' 's@-fno-exceptions @@' $DIR/Tarballs/gcc-$GCC_VERSION/gcc/config/serenity.h
+            fi
+
+            buildstep "gcc/configure/${STAGE,,}" "$DIR/Tarballs/gcc-$GCC_VERSION/configure" --prefix="$PREFIX" \
+                                                --target="$TARGET" \
+                                                --with-sysroot="$SYSROOT" \
+                                                --disable-nls \
+                                                --with-newlib \
+                                                --enable-shared \
+                                                --enable-languages=c,c++ \
+                                                --enable-default-pie \
+                                                --enable-lto \
+                                                --enable-threads=posix \
+                                                ${TRY_USE_LOCAL_TOOLCHAIN:+"--quiet"} || exit 1
+
+            if [ "$STAGE" = "Userland" ]; then
+                echo "XXX build gcc and libgcc"
+                buildstep "gcc/build" "$MAKE" -j "$MAKEJOBS" all-gcc || exit 1
+                if [ "$SYSTEM_NAME" = "OpenBSD" ]; then
+                    ln -sf liblto_plugin.so.0.0 gcc/liblto_plugin.so
+                fi
+                buildstep "libgcc/build" "$MAKE" -j "$MAKEJOBS" all-target-libgcc || exit 1
+                echo "XXX install gcc and libgcc"
+                buildstep "gcc+libgcc/install" "$MAKE" DESTDIR=$TEMPTARGET install-gcc install-target-libgcc || exit 1
+            fi
+
+            echo "XXX build libstdc++"
+            buildstep "libstdc++/build/${STAGE,,}" "$MAKE" -j "$MAKEJOBS" all-target-libstdc++-v3 || exit 1
+            echo "XXX install libstdc++"
+            buildstep "libstdc++/install/${STAGE,,}" "$MAKE" DESTDIR=$TEMPTARGET install-target-libstdc++-v3 || exit 1
+
+            mkdir -p "$REALTARGET"
+            cp -a $TEMPTARGET/$PREFIX/* "$REALTARGET/"
+            rm -rf "$TEMPTARGET"
         popd
 
-        echo "XXX build libstdc++"
-        "$MAKE" -j "$MAKEJOBS" all-target-libstdc++-v3 || exit 1
-        echo "XXX install libstdc++"
-        "$MAKE" install-target-libstdc++-v3 || exit 1
-
-        if [ "$(uname -s)" = "OpenBSD" ]; then
-            cd "$DIR/Local/${ARCH}/libexec/gcc/$TARGET/$GCC_VERSION" && ln -sf liblto_plugin.so.0.0 liblto_plugin.so
+        if [ "$STAGE" = "Userland" ]; then
+            if [ "$SYSTEM_NAME" = "OpenBSD" ]; then
+                cd "$DIR/Local/${ARCH}/libexec/gcc/$TARGET/$GCC_VERSION" && ln -sf liblto_plugin.so.0.0 liblto_plugin.so
+            fi
         fi
-
-    popd
+    done
 popd
 
 
@@ -283,16 +331,6 @@ pushd "$DIR"
 
         rm -f "${CACHED_TOOLCHAIN_ARCHIVE}"  # Just in case
 
-        # Stripping doesn't seem to work on macOS.
-        # However, this doesn't seem to be necessary on macOS, the uncompressed size is already about 210 MiB.
-        if [ "$(uname)" != "Darwin" ]; then
-            # We *most definitely* don't need debug symbols in the linker/compiler.
-            # This cuts the uncompressed size from 1.2 GiB per Toolchain down to about 190 MiB.
-            echo "Stripping executables ..."
-            echo "Before: $(du -sh Local)"
-            find Local/ -type f -executable ! -name '*.la' ! -name '*.sh' ! -name 'mk*' -exec strip {} +
-            echo "After: $(du -sh Local)"
-        fi
         tar czf "${CACHED_TOOLCHAIN_ARCHIVE}" Local/
 
         echo "Cache (after):"

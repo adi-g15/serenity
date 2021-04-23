@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <Kernel/FileSystem/FileDescription.h>
@@ -35,10 +15,10 @@ namespace Kernel {
 
 extern HashMap<String, OwnPtr<Module>>* g_modules;
 
-int Process::sys$module_load(Userspace<const char*> user_path, size_t path_length)
+KResultOr<int> Process::sys$module_load(Userspace<const char*> user_path, size_t path_length)
 {
     if (!is_superuser())
-        return -EPERM;
+        return EPERM;
 
     REQUIRE_NO_PROMISES;
 
@@ -59,7 +39,7 @@ int Process::sys$module_load(Userspace<const char*> user_path, size_t path_lengt
 
     auto elf_image = make<ELF::Image>(storage.data(), storage.size());
     if (!elf_image->parse())
-        return -ENOEXEC;
+        return ENOEXEC;
 
     HashMap<String, u8*> section_storage_by_name;
 
@@ -124,12 +104,12 @@ int Process::sys$module_load(Userspace<const char*> user_path, size_t path_lengt
     });
 
     if (missing_symbols)
-        return -EINVAL;
+        return EINVAL;
 
     auto* text_base = section_storage_by_name.get(".text").value_or(nullptr);
     if (!text_base) {
         dbgln("No .text section found in module!");
-        return -EINVAL;
+        return EINVAL;
     }
 
     elf_image->for_each_symbol([&](const ELF::Image::Symbol& symbol) {
@@ -147,11 +127,11 @@ int Process::sys$module_load(Userspace<const char*> user_path, size_t path_lengt
     });
 
     if (!module->module_init)
-        return -EINVAL;
+        return EINVAL;
 
     if (g_modules->contains(module->name)) {
         dbgln("a module with the name {} is already loaded; please unload it first", module->name);
-        return -EEXIST;
+        return EEXIST;
     }
 
     module->module_init();
@@ -162,20 +142,20 @@ int Process::sys$module_load(Userspace<const char*> user_path, size_t path_lengt
     return 0;
 }
 
-int Process::sys$module_unload(Userspace<const char*> user_name, size_t name_length)
+KResultOr<int> Process::sys$module_unload(Userspace<const char*> user_name, size_t name_length)
 {
     if (!is_superuser())
-        return -EPERM;
+        return EPERM;
 
     REQUIRE_NO_PROMISES;
 
     auto module_name = copy_string_from_user(user_name, name_length);
     if (module_name.is_null())
-        return -EFAULT;
+        return EFAULT;
 
     auto it = g_modules->find(module_name);
     if (it == g_modules->end())
-        return -ENOENT;
+        return ENOENT;
 
     if (it->value->module_fini)
         it->value->module_fini();

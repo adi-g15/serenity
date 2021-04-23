@@ -1,31 +1,12 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
-#include <LibCore/Gzip.h>
+#include <LibCompress/Gzip.h>
+#include <LibCompress/Zlib.h>
 #include <LibCore/TCPSocket.h>
 #include <LibHTTP/HttpResponse.h>
 #include <LibHTTP/Job.h>
@@ -39,13 +20,13 @@ static ByteBuffer handle_content_encoding(const ByteBuffer& buf, const String& c
     dbgln_if(JOB_DEBUG, "Job::handle_content_encoding: buf has content_encoding={}", content_encoding);
 
     if (content_encoding == "gzip") {
-        if (!Core::Gzip::is_compressed(buf)) {
+        if (!Compress::GzipDecompressor::is_likely_compressed(buf)) {
             dbgln("Job::handle_content_encoding: buf is not gzip compressed!");
         }
 
         dbgln_if(JOB_DEBUG, "Job::handle_content_encoding: buf is gzip compressed!");
 
-        auto uncompressed = Core::Gzip::decompress(buf);
+        auto uncompressed = Compress::GzipDecompressor::decompress_all(buf);
         if (!uncompressed.has_value()) {
             dbgln("Job::handle_content_encoding: Gzip::decompress() failed. Returning original buffer.");
             return buf;
@@ -53,6 +34,32 @@ static ByteBuffer handle_content_encoding(const ByteBuffer& buf, const String& c
 
         if constexpr (JOB_DEBUG) {
             dbgln("Job::handle_content_encoding: Gzip::decompress() successful.");
+            dbgln("  Input size: {}", buf.size());
+            dbgln("  Output size: {}", uncompressed.value().size());
+        }
+
+        return uncompressed.value();
+    } else if (content_encoding == "deflate") {
+        dbgln_if(JOB_DEBUG, "Job::handle_content_encoding: buf is deflate compressed!");
+
+        // Even though the content encoding is "deflate", it's actually deflate with the zlib wrapper.
+        // https://tools.ietf.org/html/rfc7230#section-4.2.2
+        auto uncompressed = Compress::Zlib::decompress_all(buf);
+        if (!uncompressed.has_value()) {
+            // From the RFC:
+            // "Note: Some non-conformant implementations send the "deflate"
+            //        compressed data without the zlib wrapper."
+            dbgln_if(JOB_DEBUG, "Job::handle_content_encoding: Zlib::decompress_all() failed. Trying DeflateDecompressor::decompress_all()");
+            uncompressed = Compress::DeflateDecompressor::decompress_all(buf);
+
+            if (!uncompressed.has_value()) {
+                dbgln("Job::handle_content_encoding: DeflateDecompressor::decompress_all() failed, returning original buffer.");
+                return buf;
+            }
+        }
+
+        if constexpr (JOB_DEBUG) {
+            dbgln("Job::handle_content_encoding: Deflate decompression successful.");
             dbgln("  Input size: {}", buf.size());
             dbgln("  Output size: {}", uncompressed.value().size());
         }
@@ -215,6 +222,11 @@ void Job::on_socket_connected()
                 if (remaining == -1) {
                     // read size
                     auto size_data = read_line(PAGE_SIZE);
+                    if (m_should_read_chunk_ending_line) {
+                        VERIFY(size_data.is_empty());
+                        m_should_read_chunk_ending_line = false;
+                        return IterationDecision::Continue;
+                    }
                     auto size_lines = size_data.view().lines();
                     dbgln_if(JOB_DEBUG, "Job: Received a chunk with size '{}'", size_data);
                     if (size_lines.size() == 0) {
@@ -256,7 +268,8 @@ void Job::on_socket_connected()
             } else {
                 auto transfer_encoding = m_headers.get("Transfer-Encoding");
                 if (transfer_encoding.has_value()) {
-                    auto encoding = transfer_encoding.value();
+                    // Note: Some servers add extra spaces around 'chunked', see #6302.
+                    auto encoding = transfer_encoding.value().trim_whitespace();
 
                     dbgln_if(JOB_DEBUG, "Job: This content has transfer encoding '{}'", encoding);
                     if (encoding.equals_ignoring_case("chunked")) {
@@ -300,10 +313,12 @@ void Job::on_socket_connected()
 
                     // we've read everything, now let's get the next chunk
                     size = -1;
-                    [[maybe_unused]] auto line = read_line(PAGE_SIZE);
-
-                    if constexpr (JOB_DEBUG)
-                        dbgln("Line following (should be empty): '{}'", line);
+                    if (can_read_line()) {
+                        auto line = read_line(PAGE_SIZE);
+                        VERIFY(line.is_empty());
+                    } else {
+                        m_should_read_chunk_ending_line = true;
+                    }
                 }
                 m_current_chunk_remaining_size = size;
             }
@@ -352,6 +367,7 @@ void Job::finish_up()
         m_received_buffers.clear();
 
         // For the time being, we cannot stream stuff with content-encoding set to _anything_.
+        // FIXME: LibCompress exposes a streaming interface, so this can be resolved
         auto content_encoding = m_headers.get("Content-Encoding");
         if (content_encoding.has_value()) {
             flattened_buffer = handle_content_encoding(flattened_buffer, content_encoding.value());

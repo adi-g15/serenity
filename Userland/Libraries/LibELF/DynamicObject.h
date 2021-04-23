@@ -1,42 +1,23 @@
 /*
  * Copyright (c) 2019-2020, Andrew Kaster <andrewdkaster@gmail.com>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
 #include <AK/Assertions.h>
 #include <AK/RefCounted.h>
+#include <AK/String.h>
 #include <Kernel/VirtualAddress.h>
-#include <LibELF/exec_elf.h>
+#include <LibC/elf.h>
 
 namespace ELF {
 
 class DynamicObject : public RefCounted<DynamicObject> {
 public:
-    static NonnullRefPtr<DynamicObject> create(VirtualAddress base_address, VirtualAddress dynamic_section_address);
+    static NonnullRefPtr<DynamicObject> create(const String& filename, VirtualAddress base_address, VirtualAddress dynamic_section_address);
 
     ~DynamicObject();
     void dump() const;
@@ -238,6 +219,10 @@ public:
     VirtualAddress plt_got_base_address() const { return m_base_address.offset(m_procedure_linkage_table_offset.value()); }
     VirtualAddress base_address() const { return m_base_address; }
 
+    const String& filename() const { return m_filename; }
+
+    StringView rpath() const { return m_has_rpath ? symbol_string_table_string(m_rpath_index) : StringView {}; }
+    StringView runpath() const { return m_has_runpath ? symbol_string_table_string(m_runpath_index) : StringView {}; }
     StringView soname() const { return m_has_soname ? symbol_string_table_string(m_soname_index) : StringView {}; }
 
     Optional<FlatPtr> tls_offset() const { return m_tls_offset; }
@@ -245,11 +230,20 @@ public:
     void set_tls_offset(FlatPtr offset) { m_tls_offset = offset; }
     void set_tls_size(FlatPtr size) { m_tls_size = size; }
 
+    Elf32_Half program_header_count() const;
+    const Elf32_Phdr* program_headers() const;
+
     template<typename F>
     void for_each_needed_library(F) const;
 
     template<typename F>
     void for_each_initialization_array_function(F f) const;
+
+    template<typename F>
+    void for_each_dynamic_entry(F) const;
+
+    template<typename F>
+    void for_each_symbol(F) const;
 
     struct SymbolLookupResult {
         FlatPtr value { 0 };
@@ -267,17 +261,13 @@ public:
     bool elf_is_dynamic() const { return m_is_elf_dynamic; }
 
 private:
-    explicit DynamicObject(VirtualAddress base_address, VirtualAddress dynamic_section_address);
+    explicit DynamicObject(const String& filename, VirtualAddress base_address, VirtualAddress dynamic_section_address);
 
     StringView symbol_string_table_string(Elf32_Word) const;
     const char* raw_symbol_string_table_string(Elf32_Word) const;
     void parse();
 
-    template<typename F>
-    void for_each_symbol(F) const;
-
-    template<typename F>
-    void for_each_dynamic_entry(F) const;
+    String m_filename;
 
     VirtualAddress m_base_address;
     VirtualAddress m_dynamic_address;
@@ -320,6 +310,10 @@ private:
 
     bool m_has_soname { false };
     Elf32_Word m_soname_index { 0 }; // Index into dynstr table for SONAME
+    bool m_has_rpath { false };
+    Elf32_Word m_rpath_index { 0 }; // Index into dynstr table for RPATH
+    bool m_has_runpath { false };
+    Elf32_Word m_runpath_index { 0 }; // Index into dynstr table for RUNPATH
 
     Optional<FlatPtr> m_tls_offset;
     Optional<FlatPtr> m_tls_size;

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Debug.h>
@@ -178,7 +158,7 @@ void WindowServerConnection::handle(const Messages::WindowClient::KeyDown& messa
         key_event->m_key = Key_Invalid;
         key_event->m_modifiers = 0;
 
-        AK::Utf8View m_utf8_view(emoji_input_dialog->selected_emoji_text().characters());
+        Utf8View m_utf8_view(emoji_input_dialog->selected_emoji_text().characters());
         u32 code_point = *m_utf8_view.begin();
 
         key_event->m_code_point = code_point;
@@ -252,6 +232,16 @@ void WindowServerConnection::handle(const Messages::WindowClient::MouseWheel& me
         Core::EventLoop::current().post_event(*window, make<MouseEvent>(Event::MouseWheel, message.mouse_position(), message.buttons(), to_gmousebutton(message.button()), message.modifiers(), message.wheel_delta()));
 }
 
+void WindowServerConnection::handle(const Messages::WindowClient::MenuVisibilityDidChange& message)
+{
+    auto* menu = Menu::from_menu_id(message.menu_id());
+    if (!menu) {
+        dbgln("EventLoop received visibility change event for invalid menu ID {}", message.menu_id());
+        return;
+    }
+    menu->visibility_did_change({}, message.visible());
+}
+
 void WindowServerConnection::handle(const Messages::WindowClient::MenuItemActivated& message)
 {
     auto* menu = Menu::from_menu_id(message.menu_id());
@@ -263,34 +253,44 @@ void WindowServerConnection::handle(const Messages::WindowClient::MenuItemActiva
         action->activate(menu);
 }
 
-void WindowServerConnection::handle(const Messages::WindowClient::WM_WindowStateChanged& message)
+void WindowServerConnection::handle(Messages::WindowClient::MenuItemEntered const& message)
 {
-    if (auto* window = Window::from_window_id(message.wm_id()))
-        Core::EventLoop::current().post_event(*window, make<WMWindowStateChangedEvent>(message.client_id(), message.window_id(), message.parent_client_id(), message.parent_window_id(), message.title(), message.rect(), message.is_active(), message.is_modal(), static_cast<WindowType>(message.window_type()), message.is_minimized(), message.is_frameless(), message.progress()));
-}
-
-void WindowServerConnection::handle(const Messages::WindowClient::WM_WindowRectChanged& message)
-{
-    if (auto* window = Window::from_window_id(message.wm_id()))
-        Core::EventLoop::current().post_event(*window, make<WMWindowRectChangedEvent>(message.client_id(), message.window_id(), message.rect()));
-}
-
-void WindowServerConnection::handle(const Messages::WindowClient::WM_WindowIconBitmapChanged& message)
-{
-    if (auto* window = Window::from_window_id(message.wm_id())) {
-        Core::EventLoop::current().post_event(*window, make<WMWindowIconBitmapChangedEvent>(message.client_id(), message.window_id(), message.bitmap().bitmap()));
+    auto* menu = Menu::from_menu_id(message.menu_id());
+    if (!menu) {
+        dbgln("WindowServerConnection received MenuItemEntered for invalid menu ID {}", message.menu_id());
+        return;
     }
+    auto* action = menu->action_at(message.identifier());
+    if (!action)
+        return;
+    auto* app = Application::the();
+    if (!app)
+        return;
+    Core::EventLoop::current().post_event(*app, make<ActionEvent>(GUI::Event::ActionEnter, *action));
 }
 
-void WindowServerConnection::handle(const Messages::WindowClient::WM_WindowRemoved& message)
+void WindowServerConnection::handle(Messages::WindowClient::MenuItemLeft const& message)
 {
-    if (auto* window = Window::from_window_id(message.wm_id()))
-        Core::EventLoop::current().post_event(*window, make<WMWindowRemovedEvent>(message.client_id(), message.window_id()));
+    auto* menu = Menu::from_menu_id(message.menu_id());
+    if (!menu) {
+        dbgln("WindowServerConnection received MenuItemLeft for invalid menu ID {}", message.menu_id());
+        return;
+    }
+    auto* action = menu->action_at(message.identifier());
+    if (!action)
+        return;
+    auto* app = Application::the();
+    if (!app)
+        return;
+    Core::EventLoop::current().post_event(*app, make<ActionEvent>(GUI::Event::ActionLeave, *action));
 }
 
 void WindowServerConnection::handle(const Messages::WindowClient::ScreenRectChanged& message)
 {
     Desktop::the().did_receive_screen_rect({}, message.rect());
+    Window::for_each_window({}, [message](auto& window) {
+        Core::EventLoop::current().post_event(window, make<ScreenRectChangeEvent>(message.rect()));
+    });
 }
 
 void WindowServerConnection::handle(const Messages::WindowClient::AsyncSetWallpaperFinished&)

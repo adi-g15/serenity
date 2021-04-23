@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
@@ -55,6 +35,7 @@ public:
     // NOTE: This is for the JS bindings
     const FlyString& tag_name() const { return local_name(); }
 
+    const FlyString& prefix() const { return m_qualified_name.prefix(); }
     const FlyString& namespace_() const { return m_qualified_name.namespace_(); }
 
     // NOTE: This is for the JS bindings
@@ -90,7 +71,9 @@ public:
     const CSS::StyleProperties* specified_css_values() const { return m_specified_css_values.ptr(); }
     NonnullRefPtr<CSS::StyleProperties> computed_style();
 
-    const CSS::StyleDeclaration* inline_style() const { return m_inline_style; }
+    const CSS::CSSStyleDeclaration* inline_style() const { return m_inline_style; }
+
+    NonnullRefPtr<CSS::CSSStyleDeclaration> style_for_bindings();
 
     // FIXME: innerHTML also appears on shadow roots. https://w3c.github.io/DOM-Parsing/#dom-innerhtml
     String inner_html() const;
@@ -99,8 +82,8 @@ public:
     bool is_focused() const;
     virtual bool is_focusable() const { return false; }
 
-    NonnullRefPtrVector<Element> get_elements_by_tag_name(const FlyString&) const;
-    NonnullRefPtrVector<Element> get_elements_by_class_name(const FlyString&) const;
+    NonnullRefPtr<HTMLCollection> get_elements_by_tag_name(FlyString const&);
+    NonnullRefPtr<HTMLCollection> get_elements_by_class_name(FlyString const&);
 
     ShadowRoot* shadow_root() { return m_shadow_root; }
     const ShadowRoot* shadow_root() const { return m_shadow_root; }
@@ -116,7 +99,7 @@ private:
     QualifiedName m_qualified_name;
     Vector<Attribute> m_attributes;
 
-    RefPtr<CSS::StyleDeclaration> m_inline_style;
+    RefPtr<CSS::CSSStyleDeclaration> m_inline_style;
 
     RefPtr<CSS::StyleProperties> m_specified_css_values;
 

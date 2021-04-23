@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "ProcessModel.h"
@@ -43,7 +23,6 @@ ProcessModel::ProcessModel()
 {
     VERIFY(!s_the);
     s_the = this;
-    m_generic_process_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/gear.png");
 
     auto file = Core::File::construct("/proc/cpuinfo");
     if (file->open(Core::IODevice::ReadOnly)) {
@@ -58,6 +37,8 @@ ProcessModel::ProcessModel()
 
     if (m_cpus.is_empty())
         m_cpus.append(make<CpuInfo>(0));
+
+    m_kernel_process_icon = GUI::Icon::default_icon("gear");
 }
 
 ProcessModel::~ProcessModel()
@@ -100,7 +81,7 @@ String ProcessModel::column_name(int column) const
     case Column::Physical:
         return "Physical";
     case Column::DirtyPrivate:
-        return "DirtyP";
+        return "Private";
     case Column::CleanInode:
         return "CleanI";
     case Column::PurgeableVolatile:
@@ -262,10 +243,9 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, GUI::ModelRole rol
     if (role == GUI::ModelRole::Display) {
         switch (index.column()) {
         case Column::Icon: {
-            auto icon = GUI::FileIconProvider::icon_for_executable(thread.current_state.executable);
-            if (auto* bitmap = icon.bitmap_for_size(16))
-                return *bitmap;
-            return *m_generic_process_icon;
+            if (thread.current_state.kernel)
+                return m_kernel_process_icon;
+            return GUI::FileIconProvider::icon_for_executable(thread.current_state.executable);
         }
         case Column::PID:
             return thread.current_state.pid;
@@ -296,10 +276,12 @@ GUI::Variant ProcessModel::data(const GUI::ModelIndex& index, GUI::ModelRole rol
         case Column::PurgeableNonvolatile:
             return pretty_byte_size(thread.current_state.amount_purgeable_nonvolatile);
         case Column::CPU:
-            return thread.current_state.cpu_percent;
+            return String::formatted("{:.2}", thread.current_state.cpu_percent);
         case Column::Processor:
             return thread.current_state.cpu;
         case Column::Name:
+            if (thread.current_state.kernel)
+                return String::formatted("{} (*)", thread.current_state.name);
             return thread.current_state.name;
         case Column::Syscalls:
             return thread.current_state.syscall_count;
@@ -349,6 +331,7 @@ void ProcessModel::update()
         for (auto& it : all_processes.value()) {
             for (auto& thread : it.value.threads) {
                 ThreadState state;
+                state.kernel = it.value.kernel;
                 state.pid = it.value.pid;
                 state.user = it.value.username;
                 state.pledge = it.value.pledge;
@@ -429,6 +412,9 @@ void ProcessModel::update()
 
     if (on_cpu_info_change)
         on_cpu_info_change(m_cpus);
+
+    if (on_state_update)
+        on_state_update(all_processes->size(), m_threads.size());
 
     // FIXME: This is a rather hackish way of invalidating indexes.
     //        It would be good if GUI::Model had a way to orchestrate removal/insertion while preserving indexes.

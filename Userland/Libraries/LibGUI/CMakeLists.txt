@@ -12,7 +12,7 @@ set(SOURCES
     Application.cpp
     AutocompleteProvider.cpp
     BoxLayout.cpp
-    BreadcrumbBar.cpp
+    Breadcrumbbar.cpp
     Button.cpp
     Calendar.cpp
     CheckBox.cpp
@@ -22,7 +22,6 @@ set(SOURCES
     ColumnsView.cpp
     ComboBox.cpp
     Command.cpp
-    ControlBoxButton.cpp
     Desktop.cpp
     Dialog.cpp
     DisplayLink.cpp
@@ -57,7 +56,7 @@ set(SOURCES
     LinkLabel.cpp
     ListView.cpp
     Menu.cpp
-    MenuBar.cpp
+    Menubar.cpp
     MenuItem.cpp
     MessageBox.cpp
     Model.cpp
@@ -68,12 +67,12 @@ set(SOURCES
     OpacitySlider.cpp
     Painter.cpp
     ProcessChooser.cpp
-    ProgressBar.cpp
+    Progressbar.cpp
     RadioButton.cpp
     RegularEditingEngine.cpp
     ResizeCorner.cpp
     RunningProcessesModel.cpp
-    ScrollBar.cpp
+    Scrollbar.cpp
     ScrollableWidget.cpp
     SeparatorWidget.cpp
     Shortcut.cpp
@@ -82,14 +81,14 @@ set(SOURCES
     SpinBox.cpp
     Splitter.cpp
     StackWidget.cpp
-    StatusBar.cpp
+    Statusbar.cpp
     TabWidget.cpp
     TableView.cpp
     TextBox.cpp
     TextDocument.cpp
     TextEditor.cpp
-    ToolBar.cpp
-    ToolBarContainer.cpp
+    Toolbar.cpp
+    ToolbarContainer.cpp
     TreeView.cpp
     UndoStack.cpp
     Variant.cpp
@@ -97,11 +96,18 @@ set(SOURCES
     Widget.cpp
     Window.cpp
     WindowServerConnection.cpp
+    WindowManagerServerConnection.cpp
+    Wizards/WizardDialog.cpp
+    Wizards/AbstractWizardPage.cpp
+    Wizards/CoverWizardPage.cpp
+    Wizards/WizardPage.cpp
 )
 
 set(GENERATED_SOURCES
     ../../Services/WindowServer/WindowClientEndpoint.h
     ../../Services/WindowServer/WindowServerEndpoint.h
+    ../../Services/WindowServer/WindowManagerClientEndpoint.h
+    ../../Services/WindowServer/WindowManagerServerEndpoint.h
     ../../Services/NotificationServer/NotificationClientEndpoint.h
     ../../Services/NotificationServer/NotificationServerEndpoint.h
     ../../Services/Clipboard/ClipboardClientEndpoint.h

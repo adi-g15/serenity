@@ -1,41 +1,22 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/JsonArraySerializer.h>
 #include <AK/JsonObject.h>
 #include <AK/JsonObjectSerializer.h>
 #include <Kernel/Arch/x86/SmapDisabler.h>
+#include <Kernel/FileSystem/Custody.h>
 #include <Kernel/KBufferBuilder.h>
 #include <Kernel/PerformanceEventBuffer.h>
 #include <Kernel/Process.h>
 
 namespace Kernel {
 
-PerformanceEventBuffer::PerformanceEventBuffer()
-    : m_buffer(KBuffer::try_create_with_size(4 * MiB, Region::Access::Read | Region::Access::Write, "Performance events", AllocationStrategy::AllocateNow))
+PerformanceEventBuffer::PerformanceEventBuffer(NonnullOwnPtr<KBuffer> buffer)
+    : m_buffer(move(buffer))
 {
 }
 
@@ -98,6 +79,7 @@ KResult PerformanceEventBuffer::append_with_eip_and_ebp(u32 eip, u32 ebp, int ty
     event.stack_size = min(sizeof(event.stack) / sizeof(FlatPtr), static_cast<size_t>(backtrace.size()));
     memcpy(event.stack, backtrace.data(), event.stack_size * sizeof(FlatPtr));
 
+    event.tid = Thread::current()->tid().value();
     event.timestamp = TimeManagement::the().uptime_ms();
     at(m_count++) = event;
     return KSuccess;
@@ -110,35 +92,9 @@ PerformanceEvent& PerformanceEventBuffer::at(size_t index)
     return events[index];
 }
 
-OwnPtr<KBuffer> PerformanceEventBuffer::to_json(ProcessID pid, const String& executable_path) const
+template<typename Serializer>
+bool PerformanceEventBuffer::to_json_impl(Serializer& object) const
 {
-    KBufferBuilder builder;
-    if (!to_json(builder, pid, executable_path))
-        return {};
-    return builder.build();
-}
-
-bool PerformanceEventBuffer::to_json(KBufferBuilder& builder, ProcessID pid, const String& executable_path) const
-{
-    auto process = Process::from_pid(pid);
-    VERIFY(process);
-    ScopedSpinLock locker(process->space().get_lock());
-
-    JsonObjectSerializer object(builder);
-    object.add("pid", pid.value());
-    object.add("executable", executable_path);
-
-    {
-        auto region_array = object.add_array("regions");
-        for (const auto& region : process->space().regions()) {
-            auto region_object = region_array.add_object();
-            region_object.add("base", region.vaddr().get());
-            region_object.add("size", region.size());
-            region_object.add("name", region.name());
-        }
-        region_array.finish();
-    }
-
     auto array = object.add_array("events");
     for (size_t i = 0; i < m_count; ++i) {
         auto& event = at(i);
@@ -169,6 +125,70 @@ bool PerformanceEventBuffer::to_json(KBufferBuilder& builder, ProcessID pid, con
     array.finish();
     object.finish();
     return true;
+}
+
+bool PerformanceEventBuffer::to_json(KBufferBuilder& builder) const
+{
+    JsonObjectSerializer object(builder);
+
+    auto processes_array = object.add_array("processes");
+    for (auto& it : m_processes) {
+        auto& process = *it.value;
+        auto process_object = processes_array.add_object();
+        process_object.add("pid", process.pid.value());
+        process_object.add("executable", process.executable);
+
+        auto regions_array = process_object.add_array("regions");
+        for (auto& region : process.regions) {
+            auto region_object = regions_array.add_object();
+            region_object.add("name", region.name);
+            region_object.add("base", region.range.base().get());
+            region_object.add("size", region.range.size());
+        }
+    }
+
+    processes_array.finish();
+
+    return to_json_impl(object);
+}
+
+OwnPtr<PerformanceEventBuffer> PerformanceEventBuffer::try_create_with_size(size_t buffer_size)
+{
+    auto buffer = KBuffer::try_create_with_size(buffer_size, Region::Access::Read | Region::Access::Write, "Performance events", AllocationStrategy::AllocateNow);
+    if (!buffer)
+        return {};
+    return adopt_own(*new PerformanceEventBuffer(buffer.release_nonnull()));
+}
+
+void PerformanceEventBuffer::add_process(const Process& process)
+{
+    // FIXME: What about threads that have died?
+
+    ScopedSpinLock locker(process.space().get_lock());
+
+    String executable;
+    if (process.executable())
+        executable = process.executable()->absolute_path();
+
+    auto sampled_process = adopt_own(*new SampledProcess {
+        .pid = process.pid().value(),
+        .executable = executable,
+        .threads = {},
+        .regions = {},
+    });
+    process.for_each_thread([&](auto& thread) {
+        sampled_process->threads.set(thread.tid());
+        return IterationDecision::Continue;
+    });
+
+    for (auto& region : process.space().regions()) {
+        sampled_process->regions.append(SampledProcess::Region {
+            .name = region->name(),
+            .range = region->range(),
+        });
+    }
+
+    m_processes.set(process.pid(), move(sampled_process));
 }
 
 }

@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringBuilder.h>
@@ -31,7 +11,7 @@
 #include <LibGUI/IconView.h>
 #include <LibGUI/Model.h>
 #include <LibGUI/Painter.h>
-#include <LibGUI/ScrollBar.h>
+#include <LibGUI/Scrollbar.h>
 #include <LibGfx/Palette.h>
 
 namespace GUI {
@@ -72,6 +52,12 @@ void IconView::resize_event(ResizeEvent& event)
 {
     AbstractView::resize_event(event);
     update_content_size();
+
+    if (!m_had_valid_size) {
+        m_had_valid_size = true;
+        if (!selection().is_empty())
+            scroll_into_view(selection().first());
+    }
 }
 
 void IconView::reinit_item_cache() const
@@ -474,6 +460,8 @@ void IconView::get_item_rects(int item_index, ItemData& item_data, const Gfx::Fo
     } else {
         item_data.text_rect.set_width(unwrapped_text_width);
         item_data.text_rect.inflate(6, 4);
+        if (item_data.text_rect.width() > available_width)
+            item_data.text_rect.set_width(available_width);
         item_data.text_rect.center_horizontally_within(item_rect);
     }
     item_data.text_rect.intersect(item_rect);
@@ -506,6 +494,9 @@ void IconView::paint_event(PaintEvent& event)
     painter.add_clip_rect(event.rect());
 
     painter.fill_rect(event.rect(), fill_with_background_color() ? widget_background_color : Color::Transparent);
+
+    if (!model())
+        return;
 
     painter.translate(frame_thickness(), frame_thickness());
     painter.translate(-horizontal_scrollbar().value(), -vertical_scrollbar().value());
@@ -814,7 +805,7 @@ inline IterationDecision IconView::for_each_item_intersecting_rect(const Gfx::In
                     return decision;
             }
         }
-        item_index += m_visual_column_count;
+        item_index += (m_flow_direction == FlowDirection::LeftToRight) ? m_visual_column_count : m_visual_row_count;
     };
 
     return IterationDecision::Continue;

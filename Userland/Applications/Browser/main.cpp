@@ -1,32 +1,12 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "BookmarksBarWidget.h"
 #include "Browser.h"
-#include "InspectorWidget.h"
+#include "CookieJar.h"
 #include "Tab.h"
 #include "WindowActions.h"
 #include <AK/StringBuilder.h>
@@ -40,6 +20,7 @@
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Icon.h>
+#include <LibGUI/SeparatorWidget.h>
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
@@ -47,6 +28,7 @@
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 namespace Browser {
 
@@ -147,6 +129,8 @@ int main(int argc, char** argv)
     bool bookmarksbar_enabled = true;
     auto bookmarks_bar = Browser::BookmarksBarWidget::construct(Browser::bookmarks_file_path(), bookmarksbar_enabled);
 
+    Browser::CookieJar cookie_jar;
+
     auto window = GUI::Window::construct();
     window->resize(640, 480);
     window->set_icon(app_icon.bitmap_for_size(16));
@@ -155,7 +139,13 @@ int main(int argc, char** argv)
     auto& widget = window->set_main_widget<GUI::Widget>();
     widget.load_from_gml(browser_window_gml);
 
+    auto& top_line = *widget.find_descendant_of_type_named<GUI::HorizontalSeparator>("top_line");
+
     auto& tab_widget = *widget.find_descendant_of_type_named<GUI::TabWidget>("tab_widget");
+
+    tab_widget.on_tab_count_change = [&](size_t tab_count) {
+        top_line.set_visible(tab_count > 1);
+    };
 
     auto default_favicon = Gfx::Bitmap::load_from_file("/res/icons/16x16/filetype-html.png");
     VERIFY(default_favicon);
@@ -209,6 +199,18 @@ int main(int argc, char** argv)
             });
         };
 
+        new_tab.on_get_cookie = [&](auto& url, auto source) -> String {
+            return cookie_jar.get_cookie(url, source);
+        };
+
+        new_tab.on_set_cookie = [&](auto& url, auto& cookie, auto source) {
+            cookie_jar.set_cookie(url, cookie, source);
+        };
+
+        new_tab.on_dump_cookies = [&]() {
+            cookie_jar.dump_cookies();
+        };
+
         new_tab.load(url);
 
         dbgln("Added new tab {:p}, loading {}", &new_tab, url);
@@ -225,6 +227,20 @@ int main(int argc, char** argv)
             first_url = Browser::url_from_user_input(specified_url);
         }
     }
+
+    app->on_action_enter = [&](GUI::Action& action) {
+        auto* tab = static_cast<Browser::Tab*>(tab_widget.active_widget());
+        if (!tab)
+            return;
+        tab->action_entered(action);
+    };
+
+    app->on_action_leave = [&](auto& action) {
+        auto* tab = static_cast<Browser::Tab*>(tab_widget.active_widget());
+        if (!tab)
+            return;
+        tab->action_left(action);
+    };
 
     window_actions.on_create_new_tab = [&] {
         create_new_tab(Browser::g_home_url, true);

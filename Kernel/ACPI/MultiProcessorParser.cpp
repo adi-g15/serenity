@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2020, Liav A. <liavalb@hotmail.co.il>
  * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/StringView.h>
@@ -47,7 +27,7 @@ UNMAP_AFTER_INIT OwnPtr<MultiProcessorParser> MultiProcessorParser::autodetect()
 UNMAP_AFTER_INIT MultiProcessorParser::MultiProcessorParser(PhysicalAddress floating_pointer)
     : m_floating_pointer(floating_pointer)
 {
-    klog() << "MultiProcessor: Floating Pointer Structure @ " << m_floating_pointer;
+    dbgln("MultiProcessor: Floating Pointer Structure @ {}", m_floating_pointer);
     parse_floating_pointer_data();
     parse_configuration_table();
 }
@@ -130,7 +110,13 @@ UNMAP_AFTER_INIT Vector<PCIInterruptOverrideMetadata> MultiProcessorParser::get_
         for (auto id : pci_bus_ids) {
             if (id == entry.source_bus_id) {
 
-                klog() << "Interrupts: Bus " << entry.source_bus_id << ", Polarity " << entry.polarity << ", Trigger Mode " << entry.trigger_mode << ", INT " << entry.source_bus_irq << ", IOAPIC " << entry.destination_ioapic_id << ", IOAPIC INTIN " << entry.destination_ioapic_intin_pin;
+                dbgln("Interrupts: Bus {}, polarity {}, trigger mode {}, INT {}, IOAPIC {}, IOAPIC INTIN {}",
+                    entry.source_bus_id,
+                    entry.polarity,
+                    entry.trigger_mode,
+                    entry.source_bus_irq,
+                    entry.destination_ioapic_id,
+                    entry.destination_ioapic_intin_pin);
                 overrides.empend(
                     entry.source_bus_id,
                     entry.polarity,
@@ -143,7 +129,14 @@ UNMAP_AFTER_INIT Vector<PCIInterruptOverrideMetadata> MultiProcessorParser::get_
     }
 
     for (auto& override_metadata : overrides) {
-        klog() << "Interrupts: Bus " << override_metadata.bus() << ", Polarity " << override_metadata.polarity() << ", PCI Device " << override_metadata.pci_device_number() << ", Trigger Mode " << override_metadata.trigger_mode() << ", INT " << override_metadata.pci_interrupt_pin() << ", IOAPIC " << override_metadata.ioapic_id() << ", IOAPIC INTIN " << override_metadata.ioapic_interrupt_pin();
+        dbgln("Interrupts: Bus {}, polarity {}, PCI device {}, trigger mode {}, INT {}, IOAPIC {}, IOAPIC INTIN {}",
+            override_metadata.bus(),
+            override_metadata.polarity(),
+            override_metadata.pci_device_number(),
+            override_metadata.trigger_mode(),
+            override_metadata.pci_interrupt_pin(),
+            override_metadata.ioapic_id(),
+            override_metadata.ioapic_interrupt_pin());
     }
     return overrides;
 }

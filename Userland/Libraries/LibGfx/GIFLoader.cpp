@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Array.h>
@@ -104,7 +84,7 @@ struct GIFLoadingContext {
     RefPtr<Gfx::Bitmap> prev_frame_buffer;
 };
 
-RefPtr<Gfx::Bitmap> load_gif(const StringView& path)
+RefPtr<Gfx::Bitmap> load_gif(String const& path)
 {
     auto file_or_error = MappedFile::map(path);
     if (file_or_error.is_error())
@@ -318,10 +298,10 @@ static bool decode_frame(GIFLoadingContext& context, size_t frame_index)
     size_t start_frame = context.current_frame + 1;
     if (context.state < GIFLoadingContext::State::FrameComplete) {
         start_frame = 0;
-        context.frame_buffer = Bitmap::create_purgeable(BitmapFormat::RGBA32, { context.logical_screen.width, context.logical_screen.height });
+        context.frame_buffer = Bitmap::create_purgeable(BitmapFormat::BGRA8888, { context.logical_screen.width, context.logical_screen.height });
         if (!context.frame_buffer)
             return false;
-        context.prev_frame_buffer = Bitmap::create_purgeable(BitmapFormat::RGBA32, { context.logical_screen.width, context.logical_screen.height });
+        context.prev_frame_buffer = Bitmap::create_purgeable(BitmapFormat::BGRA8888, { context.logical_screen.width, context.logical_screen.height });
         if (!context.prev_frame_buffer)
             return false;
     } else if (frame_index < context.current_frame) {
@@ -399,13 +379,14 @@ static bool decode_frame(GIFLoadingContext& context, size_t frame_index)
                 ++pixel_index;
                 if (pixel_index % image.width == 0) {
                     if (image.interlaced) {
-                        if (row + INTERLACE_ROW_STRIDES[interlace_pass] >= image.height) {
-                            ++interlace_pass;
-                            if (interlace_pass < 4)
-                                row = INTERLACE_ROW_OFFSETS[interlace_pass];
-                        } else {
-                            if (interlace_pass < 4)
+                        if (interlace_pass < 4) {
+                            if (row + INTERLACE_ROW_STRIDES[interlace_pass] >= image.height) {
+                                ++interlace_pass;
+                                if (interlace_pass < 4)
+                                    row = INTERLACE_ROW_OFFSETS[interlace_pass];
+                            } else {
                                 row += INTERLACE_ROW_STRIDES[interlace_pass];
+                            }
                         }
                     } else {
                         ++row;

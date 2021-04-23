@@ -1,27 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/Singleton.h>
@@ -167,9 +147,7 @@ KResultOr<size_t> TCPSocket::protocol_receive(ReadonlyBytes raw_ipv4_packet, Use
     auto& ipv4_packet = *reinterpret_cast<const IPv4Packet*>(raw_ipv4_packet.data());
     auto& tcp_packet = *static_cast<const TCPPacket*>(ipv4_packet.payload());
     size_t payload_size = raw_ipv4_packet.size() - sizeof(IPv4Packet) - tcp_packet.header_size();
-#if TCP_SOCKET_DEBUG
-    klog() << "payload_size " << payload_size << ", will it fit in " << buffer_size << "?";
-#endif
+    dbgln_if(TCP_SOCKET_DEBUG, "payload_size {}, will it fit in {}?", payload_size, buffer_size);
     VERIFY(buffer_size >= payload_size);
     if (!buffer.write(tcp_packet.payload(), payload_size))
         return EFAULT;
@@ -242,24 +220,45 @@ void TCPSocket::send_outgoing_packets()
 
     LOCKER(m_not_acked_lock, Lock::Mode::Shared);
     for (auto& packet : m_not_acked) {
-        timeval diff;
-        timeval_sub(packet.tx_time, now, diff);
-        if (diff.tv_sec == 0 && diff.tv_usec <= 500000)
+        auto diff = now - packet.tx_time;
+        if (diff <= Time::from_nanoseconds(500'000'000))
             continue;
         packet.tx_time = now;
         packet.tx_counter++;
 
-#if TCP_SOCKET_DEBUG
-        auto& tcp_packet = *(TCPPacket*)(packet.buffer.data());
-        klog() << "sending tcp packet from " << local_address().to_string().characters() << ":" << local_port() << " to " << peer_address().to_string().characters() << ":" << peer_port() << " with (" << (tcp_packet.has_syn() ? "SYN " : "") << (tcp_packet.has_ack() ? "ACK " : "") << (tcp_packet.has_fin() ? "FIN " : "") << (tcp_packet.has_rst() ? "RST " : "") << ") seq_no=" << tcp_packet.sequence_number() << ", ack_no=" << tcp_packet.ack_number() << ", tx_counter=" << packet.tx_counter;
-#endif
+        if constexpr (TCP_SOCKET_DEBUG) {
+            auto& tcp_packet = *(const TCPPacket*)(packet.buffer.data());
+            dbgln("Sending TCP packet from {}:{} to {}:{} with ({}{}{}{}) seq_no={}, ack_no={}, tx_counter={}",
+                local_address(), local_port(),
+                peer_address(), peer_port(),
+                (tcp_packet.has_syn() ? "SYN " : ""),
+                (tcp_packet.has_ack() ? "ACK " : ""),
+                (tcp_packet.has_fin() ? "FIN " : ""),
+                (tcp_packet.has_rst() ? "RST " : ""),
+                tcp_packet.sequence_number(),
+                tcp_packet.ack_number(),
+                packet.tx_counter);
+        }
+
         auto packet_buffer = UserOrKernelBuffer::for_kernel_buffer(packet.buffer.data());
         int err = routing_decision.adapter->send_ipv4(
             routing_decision.next_hop, peer_address(), IPv4Protocol::TCP,
             packet_buffer, packet.buffer.size(), ttl());
         if (err < 0) {
-            auto& tcp_packet = *(TCPPacket*)(packet.buffer.data());
-            klog() << "Error (" << err << ") sending tcp packet from " << local_address().to_string().characters() << ":" << local_port() << " to " << peer_address().to_string().characters() << ":" << peer_port() << " with (" << (tcp_packet.has_syn() ? "SYN " : "") << (tcp_packet.has_ack() ? "ACK " : "") << (tcp_packet.has_fin() ? "FIN " : "") << (tcp_packet.has_rst() ? "RST " : "") << ") seq_no=" << tcp_packet.sequence_number() << ", ack_no=" << tcp_packet.ack_number() << ", tx_counter=" << packet.tx_counter;
+            auto& tcp_packet = *(const TCPPacket*)(packet.buffer.data());
+            dmesgln("Error ({}) sending TCP packet from {}:{} to {}:{} with ({}{}{}{}) seq_no={}, ack_no={}, tx_counter={}",
+                err,
+                local_address(),
+                local_port(),
+                peer_address(),
+                peer_port(),
+                (tcp_packet.has_syn() ? "SYN " : ""),
+                (tcp_packet.has_ack() ? "ACK " : ""),
+                (tcp_packet.has_fin() ? "FIN " : ""),
+                (tcp_packet.has_rst() ? "RST " : ""),
+                tcp_packet.sequence_number(),
+                tcp_packet.ack_number(),
+                packet.tx_counter);
         } else {
             m_packets_out++;
             m_bytes_out += packet.buffer.size();

@@ -1,28 +1,8 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, the SerenityOS developers.
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include "Editor.h"
@@ -30,6 +10,7 @@
 #include <AK/GenericLexer.h>
 #include <AK/JsonObject.h>
 #include <AK/ScopeGuard.h>
+#include <AK/ScopedValueRollback.h>
 #include <AK/StringBuilder.h>
 #include <AK/Utf32View.h>
 #include <AK/Utf8View.h>
@@ -39,6 +20,7 @@
 #include <LibCore/File.h>
 #include <LibCore/Notifier.h>
 #include <ctype.h>
+#include <errno.h>
 #include <signal.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
@@ -60,6 +42,7 @@ Configuration Configuration::from_config(const StringView& libname)
     // Read behaviour options.
     auto refresh = config_file->read_entry("behaviour", "refresh", "lazy");
     auto operation = config_file->read_entry("behaviour", "operation_mode");
+    auto default_text_editor = config_file->read_entry("behaviour", "default_text_editor");
 
     if (refresh.equals_ignoring_case("lazy"))
         configuration.set(Configuration::Lazy);
@@ -74,6 +57,11 @@ Configuration Configuration::from_config(const StringView& libname)
         configuration.set(Configuration::OperationMode::NonInteractive);
     else
         configuration.set(Configuration::OperationMode::Unset);
+
+    if (!default_text_editor.is_empty())
+        configuration.set(DefaultTextEditor { move(default_text_editor) });
+    else
+        configuration.set(DefaultTextEditor { "/bin/TextEditor" });
 
     // Read keybinds.
 
@@ -157,12 +145,17 @@ void Editor::set_default_keybinds()
     register_key_input_callback(ctrl('F'), EDITOR_INTERNAL_FUNCTION(cursor_right_character));
     // ^H: ctrl('H') == '\b'
     register_key_input_callback(ctrl('H'), EDITOR_INTERNAL_FUNCTION(erase_character_backwards));
+    // DEL - Some terminals send this instead of ^H.
+    register_key_input_callback((char)127, EDITOR_INTERNAL_FUNCTION(erase_character_backwards));
     register_key_input_callback(m_termios.c_cc[VERASE], EDITOR_INTERNAL_FUNCTION(erase_character_backwards));
     register_key_input_callback(ctrl('K'), EDITOR_INTERNAL_FUNCTION(erase_to_end));
     register_key_input_callback(ctrl('L'), EDITOR_INTERNAL_FUNCTION(clear_screen));
     register_key_input_callback(ctrl('R'), EDITOR_INTERNAL_FUNCTION(enter_search));
     register_key_input_callback(ctrl('T'), EDITOR_INTERNAL_FUNCTION(transpose_characters));
     register_key_input_callback('\n', EDITOR_INTERNAL_FUNCTION(finish));
+
+    // ^X^E: Edit in external editor
+    register_key_input_callback(Vector<Key> { ctrl('X'), ctrl('E') }, EDITOR_INTERNAL_FUNCTION(edit_in_external_editor));
 
     // ^[.: alt-.: insert last arg of previous command (similar to `!$`)
     register_key_input_callback(Key { '.', Key::Alt }, EDITOR_INTERNAL_FUNCTION(insert_last_words));
@@ -195,6 +188,7 @@ Editor::~Editor()
 void Editor::get_terminal_size()
 {
     struct winsize ws;
+
     if (ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) < 0) {
         m_num_columns = 80;
         m_num_lines = 25;
@@ -316,8 +310,8 @@ void Editor::clear_line()
         fputc(0x8, stderr);
     fputs("\033[K", stderr);
     fflush(stderr);
-    m_buffer.clear();
     m_chars_touched_in_the_middle = buffer().size();
+    m_buffer.clear();
     m_cursor = 0;
     m_inline_search_cursor = m_cursor;
 }
@@ -489,8 +483,8 @@ void Editor::initialize()
     struct termios termios;
     tcgetattr(0, &termios);
     m_default_termios = termios; // grab a copy to restore
-    if (m_was_resized)
-        get_terminal_size();
+
+    get_terminal_size();
 
     if (m_configuration.operation_mode == Configuration::Unset) {
         auto istty = isatty(STDIN_FILENO) && isatty(STDERR_FILENO);
@@ -562,6 +556,20 @@ void Editor::interrupted()
     });
 }
 
+void Editor::resized()
+{
+    m_was_resized = true;
+    m_previous_num_columns = m_num_columns;
+    get_terminal_size();
+
+    reposition_cursor(true);
+    m_suggestion_display->redisplay(m_suggestion_manager, m_num_lines, m_num_columns);
+    reposition_cursor();
+
+    if (m_is_searching)
+        m_search_editor->resized();
+}
+
 void Editor::really_quit_event_loop()
 {
     m_finish = false;
@@ -572,7 +580,9 @@ void Editor::really_quit_event_loop()
     m_buffer.clear();
     m_chars_touched_in_the_middle = buffer().size();
     m_is_editing = false;
-    restore();
+
+    if (m_initialized)
+        restore();
 
     m_returned_line = string;
 
@@ -615,6 +625,13 @@ auto Editor::get_line(const String& prompt) -> Result<String, Editor::Error>
 
         return Error::ReadFailure;
     }
+
+    auto old_cols = m_num_columns;
+    auto old_lines = m_num_lines;
+    get_terminal_size();
+
+    if (m_num_columns != old_cols || m_num_lines != old_lines)
+        m_refresh_needed = true;
 
     set_prompt(prompt);
     reset();
@@ -1033,6 +1050,9 @@ void Editor::handle_read_event()
             continue;
         }
 
+        // If we got here, manually cleanup the suggestions and then insert the new code point.
+        suggestion_cleanup.disarm();
+        cleanup_suggestions();
         insert(code_point);
     }
 
@@ -1242,18 +1262,21 @@ void Editor::refresh_display()
     auto print_character_at = [this](size_t i) {
         StringBuilder builder;
         auto c = m_buffer[i];
-        bool should_print_caret = isascii(c) && iscntrl(c) && c != '\n';
+        bool should_print_masked = isascii(c) && iscntrl(c) && c != '\n';
+        bool should_print_caret = c < 64 && should_print_masked;
         if (should_print_caret)
             builder.appendff("^{:c}", c + 64);
+        else if (should_print_masked)
+            builder.appendff("\\x{:0>2x}", c);
         else
             builder.append(Utf32View { &c, 1 });
 
-        if (should_print_caret)
+        if (should_print_masked)
             fputs("\033[7m", stderr);
 
         fputs(builder.to_string().characters(), stderr);
 
-        if (should_print_caret)
+        if (should_print_masked)
             fputs("\033[27m", stderr);
     };
 
@@ -1424,9 +1447,9 @@ String Style::Background::to_vt_escape() const
         return "";
 
     if (m_is_rgb) {
-        return String::format("\033[48;2;%d;%d;%dm", m_rgb_color[0], m_rgb_color[1], m_rgb_color[2]);
+        return String::formatted("\e[48;2;{};{};{}m", m_rgb_color[0], m_rgb_color[1], m_rgb_color[2]);
     } else {
-        return String::format("\033[%dm", (u8)m_xterm_color + 40);
+        return String::formatted("\e[{}m", (u8)m_xterm_color + 40);
     }
 }
 
@@ -1436,9 +1459,9 @@ String Style::Foreground::to_vt_escape() const
         return "";
 
     if (m_is_rgb) {
-        return String::format("\033[38;2;%d;%d;%dm", m_rgb_color[0], m_rgb_color[1], m_rgb_color[2]);
+        return String::formatted("\e[38;2;{};{};{}m", m_rgb_color[0], m_rgb_color[1], m_rgb_color[2]);
     } else {
-        return String::format("\033[%dm", (u8)m_xterm_color + 30);
+        return String::formatted("\e[{}m", (u8)m_xterm_color + 30);
     }
 }
 
@@ -1447,7 +1470,7 @@ String Style::Hyperlink::to_vt_escape(bool starting) const
     if (is_empty())
         return "";
 
-    return String::format("\033]8;;%s\033\\", starting ? m_link.characters() : "");
+    return String::formatted("\e]8;;{}\e\\", starting ? m_link : String::empty());
 }
 
 void Style::unify_with(const Style& other, bool prefer_other)
@@ -1629,7 +1652,7 @@ Editor::VTState Editor::actual_rendered_string_length_step(StringMetrics& metric
             return state;
         }
         if (isascii(c) && iscntrl(c) && c != '\n')
-            current_line.masked_chars.append({ index, 1, 2 });
+            current_line.masked_chars.append({ index, 1, c < 64 ? 2u : 4u }); // if the character cannot be represented as ^c, represent it as \xbb.
         // FIXME: This will not support anything sophisticated
         ++current_line.length;
         ++metrics.total_length;
@@ -1668,7 +1691,6 @@ Editor::VTState Editor::actual_rendered_string_length_step(StringMetrics& metric
 Vector<size_t, 2> Editor::vt_dsr()
 {
     char buf[16];
-    u32 length { 0 };
 
     // Read whatever junk there is before talking to the terminal
     // and insert them later when we're reading user input.
@@ -1703,8 +1725,25 @@ Vector<size_t, 2> Editor::vt_dsr()
     fputs("\033[6n", stderr);
     fflush(stderr);
 
+    // Parse the DSR response
+    // it should be of the form .*\e[\d+;\d+R.*
+    // Anything not part of the response is just added to the incomplete data.
+    enum {
+        Free,
+        SawEsc,
+        SawBracket,
+        InFirstCoordinate,
+        SawSemicolon,
+        InSecondCoordinate,
+        SawR,
+    } state { Free };
+    auto has_error = false;
+    Vector<char, 4> coordinate_buffer;
+    size_t row { 1 }, col { 1 };
+
     do {
-        auto nread = read(0, buf + length, 16 - length);
+        char c;
+        auto nread = read(0, &c, 1);
         if (nread < 0) {
             if (errno == 0 || errno == EINTR) {
                 // ????
@@ -1721,25 +1760,80 @@ Vector<size_t, 2> Editor::vt_dsr()
             dbgln("Terminal DSR issue; received no response");
             return { 1, 1 };
         }
-        length += nread;
-    } while (buf[length - 1] != 'R' && length < 16);
-    size_t row { 1 }, col { 1 };
 
-    if (buf[0] == '\033' && buf[1] == '[') {
-        auto parts = StringView(buf + 2, length - 3).split_view(';');
-        auto row_opt = parts[0].to_int();
-        if (!row_opt.has_value()) {
-            dbgln("Terminal DSR issue; received garbage row");
-        } else {
-            row = row_opt.value();
+        switch (state) {
+        case Free:
+            if (c == '\x1b') {
+                state = SawEsc;
+                continue;
+            }
+            m_incomplete_data.append(c);
+            continue;
+        case SawEsc:
+            if (c == '[') {
+                state = SawBracket;
+                continue;
+            }
+            m_incomplete_data.append(c);
+            continue;
+        case SawBracket:
+            if (isdigit(c)) {
+                state = InFirstCoordinate;
+                coordinate_buffer.append(c);
+                continue;
+            }
+            m_incomplete_data.append(c);
+            continue;
+        case InFirstCoordinate:
+            if (isdigit(c)) {
+                coordinate_buffer.append(c);
+                continue;
+            }
+            if (c == ';') {
+                auto maybe_row = StringView { coordinate_buffer.data(), coordinate_buffer.size() }.to_uint();
+                if (!maybe_row.has_value())
+                    has_error = true;
+                row = maybe_row.value_or(1u);
+                coordinate_buffer.clear_with_capacity();
+                state = SawSemicolon;
+                continue;
+            }
+            m_incomplete_data.append(c);
+            continue;
+        case SawSemicolon:
+            if (isdigit(c)) {
+                state = InSecondCoordinate;
+                coordinate_buffer.append(c);
+                continue;
+            }
+            m_incomplete_data.append(c);
+            continue;
+        case InSecondCoordinate:
+            if (isdigit(c)) {
+                coordinate_buffer.append(c);
+                continue;
+            }
+            if (c == 'R') {
+                auto maybe_column = StringView { coordinate_buffer.data(), coordinate_buffer.size() }.to_uint();
+                if (!maybe_column.has_value())
+                    has_error = true;
+                col = maybe_column.value_or(1u);
+                coordinate_buffer.clear_with_capacity();
+                state = SawR;
+                continue;
+            }
+            m_incomplete_data.append(c);
+            continue;
+        case SawR:
+            m_incomplete_data.append(c);
+            continue;
+        default:
+            VERIFY_NOT_REACHED();
         }
-        auto col_opt = parts[1].to_int();
-        if (!col_opt.has_value()) {
-            dbgln("Terminal DSR issue; received garbage col");
-        } else {
-            col = col_opt.value();
-        }
-    }
+    } while (state != SawR);
+
+    if (has_error)
+        dbgln("Terminal DSR issue, couldn't parse DSR response");
     return { row, col };
 }
 

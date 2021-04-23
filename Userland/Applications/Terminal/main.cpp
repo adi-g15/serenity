@@ -1,32 +1,14 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * All rights reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
- * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
- * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
- * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #include <AK/URL.h>
 #include <Applications/Terminal/TerminalSettingsWindowGML.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/ConfigFile.h>
+#include <LibCore/File.h>
 #include <LibDesktop/Launcher.h>
 #include <LibGUI/Action.h>
 #include <LibGUI/ActionGroup.h>
@@ -39,7 +21,7 @@
 #include <LibGUI/GroupBox.h>
 #include <LibGUI/Icon.h>
 #include <LibGUI/Menu.h>
-#include <LibGUI/MenuBar.h>
+#include <LibGUI/Menubar.h>
 #include <LibGUI/OpacitySlider.h>
 #include <LibGUI/RadioButton.h>
 #include <LibGUI/SpinBox.h>
@@ -165,7 +147,7 @@ static pid_t run_command(int ptm_fd, String command)
             args[1] = "-c";
             args[2] = command.characters();
         }
-        const char* envs[] = { "PROMPT=\\X\\u@\\h:\\w\\a\\e[33;1m\\h\\e[0m \\e[34;1m\\w\\e[0m \\p ", "TERM=xterm", "PAGER=more", "PATH=/bin:/usr/bin:/usr/local/bin", nullptr };
+        const char* envs[] = { "TERM=xterm", "PAGER=more", "PATH=/bin:/usr/bin:/usr/local/bin", nullptr };
         rc = execve(shell.characters(), const_cast<char**>(args), const_cast<char**>(envs));
         if (rc < 0) {
             perror("execve");
@@ -177,7 +159,7 @@ static pid_t run_command(int ptm_fd, String command)
     return pid;
 }
 
-static RefPtr<GUI::Window> create_settings_window(TerminalWidget& terminal)
+static RefPtr<GUI::Window> create_settings_window(VT::TerminalWidget& terminal)
 {
     auto window = GUI::Window::construct();
     window->set_window_type(GUI::WindowType::ToolWindow);
@@ -194,25 +176,25 @@ static RefPtr<GUI::Window> create_settings_window(TerminalWidget& terminal)
     auto& no_bell_radio = *settings.find_descendant_of_type_named<GUI::RadioButton>("no_bell_radio");
 
     switch (terminal.bell_mode()) {
-    case TerminalWidget::BellMode::Visible:
+    case VT::TerminalWidget::BellMode::Visible:
         visual_bell_radio.set_checked(true);
         break;
-    case TerminalWidget::BellMode::AudibleBeep:
+    case VT::TerminalWidget::BellMode::AudibleBeep:
         beep_bell_radio.set_checked(true);
         break;
-    case TerminalWidget::BellMode::Disabled:
+    case VT::TerminalWidget::BellMode::Disabled:
         no_bell_radio.set_checked(true);
         break;
     }
 
     beep_bell_radio.on_checked = [&terminal](bool) {
-        terminal.set_bell_mode(TerminalWidget::BellMode::AudibleBeep);
+        terminal.set_bell_mode(VT::TerminalWidget::BellMode::AudibleBeep);
     };
     visual_bell_radio.on_checked = [&terminal](bool) {
-        terminal.set_bell_mode(TerminalWidget::BellMode::Visible);
+        terminal.set_bell_mode(VT::TerminalWidget::BellMode::Visible);
     };
     no_bell_radio.on_checked = [&terminal](bool) {
-        terminal.set_bell_mode(TerminalWidget::BellMode::Disabled);
+        terminal.set_bell_mode(VT::TerminalWidget::BellMode::Disabled);
     };
 
     auto& slider = *settings.find_descendant_of_type_named<GUI::OpacitySlider>("background_opacity_slider");
@@ -230,7 +212,7 @@ static RefPtr<GUI::Window> create_settings_window(TerminalWidget& terminal)
     return window;
 }
 
-static RefPtr<GUI::Window> create_find_window(TerminalWidget& terminal)
+static RefPtr<GUI::Window> create_find_window(VT::TerminalWidget& terminal)
 {
     auto window = GUI::Window::construct();
     window->set_window_type(GUI::WindowType::ToolWindow);
@@ -347,6 +329,7 @@ int main(int argc, char** argv)
     }
 
     RefPtr<Core::ConfigFile> config = Core::ConfigFile::get_for_app("Terminal");
+    Core::File::ensure_parent_directories(config->file_name());
 
     pid_t shell_pid = 0;
 
@@ -365,7 +348,7 @@ int main(int argc, char** argv)
     window->set_background_color(Color::Black);
     window->set_double_buffering_enabled(false);
 
-    auto& terminal = window->set_main_widget<TerminalWidget>(ptm_fd, true, config);
+    auto& terminal = window->set_main_widget<VT::TerminalWidget>(ptm_fd, true, config);
     terminal.on_command_exit = [&] {
         app->quit(0);
     };
@@ -381,11 +364,11 @@ int main(int argc, char** argv)
 
     auto bell = config->read_entry("Window", "Bell", "Visible");
     if (bell == "AudibleBeep") {
-        terminal.set_bell_mode(TerminalWidget::BellMode::AudibleBeep);
+        terminal.set_bell_mode(VT::TerminalWidget::BellMode::AudibleBeep);
     } else if (bell == "Disabled") {
-        terminal.set_bell_mode(TerminalWidget::BellMode::Disabled);
+        terminal.set_bell_mode(VT::TerminalWidget::BellMode::Disabled);
     } else {
-        terminal.set_bell_mode(TerminalWidget::BellMode::Visible);
+        terminal.set_bell_mode(VT::TerminalWidget::BellMode::Visible);
     }
 
     RefPtr<GUI::Window> settings_window;
@@ -398,7 +381,7 @@ int main(int argc, char** argv)
     auto new_scrollback_size = config->read_num_entry("Terminal", "MaxHistorySize", terminal.max_history_size());
     terminal.set_max_history_size(new_scrollback_size);
 
-    auto open_settings_action = GUI::Action::create("Settings...", Gfx::Bitmap::load_from_file("/res/icons/16x16/gear.png"),
+    auto open_settings_action = GUI::Action::create("&Settings", Gfx::Bitmap::load_from_file("/res/icons/16x16/settings.png"),
         [&](const GUI::Action&) {
             if (!settings_window)
                 settings_window = create_settings_window(terminal);
@@ -407,7 +390,7 @@ int main(int argc, char** argv)
         });
 
     terminal.context_menu().add_separator();
-    auto pick_font_action = GUI::Action::create("Terminal font...", Gfx::Bitmap::load_from_file("/res/icons/16x16/app-font-editor.png"),
+    auto pick_font_action = GUI::Action::create("Terminal &Font...", Gfx::Bitmap::load_from_file("/res/icons/16x16/app-font-editor.png"),
         [&](auto&) {
             auto picker = GUI::FontPicker::construct(window, &terminal.font(), true);
             if (picker->exec() == GUI::Dialog::ExecOK) {
@@ -423,10 +406,10 @@ int main(int argc, char** argv)
     terminal.context_menu().add_separator();
     terminal.context_menu().add_action(open_settings_action);
 
-    auto menubar = GUI::MenuBar::construct();
+    auto menubar = GUI::Menubar::construct();
 
-    auto& app_menu = menubar->add_menu("Terminal");
-    app_menu.add_action(GUI::Action::create("Open new terminal", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/app-terminal.png"), [&](auto&) {
+    auto& app_menu = menubar->add_menu("&File");
+    app_menu.add_action(GUI::Action::create("Open New &Terminal", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/app-terminal.png"), [&](auto&) {
         pid_t child;
         const char* argv[] = { "Terminal", nullptr };
         if ((errno = posix_spawn(&child, "/bin/Terminal", nullptr, nullptr, const_cast<char**>(argv), environ))) {
@@ -444,11 +427,11 @@ int main(int argc, char** argv)
         GUI::Application::the()->quit();
     }));
 
-    auto& edit_menu = menubar->add_menu("Edit");
+    auto& edit_menu = menubar->add_menu("&Edit");
     edit_menu.add_action(terminal.copy_action());
     edit_menu.add_action(terminal.paste_action());
     edit_menu.add_separator();
-    edit_menu.add_action(GUI::Action::create("Find...", { Mod_Ctrl | Mod_Shift, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"),
+    edit_menu.add_action(GUI::Action::create("&Find...", { Mod_Ctrl | Mod_Shift, Key_F }, Gfx::Bitmap::load_from_file("/res/icons/16x16/find.png"),
         [&](auto&) {
             if (!find_window)
                 find_window = create_find_window(terminal);
@@ -456,18 +439,21 @@ int main(int argc, char** argv)
             find_window->move_to_front();
         }));
 
-    auto& view_menu = menubar->add_menu("View");
+    auto& view_menu = menubar->add_menu("&View");
+    view_menu.add_action(GUI::CommonActions::make_fullscreen_action([&](auto&) {
+        window->set_fullscreen(!window->is_fullscreen());
+    }));
     view_menu.add_action(terminal.clear_including_history_action());
     view_menu.add_separator();
     view_menu.add_action(pick_font_action);
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_protocol("/usr/share/man/man1/Terminal.md"), "/bin/Help");
     }));
     help_menu.add_action(GUI::CommonActions::make_about_action("Terminal", app_icon, window));
 
-    app->set_menubar(move(menubar));
+    window->set_menubar(menubar);
 
     if (unveil("/res", "r") < 0) {
         perror("unveil");
@@ -499,7 +485,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (unveil(config->file_name().characters(), "rwc")) {
+    if (unveil(config->file_name().characters(), "rwc") < 0) {
         perror("unveil");
         return 1;
     }
