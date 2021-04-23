@@ -90,11 +90,11 @@ When running SerenityOS you can use `man` for the terminal interface, or `help` 
 
 ## How do I build and run this?
 
-See the [SerenityOS build instructions](https://github.com/SerenityOS/serenity/blob/master/Documentation/BuildInstructions.md)
+See the [SerenityOS build instructions](/Documentation/BuildInstructions.md)
 
 ## Before opening an issue
 
-Please see the [issue policy](https://github.com/SerenityOS/serenity/blob/master/CONTRIBUTING.md#issue-policy).
+Please see the [issue policy](/CONTRIBUTING.md#issue-policy).
 
 ## Communication hubs
 
