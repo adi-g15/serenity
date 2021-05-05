@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/TestSuite.h>
+#include <LibTest/TestCase.h>
 
 #include <AK/String.h>
 #include <AK/WeakPtr.h>
@@ -34,7 +34,7 @@ TEST_CASE(basic_weak)
     WeakPtr<SimpleWeakable> weak2;
 
     {
-        auto simple = adopt(*new SimpleWeakable);
+        auto simple = adopt_ref(*new SimpleWeakable);
         weak1 = simple;
         weak2 = simple;
         EXPECT_EQ(weak1.is_null(), false);
@@ -54,7 +54,7 @@ TEST_CASE(weakptr_move)
     WeakPtr<SimpleWeakable> weak2;
 
     {
-        auto simple = adopt(*new SimpleWeakable);
+        auto simple = adopt_ref(*new SimpleWeakable);
         weak1 = simple;
         weak2 = move(weak1);
         EXPECT_EQ(weak1.is_null(), true);
@@ -64,5 +64,3 @@ TEST_CASE(weakptr_move)
 
     EXPECT_EQ(weak2.is_null(), true);
 }
-
-TEST_MAIN(WeakPtr)

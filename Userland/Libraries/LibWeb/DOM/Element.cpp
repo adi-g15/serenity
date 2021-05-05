@@ -34,6 +34,7 @@ Element::Element(Document& document, QualifiedName qualified_name)
     : ParentNode(document, NodeType::ELEMENT_NODE)
     , m_qualified_name(move(qualified_name))
 {
+    make_html_uppercased_qualified_name();
 }
 
 Element::~Element()
@@ -115,35 +116,35 @@ RefPtr<Layout::Node> Element::create_layout_node()
         VERIFY_NOT_REACHED();
         break;
     case CSS::Display::Block:
-        return adopt(*new Layout::BlockBox(document(), this, move(style)));
+        return adopt_ref(*new Layout::BlockBox(document(), this, move(style)));
     case CSS::Display::Inline:
         if (style->float_().value_or(CSS::Float::None) != CSS::Float::None)
-            return adopt(*new Layout::BlockBox(document(), this, move(style)));
-        return adopt(*new Layout::InlineNode(document(), *this, move(style)));
+            return adopt_ref(*new Layout::BlockBox(document(), this, move(style)));
+        return adopt_ref(*new Layout::InlineNode(document(), *this, move(style)));
     case CSS::Display::ListItem:
-        return adopt(*new Layout::ListItemBox(document(), *this, move(style)));
+        return adopt_ref(*new Layout::ListItemBox(document(), *this, move(style)));
     case CSS::Display::Table:
-        return adopt(*new Layout::TableBox(document(), this, move(style)));
+        return adopt_ref(*new Layout::TableBox(document(), this, move(style)));
     case CSS::Display::TableRow:
-        return adopt(*new Layout::TableRowBox(document(), this, move(style)));
+        return adopt_ref(*new Layout::TableRowBox(document(), this, move(style)));
     case CSS::Display::TableCell:
-        return adopt(*new Layout::TableCellBox(document(), this, move(style)));
+        return adopt_ref(*new Layout::TableCellBox(document(), this, move(style)));
     case CSS::Display::TableRowGroup:
     case CSS::Display::TableHeaderGroup:
     case CSS::Display::TableFooterGroup:
-        return adopt(*new Layout::TableRowGroupBox(document(), *this, move(style)));
+        return adopt_ref(*new Layout::TableRowGroupBox(document(), *this, move(style)));
     case CSS::Display::InlineBlock: {
-        auto inline_block = adopt(*new Layout::BlockBox(document(), this, move(style)));
+        auto inline_block = adopt_ref(*new Layout::BlockBox(document(), this, move(style)));
         inline_block->set_inline(true);
         return inline_block;
     }
     case CSS::Display::Flex:
-        return adopt(*new Layout::BlockBox(document(), this, move(style)));
+        return adopt_ref(*new Layout::BlockBox(document(), this, move(style)));
     case CSS::Display::TableColumn:
     case CSS::Display::TableColumnGroup:
     case CSS::Display::TableCaption:
         // FIXME: This is just an incorrect placeholder until we improve table layout support.
-        return adopt(*new Layout::BlockBox(document(), this, move(style)));
+        return adopt_ref(*new Layout::BlockBox(document(), this, move(style)));
     }
     VERIFY_NOT_REACHED();
 }
@@ -357,6 +358,16 @@ NonnullRefPtr<CSS::CSSStyleDeclaration> Element::style_for_bindings()
     if (!m_inline_style)
         m_inline_style = CSS::ElementInlineCSSStyleDeclaration::create(*this);
     return *m_inline_style;
+}
+
+// https://dom.spec.whatwg.org/#element-html-uppercased-qualified-name
+void Element::make_html_uppercased_qualified_name()
+{
+    // This is allowed by the spec: "User agents could optimize qualified name and HTML-uppercased qualified name by storing them in internal slots."
+    if (namespace_() == Namespace::HTML /* FIXME: and its node document is an HTML document */)
+        m_html_uppercased_qualified_name = qualified_name().to_uppercase();
+    else
+        m_html_uppercased_qualified_name = qualified_name();
 }
 
 }

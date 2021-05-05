@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2019-2020, Sergey Bugaev <bugaevc@serenityos.org>
+ * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,6 +20,7 @@
 #include <LibGUI/Menubar.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Splitter.h>
+#include <LibGUI/Statusbar.h>
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/TextBox.h>
 #include <LibGUI/Toolbar.h>
@@ -254,10 +256,10 @@ int main(int argc, char* argv[])
 
     auto menubar = GUI::Menubar::construct();
 
-    auto& app_menu = menubar->add_menu("File");
-    app_menu.add_action(GUI::CommonActions::make_about_action("Help", app_icon, window));
-    app_menu.add_separator();
-    app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    auto& file_menu = menubar->add_menu("&File");
+    file_menu.add_action(GUI::CommonActions::make_about_action("&Help", app_icon, window));
+    file_menu.add_separator();
+    file_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
     }));
 
@@ -285,6 +287,21 @@ int main(int argc, char* argv[])
     } else {
         go_home_action->activate();
     }
+
+    auto& statusbar = widget.add<GUI::Statusbar>();
+    app->on_action_enter = [&statusbar](GUI::Action const& action) {
+        statusbar.set_override_text(action.status_tip());
+    };
+    app->on_action_leave = [&statusbar](GUI::Action const&) {
+        statusbar.set_override_text({});
+    };
+
+    page_view.on_link_hover = [&](URL const& url) {
+        if (url.is_valid())
+            statusbar.set_text(url.to_string());
+        else
+            statusbar.set_text({});
+    };
 
     window->set_focused_widget(&left_tab_bar);
     window->show();

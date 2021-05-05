@@ -45,6 +45,7 @@ set(AK_TEST_SOURCES
     TestRefPtr.cpp
     TestSinglyLinkedList.cpp
     TestSourceGenerator.cpp
+    TestSourceLocation.cpp
     TestSpan.cpp
     TestString.cpp
     TestStringUtils.cpp
@@ -55,17 +56,14 @@ set(AK_TEST_SOURCES
     TestTypedTransfer.cpp
     TestURL.cpp
     TestUtf8.cpp
+    TestVariant.cpp
     TestVector.cpp
     TestWeakPtr.cpp
 )
 
 foreach(source ${AK_TEST_SOURCES})
-    get_filename_component(name ${source} NAME_WE)
-    add_executable(${name} ${source})
-    target_link_libraries(${name} LibCore)
-    install(TARGETS ${name} RUNTIME DESTINATION usr/Tests/AK)
+    serenity_test(${source} AK)
 endforeach()
 
 get_filename_component(TEST_FRM_RESOLVED ./test.frm REALPATH)
-install(FILES ./4chan_catalog.json DESTINATION usr/Tests/AK)
 install(FILES ${TEST_FRM_RESOLVED} DESTINATION usr/Tests/AK)

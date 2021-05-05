@@ -96,13 +96,15 @@ static KResultOr<FlatPtr> make_userspace_stack_for_main_thread(Region& region, V
     Vector<FlatPtr> argv_entries;
     for (auto& argument : arguments) {
         push_string_on_new_stack(argument);
-        argv_entries.append(new_esp);
+        if (!argv_entries.try_append(new_esp))
+            return ENOMEM;
     }
 
     Vector<FlatPtr> env_entries;
     for (auto& variable : environment) {
         push_string_on_new_stack(variable);
-        env_entries.append(new_esp);
+        if (!env_entries.try_append(new_esp))
+            return ENOMEM;
     }
 
     for (auto& value : auxiliary_values) {
@@ -129,11 +131,17 @@ static KResultOr<FlatPtr> make_userspace_stack_for_main_thread(Region& region, V
 
     // NOTE: The stack needs to be 16-byte aligned.
     new_esp -= new_esp % 16;
+    // GCC assumes that the return address has been pushed to the stack when it enters the function,
+    // so we need to reserve an extra pointer's worth of bytes below this to make GCC's stack alignment
+    // calculations work
+    new_esp -= sizeof(void*);
 
     push_on_new_stack((FlatPtr)envp);
     push_on_new_stack((FlatPtr)argv);
     push_on_new_stack((FlatPtr)argv_entries.size());
     push_on_new_stack(0);
+
+    VERIFY((new_esp + sizeof(void*)) % 16 == 0);
 
     return new_esp;
 }
@@ -628,9 +636,9 @@ KResult Process::do_exec(NonnullRefPtr<FileDescription> main_program_description
     tss.cr3 = space().page_directory().cr3();
     tss.ss2 = pid().value();
 
-    // Throw away any recorded performance events in this process.
-    if (m_perf_event_buffer)
-        m_perf_event_buffer->clear();
+    if (auto* event_buffer = current_perf_events_buffer()) {
+        event_buffer->add_process(*this, ProcessEventType::Exec);
+    }
 
     {
         ScopedSpinLock lock(g_scheduler_lock);
@@ -717,7 +725,6 @@ static KResultOr<Vector<String>> find_shebang_interpreter_for_executable(const c
 
 KResultOr<RefPtr<FileDescription>> Process::find_elf_interpreter_for_executable(const String& path, const Elf32_Ehdr& main_program_header, int nread, size_t file_size)
 {
-
     // Not using KResultOr here because we'll want to do the same thing in userspace in the RTLD
     String interpreter_path;
     if (!ELF::validate_program_headers(main_program_header, file_size, (const u8*)&main_program_header, nread, &interpreter_path)) {
@@ -913,14 +920,16 @@ KResultOr<int> Process::sys$execve(Userspace<const Syscall::SC_execve_params*> u
         if (size.has_overflow())
             return false;
         Vector<Syscall::StringArgument, 32> strings;
-        strings.resize(list.length);
+        if (!strings.try_resize(list.length))
+            return false;
         if (!copy_from_user(strings.data(), list.strings, list.length * sizeof(*list.strings)))
             return false;
         for (size_t i = 0; i < list.length; ++i) {
             auto string = copy_string_from_user(strings[i]);
             if (string.is_null())
                 return false;
-            output.append(move(string));
+            if (!output.try_append(move(string)))
+                return false;
         }
         return true;
     };

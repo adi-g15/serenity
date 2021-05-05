@@ -54,7 +54,12 @@ void PS2KeyboardDevice::irq_handle_byte_read(u8 byte)
         break;
     case 0x2a:
     case 0x36:
-        update_modifier(Mod_Shift, pressed);
+        if (m_both_shift_keys_pressed)
+            m_both_shift_keys_pressed = false;
+        else if ((m_modifiers & Mod_Shift) != 0 && pressed)
+            m_both_shift_keys_pressed = true;
+        else
+            update_modifier(Mod_Shift, pressed);
         break;
     }
     switch (ch) {
@@ -85,7 +90,7 @@ void PS2KeyboardDevice::handle_irq(const RegisterState&)
 
 UNMAP_AFTER_INIT RefPtr<PS2KeyboardDevice> PS2KeyboardDevice::try_to_initialize(const I8042Controller& ps2_controller)
 {
-    auto device = adopt(*new PS2KeyboardDevice(ps2_controller));
+    auto device = adopt_ref(*new PS2KeyboardDevice(ps2_controller));
     if (device->initialize())
         return device;
     return nullptr;

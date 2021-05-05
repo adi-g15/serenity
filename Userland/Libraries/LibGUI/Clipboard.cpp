@@ -19,7 +19,7 @@ class ClipboardServerConnection : public IPC::ServerConnection<ClipboardClientEn
 public:
     virtual void handshake() override
     {
-        send_sync<Messages::ClipboardServer::Greet>();
+        greet();
     }
 
 private:
@@ -27,7 +27,7 @@ private:
         : IPC::ServerConnection<ClipboardClientEndpoint, ClipboardServerEndpoint>(*this, "/tmp/portal/clipboard")
     {
     }
-    virtual void handle(const Messages::ClipboardClient::ClipboardDataChanged&) override;
+    virtual void clipboard_data_changed(String const& mime_type) override;
 };
 
 Clipboard& Clipboard::the()
@@ -56,12 +56,12 @@ Clipboard::Clipboard()
 
 Clipboard::DataAndType Clipboard::data_and_type() const
 {
-    auto response = connection().send_sync<Messages::ClipboardServer::GetClipboardData>();
-    if (!response->data().is_valid())
+    auto response = connection().get_clipboard_data();
+    if (!response.data().is_valid())
         return {};
-    auto data = ByteBuffer::copy(response->data().data<void>(), response->data().size());
-    auto type = response->mime_type();
-    auto metadata = response->metadata().entries();
+    auto data = ByteBuffer::copy(response.data().data<void>(), response.data().size());
+    auto type = response.mime_type();
+    auto metadata = response.metadata().entries();
     return { data, type, metadata };
 }
 
@@ -75,14 +75,14 @@ void Clipboard::set_data(ReadonlyBytes data, const String& type, const HashMap<S
     if (!data.is_empty())
         memcpy(buffer.data<void>(), data.data(), data.size());
 
-    connection().send_sync<Messages::ClipboardServer::SetClipboardData>(move(buffer), type, metadata);
+    connection().set_clipboard_data(move(buffer), type, metadata);
 }
 
-void ClipboardServerConnection::handle(const Messages::ClipboardClient::ClipboardDataChanged& message)
+void ClipboardServerConnection::clipboard_data_changed(String const& mime_type)
 {
     auto& clipboard = Clipboard::the();
     if (clipboard.on_change)
-        clipboard.on_change(message.mime_type());
+        clipboard.on_change(mime_type);
 }
 
 RefPtr<Gfx::Bitmap> Clipboard::bitmap() const

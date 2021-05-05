@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, The SerenityOS developers.
+ * Copyright (c) 2020, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -17,15 +17,15 @@ Thread::BlockTimeout::BlockTimeout(bool is_absolute, const Time* time, const Tim
     : m_clock_id(clock_id)
     , m_infinite(!time)
 {
-    if (!m_infinite) {
-        if (*time > Time::zero()) {
-            m_time = *time;
-            m_should_block = true;
-        }
-        m_start_time = start_time ? *start_time : TimeManagement::the().current_time(clock_id).value();
-        if (!is_absolute)
-            m_time = m_time + m_start_time;
+    if (m_infinite)
+        return;
+    if (*time > Time::zero()) {
+        m_time = *time;
+        m_should_block = true;
     }
+    m_start_time = start_time ? *start_time : TimeManagement::the().current_time(clock_id);
+    if (!is_absolute)
+        m_time += m_start_time;
 }
 
 bool Thread::Blocker::set_block_condition(Thread::BlockCondition& block_condition, void* data)
@@ -326,7 +326,7 @@ void Thread::SleepBlocker::calculate_remaining()
 {
     if (!m_remaining)
         return;
-    auto time_now = TimeManagement::the().current_time(m_deadline.clock_id()).value();
+    auto time_now = TimeManagement::the().current_time(m_deadline.clock_id());
     if (time_now < m_deadline.absolute_time())
         *m_remaining = m_deadline.absolute_time() - time_now;
     else

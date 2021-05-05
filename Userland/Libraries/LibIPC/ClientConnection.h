@@ -17,10 +17,16 @@ NonnullRefPtr<T> new_client_connection(Args&&... args)
 }
 
 template<typename ClientEndpoint, typename ServerEndpoint>
-class ClientConnection : public Connection<ServerEndpoint, ClientEndpoint> {
+class ClientConnection : public Connection<ServerEndpoint, ClientEndpoint>
+    , public ServerEndpoint::Stub
+    , public ClientEndpoint::template Proxy<ServerEndpoint> {
 public:
-    ClientConnection(ServerEndpoint& endpoint, NonnullRefPtr<Core::LocalSocket> socket, int client_id)
-        : IPC::Connection<ServerEndpoint, ClientEndpoint>(endpoint, move(socket))
+    using ServerStub = typename ServerEndpoint::Stub;
+    using IPCProxy = ClientEndpoint::template Proxy<ServerEndpoint>;
+
+    ClientConnection(ServerStub& stub, NonnullRefPtr<Core::LocalSocket> socket, int client_id)
+        : IPC::Connection<ServerEndpoint, ClientEndpoint>(stub, move(socket))
+        , ClientEndpoint::template Proxy<ServerEndpoint>(*this, {})
         , m_client_id(client_id)
     {
         VERIFY(this->socket().is_connected());

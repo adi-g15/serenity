@@ -24,6 +24,7 @@
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
+#include <LibWeb/HTML/WebSocket.h>
 #include <LibWeb/Loader/ContentFilter.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <stdio.h>
@@ -66,8 +67,9 @@ int main(int argc, char** argv)
 
     auto app = GUI::Application::construct(argc, argv);
 
-    // Connect to the ProtocolServer immediately so we can drop the "unix" pledge.
+    // Connect to the RequestServer and the WebSocket service immediately so we can drop the "unix" pledge.
     Web::ResourceLoader::the();
+    Web::HTML::WebSocketClientManager::the();
 
     // Connect to LaunchServer immediately and let it know that we won't ask for anything other than opening
     // the user's downloads directory.
@@ -114,6 +116,7 @@ int main(int argc, char** argv)
 
     auto m_config = Core::ConfigFile::get_for_app("Browser");
     Browser::g_home_url = m_config->read_entry("Preferences", "Home", "about:blank");
+    Browser::g_search_engine = m_config->read_entry("Preferences", "SearchEngine", {});
 
     auto ad_filter_list_or_error = Core::File::open(String::formatted("{}/BrowserContentFilters.txt", Core::StandardPaths::config_directory()), Core::IODevice::ReadOnly);
     if (!ad_filter_list_or_error.is_error()) {

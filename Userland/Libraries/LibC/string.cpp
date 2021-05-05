@@ -182,10 +182,10 @@ const void* memmem(const void* haystack, size_t haystack_length, const void* nee
 
 char* strcpy(char* dest, const char* src)
 {
-    char* originalDest = dest;
+    char* original_dest = dest;
     while ((*dest++ = *src++) != '\0')
         ;
-    return originalDest;
+    return original_dest;
 }
 
 char* strncpy(char* dest, const char* src, size_t n)
@@ -338,7 +338,6 @@ const char* const sys_errlist[] = {
     "No message",
     "No protocol option",
     "Not connected",
-    "Operation would block",
     "Protocol not supported",
     "Resource deadlock would occur",
     "Timed out",

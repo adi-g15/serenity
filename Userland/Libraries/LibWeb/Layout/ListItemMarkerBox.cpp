@@ -5,10 +5,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/StringBuilder.h>
 #include <LibGfx/Painter.h>
 #include <LibWeb/Layout/ListItemMarkerBox.h>
 
 namespace Web::Layout {
+
+constexpr auto lower_alpha = "abcdefghijklmnopqrstuvwxyz";
+constexpr auto upper_alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 ListItemMarkerBox::ListItemMarkerBox(DOM::Document& document, CSS::ListStyleType style_type, size_t index)
     : Box(document, nullptr, CSS::StyleProperties::create())
@@ -51,6 +55,21 @@ void ListItemMarkerBox::paint(PaintContext& context, PaintPhase phase)
         break;
     case CSS::ListStyleType::Disc:
         context.painter().fill_ellipse(marker_rect, color);
+        break;
+    case CSS::ListStyleType::DecimalLeadingZero:
+        // This is weird, but in accordance to spec.
+        context.painter().draw_text(
+            enclosing,
+            m_index < 10 ? String::formatted("0{}.", m_index) : String::formatted("{}.", m_index),
+            Gfx::TextAlignment::Center);
+        break;
+    case CSS::ListStyleType::LowerAlpha:
+    case CSS::ListStyleType::LowerLatin:
+        context.painter().draw_text(enclosing, String::bijective_base_from(m_index).to_lowercase(), Gfx::TextAlignment::Center);
+        break;
+    case CSS::ListStyleType::UpperAlpha:
+    case CSS::ListStyleType::UpperLatin:
+        context.painter().draw_text(enclosing, String::bijective_base_from(m_index), Gfx::TextAlignment::Center);
         break;
     case CSS::ListStyleType::None:
         return;

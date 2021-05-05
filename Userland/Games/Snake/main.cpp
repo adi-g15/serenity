@@ -38,7 +38,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (unveil(config->file_name().characters(), "crw") < 0) {
+    if (unveil(config->filename().characters(), "crw") < 0) {
         perror("unveil");
         return 1;
     }
@@ -54,23 +54,23 @@ int main(int argc, char** argv)
 
     window->set_double_buffering_enabled(false);
     window->set_title("Snake");
-    window->resize(320, 320);
+    window->resize(324, 344);
 
     auto& game = window->set_main_widget<SnakeGame>();
 
     auto menubar = GUI::Menubar::construct();
 
-    auto& app_menu = menubar->add_menu("Game");
+    auto& game_menu = menubar->add_menu("&Game");
 
-    app_menu.add_action(GUI::Action::create("New game", { Mod_None, Key_F2 }, [&](auto&) {
+    game_menu.add_action(GUI::Action::create("&New Game", { Mod_None, Key_F2 }, [&](auto&) {
         game.reset();
     }));
-    app_menu.add_separator();
-    app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    game_menu.add_separator();
+    game_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
     }));
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("Snake", app_icon, window));
 
     window->set_menubar(move(menubar));

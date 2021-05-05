@@ -20,25 +20,25 @@ Client::Client()
 
 void Client::handshake()
 {
-    send_sync<Messages::SymbolServer::Greet>();
+    greet();
 }
 
-void Client::handle(const Messages::SymbolClient::Dummy&)
+void Client::dummy()
 {
 }
 
 Optional<Symbol> Client::symbolicate(const String& path, FlatPtr address)
 {
-    auto response = send_sync<Messages::SymbolServer::Symbolicate>(path, address);
-    if (!response->success())
+    auto response = IPCProxy::symbolicate(path, address);
+    if (!response.success())
         return {};
 
     return Symbol {
         .address = address,
-        .name = response->name(),
-        .offset = response->offset(),
-        .filename = response->filename(),
-        .line_number = response->line()
+        .name = response.name(),
+        .offset = response.offset(),
+        .filename = response.filename(),
+        .line_number = response.line()
     };
 }
 

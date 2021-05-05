@@ -555,6 +555,12 @@ int setgid(gid_t gid)
     __RETURN_WITH_ERRNO(rc, rc, -1);
 }
 
+int setreuid(uid_t ruid, uid_t euid)
+{
+    int rc = syscall(SC_setreuid, ruid, euid);
+    __RETURN_WITH_ERRNO(rc, rc, -1);
+}
+
 int setresuid(uid_t ruid, uid_t euid, uid_t suid)
 {
     int rc = syscall(SC_setresuid, ruid, euid, suid);
@@ -591,6 +597,8 @@ int mknod(const char* pathname, mode_t mode, dev_t dev)
 long fpathconf([[maybe_unused]] int fd, [[maybe_unused]] int name)
 {
     switch (name) {
+    case _PC_NAME_MAX:
+        return NAME_MAX;
     case _PC_PATH_MAX:
         return PATH_MAX;
     case _PC_VDISABLE:
@@ -603,6 +611,8 @@ long fpathconf([[maybe_unused]] int fd, [[maybe_unused]] int name)
 long pathconf([[maybe_unused]] const char* path, int name)
 {
     switch (name) {
+    case _PC_NAME_MAX:
+        return NAME_MAX;
     case _PC_PATH_MAX:
         return PATH_MAX;
     case _PC_PIPE_BUF:

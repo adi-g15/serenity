@@ -20,6 +20,7 @@
 #include <Kernel/Forward.h>
 #include <Kernel/FutexQueue.h>
 #include <Kernel/Lock.h>
+#include <Kernel/PerformanceEventBuffer.h>
 #include <Kernel/ProcessGroup.h>
 #include <Kernel/StdLib.h>
 #include <Kernel/Thread.h>
@@ -323,6 +324,7 @@ public:
     KResultOr<int> sys$setegid(gid_t);
     KResultOr<int> sys$setuid(uid_t);
     KResultOr<int> sys$setgid(gid_t);
+    KResultOr<int> sys$setreuid(uid_t, uid_t);
     KResultOr<int> sys$setresuid(uid_t, uid_t, uid_t);
     KResultOr<int> sys$setresgid(gid_t, gid_t, gid_t);
     KResultOr<unsigned> sys$alarm(unsigned seconds);
@@ -354,6 +356,7 @@ public:
     KResultOr<int> sys$setsockopt(Userspace<const Syscall::SC_setsockopt_params*>);
     KResultOr<int> sys$getsockname(Userspace<const Syscall::SC_getsockname_params*>);
     KResultOr<int> sys$getpeername(Userspace<const Syscall::SC_getpeername_params*>);
+    KResultOr<int> sys$socketpair(Userspace<const Syscall::SC_socketpair_params*>);
     KResultOr<int> sys$sched_setparam(pid_t pid, Userspace<const struct sched_param*>);
     KResultOr<int> sys$sched_getparam(pid_t pid, Userspace<struct sched_param*>);
     KResultOr<int> sys$create_thread(void* (*)(void*), Userspace<const Syscall::SC_create_thread_params*>);
@@ -386,7 +389,7 @@ public:
     KResultOr<int> sys$recvfd(int sockfd, int options);
     KResultOr<long> sys$sysconf(int name);
     KResultOr<int> sys$disown(ProcessID);
-    KResultOr<FlatPtr> sys$allocate_tls(size_t);
+    KResultOr<FlatPtr> sys$allocate_tls(Userspace<const char*> initial_data, size_t);
     KResultOr<int> sys$prctl(int option, FlatPtr arg1, FlatPtr arg2);
     KResultOr<int> sys$set_coredump_metadata(Userspace<const Syscall::SC_set_coredump_metadata_params*>);
     KResultOr<int> sys$anon_create(size_t, int options);
@@ -527,6 +530,13 @@ private:
     bool has_tracee_thread(ProcessID tracer_pid);
 
     void clear_futex_queues_on_exec();
+
+    void setup_socket_fd(int fd, NonnullRefPtr<FileDescription> description, int type);
+
+    inline PerformanceEventBuffer* current_perf_events_buffer()
+    {
+        return g_profiling_all_threads ? g_global_perf_events : m_perf_event_buffer.ptr();
+    }
 
     Process* m_prev { nullptr };
     Process* m_next { nullptr };

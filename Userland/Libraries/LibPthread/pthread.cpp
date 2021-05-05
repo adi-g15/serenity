@@ -167,18 +167,7 @@ int pthread_mutex_lock(pthread_mutex_t* mutex)
 
 int pthread_mutex_trylock(pthread_mutex_t* mutex)
 {
-    auto& atomic = reinterpret_cast<Atomic<u32>&>(mutex->lock);
-    u32 expected = false;
-    if (!atomic.compare_exchange_strong(expected, true, AK::memory_order_acq_rel)) {
-        if (mutex->type == PTHREAD_MUTEX_RECURSIVE && mutex->owner == pthread_self()) {
-            mutex->level++;
-            return 0;
-        }
-        return EBUSY;
-    }
-    mutex->owner = pthread_self();
-    mutex->level = 0;
-    return 0;
+    return __pthread_mutex_trylock(mutex);
 }
 
 int pthread_mutex_unlock(pthread_mutex_t* mutex)
@@ -453,7 +442,7 @@ static int futex_wait(uint32_t& futex_addr, uint32_t value, const struct timespe
 {
     int saved_errno = errno;
     // NOTE: FUTEX_WAIT takes a relative timeout, so use FUTEX_WAIT_BITSET instead!
-    int rc = futex(&futex_addr, FUTEX_WAIT_BITSET, value, abstime, nullptr, FUTEX_BITSET_MATCH_ANY);
+    int rc = futex(&futex_addr, FUTEX_WAIT_BITSET | FUTEX_CLOCK_REALTIME, value, abstime, nullptr, FUTEX_BITSET_MATCH_ANY);
     if (rc < 0 && errno == EAGAIN) {
         // If we didn't wait, that's not an error
         errno = saved_errno;
@@ -570,29 +559,62 @@ int pthread_setcanceltype([[maybe_unused]] int type, [[maybe_unused]] int* oldty
     TODO();
 }
 
-int pthread_spin_destroy([[maybe_unused]] pthread_spinlock_t* lock)
+constexpr static pid_t spinlock_unlock_sentinel = 0;
+int pthread_spin_destroy(pthread_spinlock_t* lock)
 {
-    TODO();
+    auto current = AK::atomic_load(&lock->m_lock);
+
+    if (current != spinlock_unlock_sentinel)
+        return EBUSY;
+
+    return 0;
 }
 
-int pthread_spin_init([[maybe_unused]] pthread_spinlock_t* lock, [[maybe_unused]] int shared)
+int pthread_spin_init(pthread_spinlock_t* lock, [[maybe_unused]] int shared)
 {
-    TODO();
+    lock->m_lock = spinlock_unlock_sentinel;
+    return 0;
 }
 
-int pthread_spin_lock([[maybe_unused]] pthread_spinlock_t* lock)
+int pthread_spin_lock(pthread_spinlock_t* lock)
 {
-    TODO();
+    const auto desired = gettid();
+    while (true) {
+        auto current = AK::atomic_load(&lock->m_lock);
+
+        if (current == desired)
+            return EDEADLK;
+
+        if (AK::atomic_compare_exchange_strong(&lock->m_lock, current, desired, AK::MemoryOrder::memory_order_acquire))
+            break;
+    }
+
+    return 0;
 }
 
-int pthread_spin_trylock([[maybe_unused]] pthread_spinlock_t* lock)
+int pthread_spin_trylock(pthread_spinlock_t* lock)
 {
-    TODO();
+    // We expect the current value to be unlocked, as the specification
+    // states that trylock should lock ony if it is not held by ANY thread.
+    auto current = spinlock_unlock_sentinel;
+    auto desired = gettid();
+
+    if (AK::atomic_compare_exchange_strong(&lock->m_lock, current, desired, AK::MemoryOrder::memory_order_acquire)) {
+        return 0;
+    } else {
+        return EBUSY;
+    }
 }
 
-int pthread_spin_unlock([[maybe_unused]] pthread_spinlock_t* lock)
+int pthread_spin_unlock(pthread_spinlock_t* lock)
 {
-    TODO();
+    auto current = AK::atomic_load(&lock->m_lock);
+
+    if (gettid() != current)
+        return EPERM;
+
+    AK::atomic_store(&lock->m_lock, spinlock_unlock_sentinel);
+    return 0;
 }
 
 int pthread_equal(pthread_t t1, pthread_t t2)

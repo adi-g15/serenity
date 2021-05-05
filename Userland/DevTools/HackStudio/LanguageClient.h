@@ -38,7 +38,7 @@ public:
 
     virtual void handshake() override
     {
-        send_sync<Messages::LanguageServer::Greet>(m_project_path);
+        greet(m_project_path);
     }
 
     WeakPtr<LanguageClient> language_client() { return m_current_language_client; }
@@ -47,9 +47,9 @@ public:
     virtual void die() override;
 
 protected:
-    virtual void handle(const Messages::LanguageClient::AutoCompleteSuggestions&) override;
-    virtual void handle(const Messages::LanguageClient::DeclarationLocation&) override;
-    virtual void handle(const Messages::LanguageClient::DeclarationsInDocument&) override;
+    virtual void auto_complete_suggestions(Vector<GUI::AutocompleteProvider::Entry> const&) override;
+    virtual void declaration_location(GUI::AutocompleteProvider::ProjectLocation const&) override;
+    virtual void declarations_in_document(String const&, Vector<GUI::AutocompleteProvider::Declaration> const&) override;
     void set_wrapper(ServerConnectionWrapper& wrapper) { m_wrapper = &wrapper; }
 
     String m_project_path;

@@ -1,12 +1,14 @@
 set(SOURCES
     DisassemblyModel.cpp
     main.cpp
-        IndividualSampleModel.cpp
-        Profile.cpp
+    IndividualSampleModel.cpp
+    Process.cpp
+    ProcessPickerWidget.cpp
+    Profile.cpp
     ProfileModel.cpp
-        ProfileTimelineWidget.cpp
-        SamplesModel.cpp
+    ProfileTimelineWidget.cpp
+    SamplesModel.cpp
 )
 
 serenity_app(Profiler ICON app-profiler)
-target_link_libraries(Profiler LibGUI LibDesktop LibX86 LibCoreDump)
+target_link_libraries(Profiler LibGUI LibDesktop LibX86)

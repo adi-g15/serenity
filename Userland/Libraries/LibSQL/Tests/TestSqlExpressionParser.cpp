@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/TestSuite.h>
+#include <LibTest/TestCase.h>
 
 #include <AK/HashMap.h>
 #include <AK/Result.h>
@@ -338,6 +338,39 @@ TEST_CASE(case_expression)
     validate("CASE 15 WHEN 16 THEN 17 WHEN 18 THEN 19 ELSE 20 END", true, 2, true);
 }
 
+TEST_CASE(exists_expression)
+{
+    EXPECT(parse("EXISTS").is_error());
+    EXPECT(parse("EXISTS (").is_error());
+    EXPECT(parse("EXISTS (SELECT").is_error());
+    EXPECT(parse("EXISTS (SELECT)").is_error());
+    EXPECT(parse("EXISTS (SELECT * FROM table").is_error());
+    EXPECT(parse("NOT EXISTS").is_error());
+    EXPECT(parse("NOT EXISTS (").is_error());
+    EXPECT(parse("NOT EXISTS (SELECT").is_error());
+    EXPECT(parse("NOT EXISTS (SELECT)").is_error());
+    EXPECT(parse("NOT EXISTS (SELECT * FROM table").is_error());
+    EXPECT(parse("(").is_error());
+    EXPECT(parse("(SELECT").is_error());
+    EXPECT(parse("(SELECT)").is_error());
+    EXPECT(parse("(SELECT * FROM table").is_error());
+
+    auto validate = [](StringView sql, bool expected_invert_expression) {
+        auto result = parse(sql);
+        EXPECT(!result.is_error());
+
+        auto expression = result.release_value();
+        EXPECT(is<SQL::ExistsExpression>(*expression));
+
+        const auto& exists = static_cast<const SQL::ExistsExpression&>(*expression);
+        EXPECT_EQ(exists.invert_expression(), expected_invert_expression);
+    };
+
+    validate("EXISTS (SELECT * FROM table)", false);
+    validate("NOT EXISTS (SELECT * FROM table)", true);
+    validate("(SELECT * FROM table)", false);
+}
+
 TEST_CASE(collate_expression)
 {
     EXPECT(parse("COLLATE").is_error());
@@ -547,4 +580,25 @@ TEST_CASE(in_chained_expression)
     validate("15 NOT IN (15, 16)", 2, true);
 }
 
-TEST_MAIN(SqlExpressionParser)
+TEST_CASE(in_selection_expression)
+{
+    EXPECT(parse("IN (SELECT)").is_error());
+    EXPECT(parse("IN (SELECT * FROM table, SELECT * FROM table);").is_error());
+    EXPECT(parse("NOT IN (SELECT)").is_error());
+    EXPECT(parse("NOT IN (SELECT * FROM table, SELECT * FROM table);").is_error());
+
+    auto validate = [](StringView sql, bool expected_invert_expression) {
+        auto result = parse(sql);
+        EXPECT(!result.is_error());
+
+        auto expression = result.release_value();
+        EXPECT(is<SQL::InSelectionExpression>(*expression));
+
+        const auto& in = static_cast<const SQL::InSelectionExpression&>(*expression);
+        EXPECT(!is<SQL::ErrorExpression>(*in.expression()));
+        EXPECT_EQ(in.invert_expression(), expected_invert_expression);
+    };
+
+    validate("15 IN (SELECT * FROM table)", false);
+    validate("15 NOT IN (SELECT * FROM table)", true);
+}

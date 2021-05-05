@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers
+ * Copyright (c) 2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,7 +19,7 @@ public:
     }
     RefPtr<UndoGlyph> save_state() const
     {
-        auto state = adopt(*new UndoGlyph(m_code_point, *m_font));
+        auto state = adopt_ref(*new UndoGlyph(m_code_point, *m_font));
         auto glyph = font().glyph(m_code_point).glyph_bitmap();
         for (int x = 0; x < glyph.width(); x++)
             for (int y = 0; y < glyph.height(); y++)

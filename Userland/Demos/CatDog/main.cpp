@@ -2,7 +2,7 @@
  * Copyright (c) 2021, Richard Gráčik <r.gracik@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
-  */
+ */
 
 #include <LibCore/ElapsedTimer.h>
 #include <LibGUI/Application.h>
@@ -134,7 +134,7 @@ public:
         VERIFY(window_id >= 0);
 
         set_global_cursor_tracking(true);
-        GUI::WindowServerConnection::the().send_sync<Messages::WindowServer::SetGlobalCursorTracking>(window_id, true);
+        GUI::WindowServerConnection::the().set_global_cursor_tracking(window_id, true);
     }
 
     void start_the_timer() { m_timer.start(); }
@@ -213,8 +213,8 @@ int main(int argc, char** argv)
     root_widget.layout()->set_spacing(0);
 
     auto menubar = GUI::Menubar::construct();
-    auto& app_menu = menubar->add_menu("File");
-    app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
+    auto& file_menu = menubar->add_menu("File");
+    file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
     auto& help_menu = menubar->add_menu("Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("CatDog Demo", app_icon, window));
     window->set_menubar(move(menubar));

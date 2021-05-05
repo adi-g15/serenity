@@ -1,10 +1,10 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers
+ * Copyright (c) 2020, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/TestSuite.h>
+#include <LibTest/TestCase.h>
 
 #include <AK/CircularDuplexStream.h>
 
@@ -61,5 +61,3 @@ TEST_CASE(overwritting_is_well_defined)
 
     EXPECT(stream.eof());
 }
-
-TEST_MAIN(CircularDuplexStream)

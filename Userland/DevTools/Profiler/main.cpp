@@ -5,6 +5,7 @@
  */
 
 #include "IndividualSampleModel.h"
+#include "ProcessPickerWidget.h"
 #include "Profile.h"
 #include "ProfileTimelineWidget.h"
 #include <LibCore/ArgsParser.h>
@@ -30,6 +31,8 @@
 #include <LibGUI/Window.h>
 #include <serenity.h>
 #include <string.h>
+
+using namespace Profiler;
 
 static bool generate_profile(pid_t& pid);
 
@@ -86,6 +89,7 @@ int main(int argc, char** argv)
     main_widget.set_layout<GUI::VerticalBoxLayout>();
 
     main_widget.add<ProfileTimelineWidget>(*profile);
+    main_widget.add<ProcessPickerWidget>(*profile);
 
     auto& tab_widget = main_widget.add<GUI::TabWidget>();
 
@@ -121,8 +125,8 @@ int main(int argc, char** argv)
     };
 
     auto menubar = GUI::Menubar::construct();
-    auto& app_menu = menubar->add_menu("&File");
-    app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
+    auto& file_menu = menubar->add_menu("&File");
+    file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
 
     auto& view_menu = menubar->add_menu("&View");
 

@@ -9,6 +9,8 @@
 #include <LibGUI/Model.h>
 #include <LibX86/Instruction.h>
 
+namespace Profiler {
+
 class Profile;
 class ProfileNode;
 
@@ -25,7 +27,7 @@ class DisassemblyModel final : public GUI::Model {
 public:
     static NonnullRefPtr<DisassemblyModel> create(Profile& profile, ProfileNode& node)
     {
-        return adopt(*new DisassemblyModel(profile, node));
+        return adopt_ref(*new DisassemblyModel(profile, node));
     }
 
     enum Column {
@@ -53,3 +55,5 @@ private:
 
     Vector<InstructionData> m_instructions;
 };
+
+}

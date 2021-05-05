@@ -38,6 +38,7 @@ static Gfx::Bitmap* s_minimize_icon;
 static Gfx::Bitmap* s_maximize_icon;
 static Gfx::Bitmap* s_restore_icon;
 static Gfx::Bitmap* s_close_icon;
+static Gfx::Bitmap* s_close_modified_icon;
 
 static String s_last_title_button_icons_path;
 static int s_last_title_button_icons_scale;
@@ -65,14 +66,14 @@ WindowFrame::WindowFrame(Window& window)
     : m_window(window)
 {
     auto button = make<Button>(*this, [this](auto&) {
-        m_window.request_close();
+        m_window.handle_window_menu_action(WindowMenuAction::Close);
     });
     m_close_button = button.ptr();
     m_buttons.append(move(button));
 
     if (window.is_resizable()) {
         auto button = make<Button>(*this, [this](auto&) {
-            WindowManager::the().maximize_windows(m_window, !m_window.is_maximized());
+            m_window.handle_window_menu_action(WindowMenuAction::MaximizeOrRestore);
         });
         button->on_middle_click = [&](auto&) {
             m_window.set_vertically_maximized();
@@ -83,7 +84,7 @@ WindowFrame::WindowFrame(Window& window)
 
     if (window.is_minimizable()) {
         auto button = make<Button>(*this, [this](auto&) {
-            WindowManager::the().minimize_windows(m_window, true);
+            m_window.handle_window_menu_action(WindowMenuAction::MinimizeOrUnminimize);
         });
         m_minimize_button = button.ptr();
         m_buttons.append(move(button));
@@ -102,7 +103,7 @@ void WindowFrame::set_button_icons()
     if (m_window.is_frameless())
         return;
 
-    m_close_button->set_icon(*s_close_icon);
+    m_close_button->set_icon(m_window.is_modified() ? *s_close_modified_icon : *s_close_icon);
     if (m_window.is_minimizable())
         m_minimize_button->set_icon(*s_minimize_icon);
     if (m_window.is_resizable())
@@ -149,6 +150,15 @@ void WindowFrame::reload_config()
             s_close_icon->unref();
         if (!(s_close_icon = Gfx::Bitmap::load_from_file(full_path.to_string(), icons_scale).leak_ref()))
             s_close_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/window-close.png", icons_scale).leak_ref();
+        full_path.clear();
+    }
+    if (!s_close_modified_icon || s_last_title_button_icons_path != icons_path || s_last_title_button_icons_scale != icons_scale) {
+        full_path.append(icons_path);
+        full_path.append("window-close-modified.png");
+        if (s_close_modified_icon)
+            s_close_modified_icon->unref();
+        if (!(s_close_modified_icon = Gfx::Bitmap::load_from_file(full_path.to_string(), icons_scale).leak_ref()))
+            s_close_modified_icon = Gfx::Bitmap::load_from_file("/res/icons/16x16/window-close-modified.png", icons_scale).leak_ref();
         full_path.clear();
     }
 
@@ -291,7 +301,7 @@ void WindowFrame::paint_menubar(Gfx::Painter& painter)
         auto text_rect = menu.rect_in_window_menubar();
         Color text_color = palette.window_text();
         if (MenuManager::the().is_open(menu))
-            text_rect.move_by(1, 1);
+            text_rect.translate_by(1, 1);
         bool paint_as_pressed = MenuManager::the().is_open(menu);
         bool paint_as_hovered = !paint_as_pressed && &menu == MenuManager::the().hovered_menu();
         if (paint_as_pressed || paint_as_hovered) {
@@ -306,7 +316,7 @@ void WindowFrame::paint_normal_frame(Gfx::Painter& painter)
 {
     auto palette = WindowManager::the().palette();
     auto leftmost_button_rect = m_buttons.is_empty() ? Gfx::IntRect() : m_buttons.last().relative_rect();
-    Gfx::WindowTheme::current().paint_normal_frame(painter, window_state_for_theme(), m_window.rect(), compute_title_text(), m_window.icon(), palette, leftmost_button_rect, menu_row_count());
+    Gfx::WindowTheme::current().paint_normal_frame(painter, window_state_for_theme(), m_window.rect(), compute_title_text(), m_window.icon(), palette, leftmost_button_rect, menu_row_count(), m_window.is_modified());
 
     if (m_window.menubar() && m_window.should_show_menubar())
         paint_menubar(painter);
@@ -536,7 +546,7 @@ void WindowFrame::invalidate(Gfx::IntRect relative_rect)
 {
     auto frame_rect = rect();
     auto window_rect = m_window.rect();
-    relative_rect.move_by(frame_rect.x() - window_rect.x(), frame_rect.y() - window_rect.y());
+    relative_rect.translate_by(frame_rect.x() - window_rect.x(), frame_rect.y() - window_rect.y());
     m_dirty = true;
     m_window.invalidate(relative_rect, true);
 }
@@ -584,17 +594,29 @@ bool WindowFrame::hit_test(const Gfx::IntPoint& point) const
     u8 alpha = 0xff;
     auto relative_point = point.translated(-render_rect().location());
     if (point.y() < window_rect.y()) {
-        if (m_top_bottom)
-            alpha = m_top_bottom->get_pixel(relative_point * m_top_bottom->scale()).alpha();
+        if (m_top_bottom) {
+            auto scaled_relative_point = relative_point * m_top_bottom->scale();
+            if (m_top_bottom->rect().contains(scaled_relative_point))
+                alpha = m_top_bottom->get_pixel(scaled_relative_point).alpha();
+        }
     } else if (point.y() > window_rect.bottom()) {
-        if (m_top_bottom)
-            alpha = m_top_bottom->get_pixel(relative_point.x() * m_top_bottom->scale(), m_bottom_y * m_top_bottom->scale() + point.y() - window_rect.bottom() - 1).alpha();
+        if (m_top_bottom) {
+            Gfx::IntPoint scaled_relative_point { relative_point.x() * m_top_bottom->scale(), m_bottom_y * m_top_bottom->scale() + point.y() - window_rect.bottom() - 1 };
+            if (m_top_bottom->rect().contains(scaled_relative_point))
+                alpha = m_top_bottom->get_pixel(scaled_relative_point).alpha();
+        }
     } else if (point.x() < window_rect.x()) {
-        if (m_left_right)
-            alpha = m_left_right->get_pixel(relative_point.x() * m_left_right->scale(), (relative_point.y() - m_bottom_y) * m_left_right->scale()).alpha();
+        if (m_left_right) {
+            Gfx::IntPoint scaled_relative_point { relative_point.x() * m_left_right->scale(), (relative_point.y() - m_bottom_y) * m_left_right->scale() };
+            if (m_left_right->rect().contains(scaled_relative_point))
+                alpha = m_left_right->get_pixel(scaled_relative_point).alpha();
+        }
     } else if (point.x() > window_rect.right()) {
-        if (m_left_right)
-            alpha = m_left_right->get_pixel(m_right_x * m_left_right->scale() + point.x() - window_rect.right() - 1, (relative_point.y() - m_bottom_y) * m_left_right->scale()).alpha();
+        if (m_left_right) {
+            Gfx::IntPoint scaled_relative_point { m_right_x * m_left_right->scale() + point.x() - window_rect.right() - 1, (relative_point.y() - m_bottom_y) * m_left_right->scale() };
+            if (m_left_right->rect().contains(scaled_relative_point))
+                alpha = m_left_right->get_pixel(scaled_relative_point).alpha();
+        }
     } else {
         return false;
     }

@@ -9,6 +9,8 @@
 #include <AK/StringBuilder.h>
 #include <stdio.h>
 
+namespace Profiler {
+
 IndividualSampleModel::IndividualSampleModel(Profile& profile, size_t event_index)
     : m_profile(profile)
     , m_event_index(event_index)
@@ -67,5 +69,7 @@ GUI::Variant IndividualSampleModel::data(const GUI::ModelIndex& index, GUI::Mode
 
 void IndividualSampleModel::update()
 {
-    did_update(Model::InvalidateAllIndexes);
+    did_update(Model::InvalidateAllIndices);
+}
+
 }

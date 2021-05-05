@@ -127,7 +127,7 @@ void ListView::paint_list_item(Painter& painter, int row_index, int painted_item
         else
             text_color = index.data(ModelRole::ForegroundColor).to_color(palette().color(foreground_role()));
         auto text_rect = row_rect;
-        text_rect.move_by(horizontal_padding(), 0);
+        text_rect.translate_by(horizontal_padding(), 0);
         text_rect.set_width(text_rect.width() - horizontal_padding() * 2);
         auto text_alignment = index.data(ModelRole::TextAlignment).to_text_alignment(Gfx::TextAlignment::CenterLeft);
         painter.draw_text(text_rect, data.to_string(), font, text_alignment, text_color);
@@ -262,7 +262,7 @@ void ListView::scroll_into_view(const ModelIndex& index, bool scroll_horizontall
 {
     if (!model())
         return;
-    ScrollableWidget::scroll_into_view(content_rect(index.row()), scroll_horizontally, scroll_vertically);
+    AbstractScrollableWidget::scroll_into_view(content_rect(index.row()), scroll_horizontally, scroll_vertically);
 }
 
 }

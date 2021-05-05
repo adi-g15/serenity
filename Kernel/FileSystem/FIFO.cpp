@@ -27,7 +27,7 @@ static int s_next_fifo_id = 1;
 
 NonnullRefPtr<FIFO> FIFO::create(uid_t uid)
 {
-    return adopt(*new FIFO(uid));
+    return adopt_ref(*new FIFO(uid));
 }
 
 KResultOr<NonnullRefPtr<FileDescription>> FIFO::open_direction(FIFO::Direction direction)
@@ -74,7 +74,7 @@ KResultOr<NonnullRefPtr<FileDescription>> FIFO::open_direction_blocking(FIFO::Di
 FIFO::FIFO(uid_t uid)
     : m_uid(uid)
 {
-    LOCKER(all_fifos().lock());
+    Locker locker(all_fifos().lock());
     all_fifos().resource().set(this);
     m_fifo_id = ++s_next_fifo_id;
 
@@ -86,7 +86,7 @@ FIFO::FIFO(uid_t uid)
 
 FIFO::~FIFO()
 {
-    LOCKER(all_fifos().lock());
+    Locker locker(all_fifos().lock());
     all_fifos().resource().remove(this);
 }
 

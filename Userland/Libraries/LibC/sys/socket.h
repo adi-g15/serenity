@@ -46,6 +46,7 @@ __BEGIN_DECLS
 
 #define MSG_TRUNC 0x1
 #define MSG_CTRUNC 0x2
+#define MSG_PEEK 0x4
 #define MSG_DONTWAIT 0x40
 
 typedef uint16_t sa_family_t;
@@ -138,6 +139,7 @@ int getsockopt(int sockfd, int level, int option, void*, socklen_t*);
 int setsockopt(int sockfd, int level, int option, const void*, socklen_t);
 int getsockname(int sockfd, struct sockaddr*, socklen_t*);
 int getpeername(int sockfd, struct sockaddr*, socklen_t*);
+int socketpair(int domain, int type, int protocol, int sv[2]);
 int sendfd(int sockfd, int fd);
 int recvfd(int sockfd, int options);
 

@@ -57,12 +57,12 @@ public:
 
     struct InsertBreakpointAtSourcePositionResult {
         String library_name;
-        String file_name;
+        String filename;
         size_t line_number { 0 };
         FlatPtr address { 0 };
     };
 
-    Optional<InsertBreakpointAtSourcePositionResult> insert_breakpoint(const String& file_name, size_t line_number);
+    Optional<InsertBreakpointAtSourcePositionResult> insert_breakpoint(const String& filename, size_t line_number);
 
     bool insert_breakpoint(void* address);
     bool disable_breakpoint(void* address);
@@ -185,7 +185,6 @@ private:
 template<typename Callback>
 void DebugSession::run(DesiredInitialDebugeeState initial_debugee_state, Callback callback)
 {
-
     enum class State {
         FirstIteration,
         FreeRun,
@@ -260,7 +259,7 @@ void DebugSession::run(DesiredInitialDebugeeState initial_debugee_state, Callbac
         Optional<BreakPoint> current_breakpoint;
 
         if (state == State::FreeRun || state == State::Syscall) {
-            current_breakpoint = m_breakpoints.get((void*)((u32)regs.eip - 1));
+            current_breakpoint = m_breakpoints.get((void*)((uintptr_t)regs.eip - 1));
             if (current_breakpoint.has_value())
                 state = State::FreeRun;
         } else {

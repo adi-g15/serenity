@@ -14,9 +14,7 @@
 namespace Clipboard {
 
 class ClientConnection final
-    : public IPC::ClientConnection<ClipboardClientEndpoint, ClipboardServerEndpoint>
-    , public ClipboardServerEndpoint {
-
+    : public IPC::ClientConnection<ClipboardClientEndpoint, ClipboardServerEndpoint> {
     C_OBJECT(ClientConnection);
 
 public:
@@ -30,9 +28,9 @@ public:
     void notify_about_clipboard_change();
 
 private:
-    virtual OwnPtr<Messages::ClipboardServer::GreetResponse> handle(const Messages::ClipboardServer::Greet&) override;
-    virtual OwnPtr<Messages::ClipboardServer::GetClipboardDataResponse> handle(const Messages::ClipboardServer::GetClipboardData&) override;
-    virtual OwnPtr<Messages::ClipboardServer::SetClipboardDataResponse> handle(const Messages::ClipboardServer::SetClipboardData&) override;
+    virtual void greet() override;
+    virtual Messages::ClipboardServer::GetClipboardDataResponse get_clipboard_data() override;
+    virtual void set_clipboard_data(Core::AnonymousBuffer const&, String const&, IPC::Dictionary const&) override;
 };
 
 }

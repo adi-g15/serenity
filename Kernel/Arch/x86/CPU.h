@@ -779,11 +779,6 @@ public:
         return *m_mm_data;
     }
 
-    ALWAYS_INLINE Thread* idle_thread() const
-    {
-        return m_idle_thread;
-    }
-
     ALWAYS_INLINE void set_idle_thread(Thread& idle_thread)
     {
         m_idle_thread = &idle_thread;
@@ -806,6 +801,12 @@ public:
         write_fs_u32(__builtin_offsetof(Processor, m_current_thread), FlatPtr(&current_thread));
     }
 
+    ALWAYS_INLINE static Thread* idle_thread()
+    {
+        // See comment in Processor::current_thread
+        return (Thread*)read_fs_u32(__builtin_offsetof(Processor, m_idle_thread));
+    }
+
     ALWAYS_INLINE u32 get_id() const
     {
         // NOTE: This variant should only be used when iterating over all
@@ -820,6 +821,11 @@ public:
     {
         // See comment in Processor::current_thread
         return read_fs_ptr(__builtin_offsetof(Processor, m_cpu));
+    }
+
+    ALWAYS_INLINE static bool is_bootstrap_processor()
+    {
+        return Processor::id() == 0;
     }
 
     ALWAYS_INLINE u32 raise_irq()
@@ -980,7 +986,7 @@ public:
     void exit_trap(TrapFrame& trap);
 
     [[noreturn]] void initialize_context_switching(Thread& initial_thread);
-    void switch_context(Thread*& from_thread, Thread*& to_thread);
+    NEVER_INLINE void switch_context(Thread*& from_thread, Thread*& to_thread);
     [[noreturn]] static void assume_context(Thread& thread, FlatPtr flags);
     u32 init_context(Thread& thread, bool leave_crit);
     static Vector<FlatPtr> capture_stack_trace(Thread& thread, size_t max_frames = 0);
@@ -1057,9 +1063,9 @@ struct TrapFrame {
 
 static_assert(TRAP_FRAME_SIZE == sizeof(TrapFrame));
 
-extern "C" void enter_trap_no_irq(TrapFrame*);
-extern "C" void enter_trap(TrapFrame*);
-extern "C" void exit_trap(TrapFrame*);
+extern "C" void enter_trap_no_irq(TrapFrame*) __attribute__((used));
+extern "C" void enter_trap(TrapFrame*) __attribute__((used));
+extern "C" void exit_trap(TrapFrame*) __attribute__((used));
 
 class MSR {
     uint32_t m_msr;

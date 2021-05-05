@@ -22,9 +22,6 @@
 
 namespace Kernel {
 
-extern bool g_profiling_all_threads;
-extern PerformanceEventBuffer* g_global_perf_events;
-
 class SchedulerPerProcessorData {
     AK_MAKE_NONCOPYABLE(SchedulerPerProcessorData);
     AK_MAKE_NONMOVABLE(SchedulerPerProcessorData);
@@ -42,7 +39,7 @@ RecursiveSpinLock g_scheduler_lock;
 static u32 time_slice_for(const Thread& thread)
 {
     // One time slice unit == 4ms (assuming 250 ticks/second)
-    if (&thread == Processor::current().idle_thread())
+    if (thread.is_idle_thread())
         return 1;
     return 2;
 }
@@ -108,12 +105,12 @@ Thread& Scheduler::pull_next_runnable_thread()
         }
         priority_mask &= ~(1u << priority);
     }
-    return *Processor::current().idle_thread();
+    return *Processor::idle_thread();
 }
 
 bool Scheduler::dequeue_runnable_thread(Thread& thread, bool check_affinity)
 {
-    if (&thread == Processor::current().idle_thread())
+    if (thread.is_idle_thread())
         return true;
     ScopedSpinLock lock(g_ready_queues_lock);
     auto priority = thread.m_runnable_priority;
@@ -137,7 +134,7 @@ bool Scheduler::dequeue_runnable_thread(Thread& thread, bool check_affinity)
 void Scheduler::queue_runnable_thread(Thread& thread)
 {
     VERIFY(g_scheduler_lock.own_lock());
-    if (&thread == Processor::current().idle_thread())
+    if (thread.is_idle_thread())
         return;
     auto priority = thread_priority_to_priority_index(thread.priority());
 
@@ -163,9 +160,8 @@ UNMAP_AFTER_INIT void Scheduler::start()
     auto& processor = Processor::current();
     processor.set_scheduler_data(*new SchedulerPerProcessorData());
     VERIFY(processor.is_initialized());
-    auto& idle_thread = *processor.idle_thread();
+    auto& idle_thread = *Processor::idle_thread();
     VERIFY(processor.current_thread() == &idle_thread);
-    VERIFY(processor.idle_thread() == &idle_thread);
     idle_thread.set_ticks_left(time_slice_for(idle_thread));
     idle_thread.did_schedule();
     idle_thread.set_initialized(true);
@@ -470,6 +466,7 @@ UNMAP_AFTER_INIT void Scheduler::initialize()
 
 UNMAP_AFTER_INIT void Scheduler::set_idle_thread(Thread* idle_thread)
 {
+    idle_thread->set_idle_thread();
     Processor::current().set_idle_thread(*idle_thread);
     Processor::current().set_current_thread(*idle_thread);
 }
@@ -478,7 +475,7 @@ UNMAP_AFTER_INIT Thread* Scheduler::create_ap_idle_thread(u32 cpu)
 {
     VERIFY(cpu != 0);
     // This function is called on the bsp, but creates an idle thread for another AP
-    VERIFY(Processor::id() == 0);
+    VERIFY(Processor::is_bootstrap_processor());
 
     VERIFY(s_colonel_process);
     Thread* idle_thread = s_colonel_process->create_kernel_thread(idle_loop, nullptr, THREAD_PRIORITY_MIN, String::formatted("idle thread #{}", cpu), 1 << cpu, false);
@@ -500,8 +497,7 @@ void Scheduler::timer_tick(const RegisterState& regs)
     VERIFY(current_thread->current_trap()->regs == &regs);
 
 #if !SCHEDULE_ON_ALL_PROCESSORS
-    bool is_bsp = Processor::id() == 0;
-    if (!is_bsp)
+    if (!Processor::is_bootstrap_processor())
         return; // TODO: This prevents scheduling on other CPUs!
 #endif
 
@@ -513,12 +509,6 @@ void Scheduler::timer_tick(const RegisterState& regs)
         //        That will be an interesting mode to add in the future. :^)
         if (current_thread != Processor::current().idle_thread()) {
             perf_events = g_global_perf_events;
-            if (current_thread->process().space().enforces_syscall_regions()) {
-                // FIXME: This is very nasty! We dump the current process's address
-                //        space layout *every time* it's sampled. We should figure out
-                //        a way to do this less often.
-                perf_events->add_process(current_thread->process());
-            }
         }
     } else if (current_thread->process().is_profiling()) {
         VERIFY(current_thread->process().perf_events());
@@ -526,7 +516,9 @@ void Scheduler::timer_tick(const RegisterState& regs)
     }
 
     if (perf_events) {
-        [[maybe_unused]] auto rc = perf_events->append_with_eip_and_ebp(regs.eip, regs.ebp, PERF_EVENT_SAMPLE, 0, 0);
+        [[maybe_unused]] auto rc = perf_events->append_with_eip_and_ebp(
+            current_thread->pid(), current_thread->tid(),
+            regs.eip, regs.ebp, PERF_EVENT_SAMPLE, 0, 0, nullptr);
     }
 
     if (current_thread->tick())

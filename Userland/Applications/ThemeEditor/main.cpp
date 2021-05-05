@@ -47,7 +47,6 @@ private:
 
 int main(int argc, char** argv)
 {
-
     if (pledge("stdio recvfd sendfd thread rpath accept cpath wpath unix fattr", nullptr) < 0) {
         perror("pledge");
         return 1;
@@ -95,7 +94,7 @@ int main(int argc, char** argv)
 #undef __ENUMERATE_COLOR_ROLE
 
     combo_box.set_only_allow_values_from_model(true);
-    combo_box.set_model(adopt(*new ColorRoleModel(color_roles)));
+    combo_box.set_model(adopt_ref(*new ColorRoleModel(color_roles)));
     combo_box.on_change = [&](auto&, auto& index) {
         auto role = static_cast<const ColorRoleModel*>(index.model())->color_role(index);
         color_input.set_color(preview_palette.color(role));

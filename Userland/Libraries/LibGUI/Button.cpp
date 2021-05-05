@@ -62,7 +62,7 @@ void Button::paint_event(PaintEvent& event)
         painter.blit_filtered(icon_location.translated(1, 1), *m_icon, m_icon->rect(), [&shadow_color](auto) {
             return shadow_color;
         });
-        icon_location.move_by(-1, -1);
+        icon_location.translate_by(-1, -1);
     }
 
     if (m_icon) {
@@ -77,7 +77,7 @@ void Button::paint_event(PaintEvent& event)
     }
     auto& font = is_checked() ? Gfx::FontDatabase::default_bold_font() : this->font();
     if (m_icon && !text().is_empty()) {
-        content_rect.move_by(m_icon->width() + icon_spacing(), 0);
+        content_rect.translate_by(m_icon->width() + icon_spacing(), 0);
         content_rect.set_width(content_rect.width() - m_icon->width() - icon_spacing());
     }
 
@@ -172,6 +172,14 @@ void Button::mousedown_event(MouseEvent& event)
         return;
     }
     AbstractButton::mousedown_event(event);
+}
+
+void Button::mousemove_event(MouseEvent& event)
+{
+    if (m_menu) {
+        return;
+    }
+    AbstractButton::mousemove_event(event);
 }
 
 }

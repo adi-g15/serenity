@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, The SerenityOS developers.
+ * Copyright (c) 2020, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -27,7 +27,7 @@ struct LocalFrame;
 
 class Job : public RefCounted<Job> {
 public:
-    static NonnullRefPtr<Job> create(pid_t pid, pid_t pgid, String cmd, u64 job_id, AST::Command&& command) { return adopt(*new Job(pid, pgid, move(cmd), job_id, move(command))); }
+    static NonnullRefPtr<Job> create(pid_t pid, pid_t pgid, String cmd, u64 job_id, AST::Command&& command) { return adopt_ref(*new Job(pid, pgid, move(cmd), job_id, move(command))); }
 
     ~Job()
     {

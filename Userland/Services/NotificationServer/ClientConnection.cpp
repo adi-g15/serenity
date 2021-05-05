@@ -28,50 +28,47 @@ void ClientConnection::die()
     s_connections.remove(client_id());
 }
 
-OwnPtr<Messages::NotificationServer::GreetResponse> ClientConnection::handle(const Messages::NotificationServer::Greet&)
+void ClientConnection::greet()
 {
-    return make<Messages::NotificationServer::GreetResponse>();
 }
 
-OwnPtr<Messages::NotificationServer::ShowNotificationResponse> ClientConnection::handle(const Messages::NotificationServer::ShowNotification& message)
+void ClientConnection::show_notification(String const& text, String const& title, Gfx::ShareableBitmap const& icon)
 {
-    auto window = NotificationWindow::construct(client_id(), message.text(), message.title(), message.icon());
+    auto window = NotificationWindow::construct(client_id(), text, title, icon);
     window->show();
-    return make<Messages::NotificationServer::ShowNotificationResponse>();
 }
 
-OwnPtr<Messages::NotificationServer::CloseNotificationResponse> ClientConnection::handle([[maybe_unused]] const Messages::NotificationServer::CloseNotification& message)
+void ClientConnection::close_notification()
 {
     auto window = NotificationWindow::get_window_by_id(client_id());
     if (window) {
         window->close();
     }
-    return make<Messages::NotificationServer::CloseNotificationResponse>();
 }
 
-OwnPtr<Messages::NotificationServer::UpdateNotificationIconResponse> ClientConnection::handle(const Messages::NotificationServer::UpdateNotificationIcon& message)
+Messages::NotificationServer::UpdateNotificationIconResponse ClientConnection::update_notification_icon(Gfx::ShareableBitmap const& icon)
 {
     auto window = NotificationWindow::get_window_by_id(client_id());
     if (window) {
-        window->set_image(message.icon());
+        window->set_image(icon);
     }
-    return make<Messages::NotificationServer::UpdateNotificationIconResponse>(window);
+    return !!window;
 }
 
-OwnPtr<Messages::NotificationServer::UpdateNotificationTextResponse> ClientConnection::handle(const Messages::NotificationServer::UpdateNotificationText& message)
+Messages::NotificationServer::UpdateNotificationTextResponse ClientConnection::update_notification_text(String const& text, String const& title)
 {
     auto window = NotificationWindow::get_window_by_id(client_id());
     if (window) {
-        window->set_text(message.text());
-        window->set_title(message.title());
+        window->set_text(text);
+        window->set_title(title);
     }
-    return make<Messages::NotificationServer::UpdateNotificationTextResponse>(window);
+    return !!window;
 }
 
-OwnPtr<Messages::NotificationServer::IsShowingResponse> ClientConnection::handle(const Messages::NotificationServer::IsShowing&)
+Messages::NotificationServer::IsShowingResponse ClientConnection::is_showing()
 {
     auto window = NotificationWindow::get_window_by_id(client_id());
-    return make<Messages::NotificationServer::IsShowingResponse>(window);
+    return !!window;
 }
 
 }

@@ -44,7 +44,7 @@ Time Timer::now(bool is_firing) const
             break;
         }
     }
-    return TimeManagement::the().current_time(clock_id).value();
+    return TimeManagement::the().current_time(clock_id);
 }
 
 TimerQueue& TimerQueue::the()
@@ -59,7 +59,7 @@ UNMAP_AFTER_INIT TimerQueue::TimerQueue()
 
 RefPtr<Timer> TimerQueue::add_timer_without_id(clockid_t clock_id, const Time& deadline, Function<void()>&& callback)
 {
-    if (deadline <= TimeManagement::the().current_time(clock_id).value())
+    if (deadline <= TimeManagement::the().current_time(clock_id))
         return {};
 
     // Because timer handlers can execute on any processor and there is
@@ -67,7 +67,7 @@ RefPtr<Timer> TimerQueue::add_timer_without_id(clockid_t clock_id, const Time& d
     // *must* be a RefPtr<Timer>. Otherwise calling cancel_timer() could
     // inadvertently cancel another timer that has been created between
     // returning from the timer handler and a call to cancel_timer().
-    auto timer = adopt(*new Timer(clock_id, deadline, move(callback)));
+    auto timer = adopt_ref(*new Timer(clock_id, deadline, move(callback)));
 
     ScopedSpinLock lock(g_timerqueue_lock);
     timer->m_id = 0; // Don't generate a timer id
@@ -117,9 +117,9 @@ void TimerQueue::add_timer_locked(NonnullRefPtr<Timer> timer)
 
 TimerId TimerQueue::add_timer(clockid_t clock_id, const Time& deadline, Function<void()>&& callback)
 {
-    auto expires = TimeManagement::the().current_time(clock_id).value();
+    auto expires = TimeManagement::the().current_time(clock_id);
     expires = expires + deadline;
-    return add_timer(adopt(*new Timer(clock_id, expires, move(callback))));
+    return add_timer(adopt_ref(*new Timer(clock_id, expires, move(callback))));
 }
 
 bool TimerQueue::cancel_timer(TimerId id)

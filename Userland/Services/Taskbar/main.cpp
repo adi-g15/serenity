@@ -106,7 +106,7 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
     const Vector<String> sorted_app_categories = discover_apps_and_categories();
     auto system_menu = GUI::Menu::construct("\xE2\x9A\xA1"); // HIGH VOLTAGE SIGN
 
-    system_menu->add_action(GUI::Action::create("About SerenityOS", Gfx::Bitmap::load_from_file("/res/icons/16x16/ladybug.png"), [](auto&) {
+    system_menu->add_action(GUI::Action::create("About SerenityOS", Gfx::Bitmap::load_from_file("/res/icons/16x16/ladyball.png"), [](auto&) {
         pid_t child_pid;
         const char* argv[] = { "/bin/About", nullptr };
         if ((errno = posix_spawn(&child_pid, "/bin/About", nullptr, nullptr, const_cast<char**>(argv), environ))) {
@@ -178,7 +178,7 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
         quick_sort(g_themes, [](auto& a, auto& b) { return a.name < b.name; });
     }
 
-    auto current_theme_name = GUI::WindowServerConnection::the().send_sync<Messages::WindowServer::GetSystemTheme>()->theme_name();
+    auto current_theme_name = GUI::WindowServerConnection::the().get_system_theme();
 
     {
         int theme_identifier = 0;
@@ -186,8 +186,8 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
             auto action = GUI::Action::create_checkable(theme.name, [theme_identifier](auto&) {
                 auto& theme = g_themes[theme_identifier];
                 dbgln("Theme switched to {} at path {}", theme.name, theme.path);
-                auto response = GUI::WindowServerConnection::the().send_sync<Messages::WindowServer::SetSystemTheme>(theme.path, theme.name);
-                VERIFY(response->success());
+                auto success = GUI::WindowServerConnection::the().set_system_theme(theme.path, theme.name);
+                VERIFY(success);
             });
             if (theme.name == current_theme_name)
                 action->set_checked(true);

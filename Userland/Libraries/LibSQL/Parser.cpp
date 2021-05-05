@@ -16,12 +16,17 @@ Parser::Parser(Lexer lexer)
 
 NonnullRefPtr<Statement> Parser::next_statement()
 {
+    auto terminate_statement = [this](auto statement) {
+        consume(TokenType::SemiColon);
+        return statement;
+    };
+
     if (match(TokenType::With)) {
         auto common_table_expression_list = parse_common_table_expression_list();
-        return parse_statement_with_expression_list(move(common_table_expression_list));
+        return terminate_statement(parse_statement_with_expression_list(move(common_table_expression_list)));
     }
 
-    return parse_statement();
+    return terminate_statement(parse_statement());
 }
 
 NonnullRefPtr<Statement> Parser::parse_statement()
@@ -29,14 +34,20 @@ NonnullRefPtr<Statement> Parser::parse_statement()
     switch (m_parser_state.m_token.type()) {
     case TokenType::Create:
         return parse_create_table_statement();
+    case TokenType::Alter:
+        return parse_alter_table_statement();
     case TokenType::Drop:
         return parse_drop_table_statement();
+    case TokenType::Insert:
+        return parse_insert_statement({});
+    case TokenType::Update:
+        return parse_update_statement({});
     case TokenType::Delete:
         return parse_delete_statement({});
     case TokenType::Select:
         return parse_select_statement({});
     default:
-        expected("CREATE, DROP, DELETE, or SELECT");
+        expected("CREATE, ALTER, DROP, INSERT, UPDATE, DELETE, or SELECT");
         return create_ast_node<ErrorStatement>();
     }
 }
@@ -44,12 +55,16 @@ NonnullRefPtr<Statement> Parser::parse_statement()
 NonnullRefPtr<Statement> Parser::parse_statement_with_expression_list(RefPtr<CommonTableExpressionList> common_table_expression_list)
 {
     switch (m_parser_state.m_token.type()) {
+    case TokenType::Insert:
+        return parse_insert_statement(move(common_table_expression_list));
+    case TokenType::Update:
+        return parse_update_statement(move(common_table_expression_list));
     case TokenType::Delete:
         return parse_delete_statement(move(common_table_expression_list));
     case TokenType::Select:
         return parse_select_statement(move(common_table_expression_list));
     default:
-        expected("DELETE or SELECT");
+        expected("INSERT, UPDATE, DELETE or SELECT");
         return create_ast_node<ErrorStatement>();
     }
 }
@@ -72,36 +87,57 @@ NonnullRefPtr<CreateTable> Parser::parse_create_table_statement()
         is_error_if_table_exists = false;
     }
 
-    String schema_or_table_name = consume(TokenType::Identifier).value();
     String schema_name;
     String table_name;
+    parse_schema_and_table_name(schema_name, table_name);
 
-    if (consume_if(TokenType::Period)) {
-        schema_name = move(schema_or_table_name);
-        table_name = consume(TokenType::Identifier).value();
-    } else {
-        table_name = move(schema_or_table_name);
+    if (consume_if(TokenType::As)) {
+        auto select_statement = parse_select_statement({});
+        return create_ast_node<CreateTable>(move(schema_name), move(table_name), move(select_statement), is_temporary, is_error_if_table_exists);
     }
 
-    // FIXME: Parse "AS select-stmt".
-
     NonnullRefPtrVector<ColumnDefinition> column_definitions;
-    consume(TokenType::ParenOpen);
-    do {
-        column_definitions.append(parse_column_definition());
-
-        if (match(TokenType::ParenClose))
-            break;
-
-        consume(TokenType::Comma);
-    } while (!match(TokenType::Eof));
+    parse_comma_separated_list(true, [&]() { column_definitions.append(parse_column_definition()); });
 
     // FIXME: Parse "table-constraint".
 
-    consume(TokenType::ParenClose);
-    consume(TokenType::SemiColon);
-
     return create_ast_node<CreateTable>(move(schema_name), move(table_name), move(column_definitions), is_temporary, is_error_if_table_exists);
+}
+
+NonnullRefPtr<CreateTable> Parser::parse_alter_table_statement()
+{
+    // https://sqlite.org/lang_altertable.html
+    consume(TokenType::Alter);
+    consume(TokenType::Table);
+
+    String schema_name;
+    String table_name;
+    parse_schema_and_table_name(schema_name, table_name);
+
+    if (consume_if(TokenType::Add)) {
+        consume_if(TokenType::Column); // COLUMN is optional.
+        auto column = parse_column_definition();
+        return create_ast_node<AddColumn>(move(schema_name), move(table_name), move(column));
+    }
+
+    if (consume_if(TokenType::Drop)) {
+        consume_if(TokenType::Column); // COLUMN is optional.
+        auto column = consume(TokenType::Identifier).value();
+        return create_ast_node<DropColumn>(move(schema_name), move(table_name), move(column));
+    }
+
+    consume(TokenType::Rename);
+
+    if (consume_if(TokenType::To)) {
+        auto new_table_name = consume(TokenType::Identifier).value();
+        return create_ast_node<RenameTable>(move(schema_name), move(table_name), move(new_table_name));
+    }
+
+    consume_if(TokenType::Column); // COLUMN is optional.
+    auto column_name = consume(TokenType::Identifier).value();
+    consume(TokenType::To);
+    auto new_column_name = consume(TokenType::Identifier).value();
+    return create_ast_node<RenameColumn>(move(schema_name), move(table_name), move(column_name), move(new_column_name));
 }
 
 NonnullRefPtr<DropTable> Parser::parse_drop_table_statement()
@@ -116,20 +152,99 @@ NonnullRefPtr<DropTable> Parser::parse_drop_table_statement()
         is_error_if_table_does_not_exist = false;
     }
 
-    String schema_or_table_name = consume(TokenType::Identifier).value();
     String schema_name;
     String table_name;
-
-    if (consume_if(TokenType::Period)) {
-        schema_name = move(schema_or_table_name);
-        table_name = consume(TokenType::Identifier).value();
-    } else {
-        table_name = move(schema_or_table_name);
-    }
-
-    consume(TokenType::SemiColon);
+    parse_schema_and_table_name(schema_name, table_name);
 
     return create_ast_node<DropTable>(move(schema_name), move(table_name), is_error_if_table_does_not_exist);
+}
+
+NonnullRefPtr<Delete> Parser::parse_insert_statement(RefPtr<CommonTableExpressionList> common_table_expression_list)
+{
+    // https://sqlite.org/lang_insert.html
+    consume(TokenType::Insert);
+    auto conflict_resolution = parse_conflict_resolution();
+    consume(TokenType::Into);
+
+    String schema_name;
+    String table_name;
+    parse_schema_and_table_name(schema_name, table_name);
+
+    String alias;
+    if (consume_if(TokenType::As))
+        alias = consume(TokenType::Identifier).value();
+
+    Vector<String> column_names;
+    if (match(TokenType::ParenOpen))
+        parse_comma_separated_list(true, [&]() { column_names.append(consume(TokenType::Identifier).value()); });
+
+    NonnullRefPtrVector<ChainedExpression> chained_expressions;
+    RefPtr<Select> select_statement;
+
+    if (consume_if(TokenType::Values)) {
+        parse_comma_separated_list(false, [&]() {
+            if (auto chained_expression = parse_chained_expression(); chained_expression.has_value())
+                chained_expressions.append(move(chained_expression.value()));
+            else
+                expected("Chained expression");
+        });
+    } else if (match(TokenType::Select)) {
+        select_statement = parse_select_statement({});
+    } else {
+        consume(TokenType::Default);
+        consume(TokenType::Values);
+    }
+
+    RefPtr<ReturningClause> returning_clause;
+    if (match(TokenType::Returning))
+        returning_clause = parse_returning_clause();
+
+    // FIXME: Parse 'upsert-clause'.
+
+    if (!chained_expressions.is_empty())
+        return create_ast_node<Insert>(move(common_table_expression_list), conflict_resolution, move(schema_name), move(table_name), move(alias), move(column_names), move(chained_expressions));
+    if (!select_statement.is_null())
+        return create_ast_node<Insert>(move(common_table_expression_list), conflict_resolution, move(schema_name), move(table_name), move(alias), move(column_names), move(select_statement));
+
+    return create_ast_node<Insert>(move(common_table_expression_list), conflict_resolution, move(schema_name), move(table_name), move(alias), move(column_names));
+}
+
+NonnullRefPtr<Delete> Parser::parse_update_statement(RefPtr<CommonTableExpressionList> common_table_expression_list)
+{
+    // https://sqlite.org/lang_update.html
+    consume(TokenType::Update);
+    auto conflict_resolution = parse_conflict_resolution();
+    auto qualified_table_name = parse_qualified_table_name();
+    consume(TokenType::Set);
+
+    Vector<Update::UpdateColumns> update_columns;
+    parse_comma_separated_list(false, [&]() {
+        Vector<String> column_names;
+        if (match(TokenType::ParenOpen)) {
+            parse_comma_separated_list(true, [&]() { column_names.append(consume(TokenType::Identifier).value()); });
+        } else {
+            column_names.append(consume(TokenType::Identifier).value());
+        }
+
+        consume(TokenType::Equals);
+        update_columns.append({ move(column_names), parse_expression() });
+    });
+
+    NonnullRefPtrVector<TableOrSubquery> table_or_subquery_list;
+    if (consume_if(TokenType::From)) {
+        // FIXME: Parse join-clause.
+        parse_comma_separated_list(false, [&]() { table_or_subquery_list.append(parse_table_or_subquery()); });
+    }
+
+    RefPtr<Expression> where_clause;
+    if (consume_if(TokenType::Where))
+        where_clause = parse_expression();
+
+    RefPtr<ReturningClause> returning_clause;
+    if (match(TokenType::Returning))
+        returning_clause = parse_returning_clause();
+
+    return create_ast_node<Update>(move(common_table_expression_list), conflict_resolution, move(qualified_table_name), move(update_columns), move(table_or_subquery_list), move(where_clause), move(returning_clause));
 }
 
 NonnullRefPtr<Delete> Parser::parse_delete_statement(RefPtr<CommonTableExpressionList> common_table_expression_list)
@@ -147,8 +262,6 @@ NonnullRefPtr<Delete> Parser::parse_delete_statement(RefPtr<CommonTableExpressio
     if (match(TokenType::Returning))
         returning_clause = parse_returning_clause();
 
-    consume(TokenType::SemiColon);
-
     return create_ast_node<Delete>(move(common_table_expression_list), move(qualified_table_name), move(where_clause), move(returning_clause));
 }
 
@@ -161,23 +274,12 @@ NonnullRefPtr<Select> Parser::parse_select_statement(RefPtr<CommonTableExpressio
     consume_if(TokenType::All); // ALL is the default, so ignore it if specified.
 
     NonnullRefPtrVector<ResultColumn> result_column_list;
-    do {
-        result_column_list.append(parse_result_column());
-        if (!match(TokenType::Comma))
-            break;
-        consume(TokenType::Comma);
-    } while (!match(TokenType::Eof));
+    parse_comma_separated_list(false, [&]() { result_column_list.append(parse_result_column()); });
 
     NonnullRefPtrVector<TableOrSubquery> table_or_subquery_list;
     if (consume_if(TokenType::From)) {
         // FIXME: Parse join-clause.
-
-        do {
-            table_or_subquery_list.append(parse_table_or_subquery());
-            if (!match(TokenType::Comma))
-                break;
-            consume(TokenType::Comma);
-        } while (!match(TokenType::Eof));
+        parse_comma_separated_list(false, [&]() { table_or_subquery_list.append(parse_table_or_subquery()); });
     }
 
     RefPtr<Expression> where_clause;
@@ -189,18 +291,15 @@ NonnullRefPtr<Select> Parser::parse_select_statement(RefPtr<CommonTableExpressio
         consume(TokenType::By);
 
         NonnullRefPtrVector<Expression> group_by_list;
-        do {
-            group_by_list.append(parse_expression());
-            if (!match(TokenType::Comma))
-                break;
-            consume(TokenType::Comma);
-        } while (!match(TokenType::Eof));
+        parse_comma_separated_list(false, [&]() { group_by_list.append(parse_expression()); });
 
-        RefPtr<Expression> having_clause;
-        if (consume_if(TokenType::Having))
-            having_clause = parse_expression();
+        if (!group_by_list.is_empty()) {
+            RefPtr<Expression> having_clause;
+            if (consume_if(TokenType::Having))
+                having_clause = parse_expression();
 
-        group_by_clause = create_ast_node<GroupByClause>(move(group_by_list), move(having_clause));
+            group_by_clause = create_ast_node<GroupByClause>(move(group_by_list), move(having_clause));
+        }
     }
 
     // FIXME: Parse 'WINDOW window-name AS window-defn'.
@@ -209,13 +308,7 @@ NonnullRefPtr<Select> Parser::parse_select_statement(RefPtr<CommonTableExpressio
     NonnullRefPtrVector<OrderingTerm> ordering_term_list;
     if (consume_if(TokenType::Order)) {
         consume(TokenType::By);
-
-        do {
-            ordering_term_list.append(parse_ordering_term());
-            if (!match(TokenType::Comma))
-                break;
-            consume(TokenType::Comma);
-        } while (!match(TokenType::Eof));
+        parse_comma_separated_list(false, [&]() { ordering_term_list.append(parse_ordering_term()); });
     }
 
     RefPtr<LimitClause> limit_clause;
@@ -235,8 +328,6 @@ NonnullRefPtr<Select> Parser::parse_select_statement(RefPtr<CommonTableExpressio
         limit_clause = create_ast_node<LimitClause>(move(limit_expression), move(offset_expression));
     }
 
-    consume(TokenType::SemiColon);
-
     return create_ast_node<Select>(move(common_table_expression_list), select_all, move(result_column_list), move(table_or_subquery_list), move(where_clause), move(group_by_clause), move(ordering_term_list), move(limit_clause));
 }
 
@@ -246,13 +337,7 @@ NonnullRefPtr<CommonTableExpressionList> Parser::parse_common_table_expression_l
     bool recursive = consume_if(TokenType::Recursive);
 
     NonnullRefPtrVector<CommonTableExpression> common_table_expression;
-    do {
-        common_table_expression.append(parse_common_table_expression());
-        if (!match(TokenType::Comma))
-            break;
-
-        consume(TokenType::Comma);
-    } while (!match(TokenType::Eof));
+    parse_comma_separated_list(false, [&]() { common_table_expression.append(parse_common_table_expression()); });
 
     return create_ast_node<CommonTableExpressionList>(recursive, move(common_table_expression));
 }
@@ -267,7 +352,6 @@ NonnullRefPtr<Expression> Parser::parse_expression()
 
     // FIXME: Parse 'bind-parameter'.
     // FIXME: Parse 'function-name'.
-    // FIXME: Parse 'exists'.
     // FIXME: Parse 'raise-function'.
 
     return expression;
@@ -291,6 +375,9 @@ NonnullRefPtr<Expression> Parser::parse_primary_expression()
         return move(expression.value());
 
     if (auto expression = parse_case_expression(); expression.has_value())
+        return move(expression.value());
+
+    if (auto expression = parse_exists_expression(false); expression.has_value())
         return move(expression.value());
 
     expected("Primary Expression");
@@ -433,8 +520,12 @@ Optional<NonnullRefPtr<Expression>> Parser::parse_unary_operator_expression()
     if (consume_if(TokenType::Tilde))
         return create_ast_node<UnaryOperatorExpression>(UnaryOperator::BitwiseNot, parse_expression());
 
-    if (consume_if(TokenType::Not))
-        return create_ast_node<UnaryOperatorExpression>(UnaryOperator::Not, parse_expression());
+    if (consume_if(TokenType::Not)) {
+        if (match(TokenType::Exists))
+            return parse_exists_expression(true);
+        else
+            return create_ast_node<UnaryOperatorExpression>(UnaryOperator::Not, parse_expression());
+    }
 
     return {};
 }
@@ -500,20 +591,14 @@ Optional<NonnullRefPtr<Expression>> Parser::parse_binary_operator_expression(Non
 
 Optional<NonnullRefPtr<Expression>> Parser::parse_chained_expression()
 {
-    if (!match(TokenType::ParenOpen))
+    if (!consume_if(TokenType::ParenOpen))
         return {};
 
+    if (match(TokenType::Select))
+        return parse_exists_expression(false, TokenType::Select);
+
     NonnullRefPtrVector<Expression> expressions;
-    consume(TokenType::ParenOpen);
-
-    do {
-        expressions.append(parse_expression());
-        if (match(TokenType::ParenClose))
-            break;
-
-        consume(TokenType::Comma);
-    } while (!match(TokenType::Eof));
-
+    parse_comma_separated_list(false, [&]() { expressions.append(parse_expression()); });
     consume(TokenType::ParenClose);
 
     return create_ast_node<ChainedExpression>(move(expressions));
@@ -566,6 +651,21 @@ Optional<NonnullRefPtr<Expression>> Parser::parse_case_expression()
 
     consume(TokenType::End);
     return create_ast_node<CaseExpression>(move(case_expression), move(when_then_clauses), move(else_expression));
+}
+
+Optional<NonnullRefPtr<Expression>> Parser::parse_exists_expression(bool invert_expression, TokenType opening_token)
+{
+    VERIFY((opening_token == TokenType::Exists) || (opening_token == TokenType::Select));
+
+    if ((opening_token == TokenType::Exists) && !consume_if(TokenType::Exists))
+        return {};
+
+    if (opening_token == TokenType::Exists)
+        consume(TokenType::ParenOpen);
+    auto select_statement = parse_select_statement({});
+    consume(TokenType::ParenClose);
+
+    return create_ast_node<ExistsExpression>(move(select_statement), invert_expression);
 }
 
 Optional<NonnullRefPtr<Expression>> Parser::parse_collate_expression(NonnullRefPtr<Expression> expression)
@@ -662,23 +762,15 @@ Optional<NonnullRefPtr<Expression>> Parser::parse_in_expression(NonnullRefPtr<Ex
 
     if (consume_if(TokenType::ParenOpen)) {
         if (match(TokenType::Select)) {
-            // FIXME: Parse "select-stmt".
-            return {};
+            auto select_statement = parse_select_statement({});
+            return create_ast_node<InSelectionExpression>(move(expression), move(select_statement), invert_expression);
         }
 
         // FIXME: Consolidate this with parse_chained_expression(). That method consumes the opening paren as
         //        well, and also requires at least one expression (whereas this allows for an empty chain).
         NonnullRefPtrVector<Expression> expressions;
-
-        if (!match(TokenType::ParenClose)) {
-            do {
-                expressions.append(parse_expression());
-                if (match(TokenType::ParenClose))
-                    break;
-
-                consume(TokenType::Comma);
-            } while (!match(TokenType::Eof));
-        }
+        if (!match(TokenType::ParenClose))
+            parse_comma_separated_list(false, [&]() { expressions.append(parse_expression()); });
 
         consume(TokenType::ParenClose);
 
@@ -686,16 +778,9 @@ Optional<NonnullRefPtr<Expression>> Parser::parse_in_expression(NonnullRefPtr<Ex
         return create_ast_node<InChainedExpression>(move(expression), move(chain), invert_expression);
     }
 
-    String schema_or_table_name = consume(TokenType::Identifier).value();
     String schema_name;
     String table_name;
-
-    if (consume_if(TokenType::Period)) {
-        schema_name = move(schema_or_table_name);
-        table_name = consume(TokenType::Identifier).value();
-    } else {
-        table_name = move(schema_or_table_name);
-    }
+    parse_schema_and_table_name(schema_name, table_name);
 
     if (match(TokenType::ParenOpen)) {
         // FIXME: Parse "table-function".
@@ -763,39 +848,23 @@ NonnullRefPtr<CommonTableExpression> Parser::parse_common_table_expression()
     auto table_name = consume(TokenType::Identifier).value();
 
     Vector<String> column_names;
-    if (consume_if(TokenType::ParenOpen)) {
-        do {
-            column_names.append(consume(TokenType::Identifier).value());
-            if (match(TokenType::ParenClose))
-                break;
-
-            consume(TokenType::Comma);
-        } while (!match(TokenType::Eof));
-
-        consume(TokenType::ParenClose);
-    }
+    if (match(TokenType::ParenOpen))
+        parse_comma_separated_list(true, [&]() { column_names.append(consume(TokenType::Identifier).value()); });
 
     consume(TokenType::As);
     consume(TokenType::ParenOpen);
-    // FIXME: Parse "select-stmt".
+    auto select_statement = parse_select_statement({});
     consume(TokenType::ParenClose);
 
-    return create_ast_node<CommonTableExpression>(move(table_name), move(column_names));
+    return create_ast_node<CommonTableExpression>(move(table_name), move(column_names), move(select_statement));
 }
 
 NonnullRefPtr<QualifiedTableName> Parser::parse_qualified_table_name()
 {
     // https://sqlite.org/syntax/qualified-table-name.html
-    String schema_or_table_name = consume(TokenType::Identifier).value();
     String schema_name;
     String table_name;
-
-    if (consume_if(TokenType::Period)) {
-        schema_name = move(schema_or_table_name);
-        table_name = consume(TokenType::Identifier).value();
-    } else {
-        table_name = move(schema_or_table_name);
-    }
+    parse_schema_and_table_name(schema_name, table_name);
 
     String alias;
     if (consume_if(TokenType::As))
@@ -818,22 +887,15 @@ NonnullRefPtr<ReturningClause> Parser::parse_returning_clause()
         return create_ast_node<ReturningClause>();
 
     Vector<ReturningClause::ColumnClause> columns;
-
-    do {
+    parse_comma_separated_list(false, [&]() {
         auto expression = parse_expression();
 
-        consume_if(TokenType::As); // 'AS' is optional.
-
         String column_alias;
-        if (match(TokenType::Identifier))
-            column_alias = consume().value();
+        if (consume_if(TokenType::As) || match(TokenType::Identifier))
+            column_alias = consume(TokenType::Identifier).value();
 
         columns.append({ move(expression), move(column_alias) });
-        if (!match(TokenType::Comma))
-            break;
-
-        consume(TokenType::Comma);
-    } while (!match(TokenType::Eof));
+    });
 
     return create_ast_node<ReturningClause>(move(columns));
 }
@@ -860,11 +922,10 @@ NonnullRefPtr<ResultColumn> Parser::parse_result_column()
     auto expression = table_name.is_null()
         ? parse_expression()
         : static_cast<NonnullRefPtr<Expression>>(*parse_column_name_expression(move(table_name), parsed_period));
-    consume_if(TokenType::As); // 'AS' is optional.
 
     String column_alias;
-    if (match(TokenType::Identifier))
-        column_alias = consume().value();
+    if (consume_if(TokenType::As) || match(TokenType::Identifier))
+        column_alias = consume(TokenType::Identifier).value();
 
     return create_ast_node<ResultColumn>(move(expression), move(column_alias));
 }
@@ -873,38 +934,21 @@ NonnullRefPtr<TableOrSubquery> Parser::parse_table_or_subquery()
 {
     // https://sqlite.org/syntax/table-or-subquery.html
     if (match(TokenType::Identifier)) {
-        String schema_or_table_name = consume().value();
         String schema_name;
         String table_name;
-
-        if (consume_if(TokenType::Period)) {
-            schema_name = move(schema_or_table_name);
-            table_name = consume(TokenType::Identifier).value();
-        } else {
-            table_name = move(schema_or_table_name);
-        }
-
-        consume_if(TokenType::As); // 'AS' is optional.
+        parse_schema_and_table_name(schema_name, table_name);
 
         String table_alias;
-        if (match(TokenType::Identifier))
-            table_alias = consume().value();
+        if (consume_if(TokenType::As) || match(TokenType::Identifier))
+            table_alias = consume(TokenType::Identifier).value();
 
         return create_ast_node<TableOrSubquery>(move(schema_name), move(table_name), move(table_alias));
     }
 
-    consume(TokenType::ParenOpen);
     // FIXME: Parse join-clause.
 
     NonnullRefPtrVector<TableOrSubquery> subqueries;
-    while (!has_errors() && !match(TokenType::Eof)) {
-        subqueries.append(parse_table_or_subquery());
-        if (!match(TokenType::Comma))
-            break;
-        consume(TokenType::Comma);
-    }
-
-    consume(TokenType::ParenClose);
+    parse_comma_separated_list(true, [&]() { subqueries.append(parse_table_or_subquery()); });
 
     return create_ast_node<TableOrSubquery>(move(subqueries));
 }
@@ -937,6 +981,39 @@ NonnullRefPtr<OrderingTerm> Parser::parse_ordering_term()
     }
 
     return create_ast_node<OrderingTerm>(move(expression), move(collation_name), order, nulls);
+}
+
+void Parser::parse_schema_and_table_name(String& schema_name, String& table_name)
+{
+    String schema_or_table_name = consume(TokenType::Identifier).value();
+
+    if (consume_if(TokenType::Period)) {
+        schema_name = move(schema_or_table_name);
+        table_name = consume(TokenType::Identifier).value();
+    } else {
+        table_name = move(schema_or_table_name);
+    }
+}
+
+ConflictResolution Parser::parse_conflict_resolution()
+{
+    // https://sqlite.org/lang_conflict.html
+    if (consume_if(TokenType::Or)) {
+        if (consume_if(TokenType::Abort))
+            return ConflictResolution::Abort;
+        if (consume_if(TokenType::Fail))
+            return ConflictResolution::Fail;
+        if (consume_if(TokenType::Ignore))
+            return ConflictResolution::Ignore;
+        if (consume_if(TokenType::Replace))
+            return ConflictResolution::Replace;
+        if (consume_if(TokenType::Rollback))
+            return ConflictResolution::Rollback;
+
+        expected("ABORT, FAIL, IGNORE, REPLACE, or ROLLBACK");
+    }
+
+    return ConflictResolution::Abort;
 }
 
 Token Parser::consume()

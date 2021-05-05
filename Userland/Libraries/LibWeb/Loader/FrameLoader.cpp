@@ -82,7 +82,7 @@ static bool build_image_document(DOM::Document& document, const ByteBuffer& data
     head_element->append_child(title_element);
 
     auto basename = LexicalPath(document.url().path()).basename();
-    auto title_text = adopt(*new DOM::Text(document, String::formatted("{} [{}x{}]", basename, bitmap->width(), bitmap->height())));
+    auto title_text = adopt_ref(*new DOM::Text(document, String::formatted("{} [{}x{}]", basename, bitmap->width(), bitmap->height())));
     title_element->append_child(title_text);
 
     auto body_element = document.create_element("body");
@@ -101,10 +101,8 @@ static bool build_gemini_document(DOM::Document& document, const ByteBuffer& dat
     auto gemini_document = Gemini::Document::parse(gemini_data, document.url());
     String html_data = gemini_document->render_to_html();
 
-#if GEMINI_DEBUG
-    dbgln("Gemini data:\n\"\"\"{}\"\"\"", gemini_data);
-    dbgln("Converted to HTML:\n\"\"\"{}\"\"\"", html_data);
-#endif
+    dbgln_if(GEMINI_DEBUG, "Gemini data:\n\"\"\"{}\"\"\"", gemini_data);
+    dbgln_if(GEMINI_DEBUG, "Converted to HTML:\n\"\"\"{}\"\"\"", html_data);
 
     HTML::HTMLDocumentParser parser(document, html_data, "utf-8");
     parser.run(document.url());
@@ -238,7 +236,7 @@ void FrameLoader::resource_did_load()
         return;
     }
 
-    dbgln("I believe this content has MIME type '{}', , encoding '{}'", resource()->mime_type(), resource()->encoding());
+    dbgln("I believe this content has MIME type '{}', encoding '{}'", resource()->mime_type(), resource()->encoding());
 
     auto document = DOM::Document::create();
     document->set_url(url);

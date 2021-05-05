@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -68,15 +68,19 @@ enum class WindowMenuDefaultAction {
     Restore
 };
 
-class Window final : public Core::Object
+class Window final
+    : public Core::Object
     , public InlineLinkedListNode<Window> {
-    C_OBJECT(Window)
+    C_OBJECT(Window);
+
 public:
-    Window(ClientConnection&, WindowType, int window_id, bool modal, bool minimizable, bool frameless, bool resizable, bool fullscreen, bool accessory, Window* parent_window = nullptr);
-    Window(Core::Object&, WindowType);
     virtual ~Window() override;
 
+    bool is_modified() const { return m_modified; }
+    void set_modified(bool);
+
     void popup_window_menu(const Gfx::IntPoint&, WindowMenuDefaultAction);
+    void handle_window_menu_action(WindowMenuAction);
     void window_menu_activate_default();
     void request_close();
 
@@ -263,7 +267,6 @@ public:
     void recalculate_rect();
 
     // For InlineLinkedList.
-    // FIXME: Maybe make a ListHashSet and then WindowManager can just use that.
     Window* m_next { nullptr };
     Window* m_prev { nullptr };
 
@@ -291,16 +294,14 @@ public:
 
     bool should_show_menubar() const { return m_should_show_menubar; }
 
-    int progress() const { return m_progress; }
-    void set_progress(int);
+    Optional<int> progress() const { return m_progress; }
+    void set_progress(Optional<int>);
 
     bool is_destroyed() const { return m_destroyed; }
     void destroy();
 
     bool default_positioned() const { return m_default_positioned; }
     void set_default_positioned(bool p) { m_default_positioned = p; }
-
-    bool is_invalidated() const { return m_invalidated; }
 
     bool is_opaque() const
     {
@@ -320,6 +321,9 @@ public:
     void set_menubar(Menubar*);
 
 private:
+    Window(ClientConnection&, WindowType, int window_id, bool modal, bool minimizable, bool frameless, bool resizable, bool fullscreen, bool accessory, Window* parent_window = nullptr);
+    Window(Core::Object&, WindowType);
+
     virtual void event(Core::Event&) override;
     void handle_mouse_event(const MouseEvent&);
     void handle_keydown_event(const KeyEvent&);
@@ -367,6 +371,7 @@ private:
     bool m_invalidated_all { true };
     bool m_invalidated_frame { true };
     bool m_hit_testing_enabled { true };
+    bool m_modified { false };
     WindowTileType m_tiled { WindowTileType::None };
     Gfx::IntRect m_untiled_rect;
     bool m_occluded { false };
@@ -394,7 +399,7 @@ private:
     MenuItem* m_window_menu_close_item { nullptr };
     MenuItem* m_window_menu_menubar_visibility_item { nullptr };
     int m_minimize_animation_step { -1 };
-    int m_progress { -1 };
+    Optional<int> m_progress;
     bool m_should_show_menubar { true };
 };
 

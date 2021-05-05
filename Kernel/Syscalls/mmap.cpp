@@ -6,6 +6,7 @@
  */
 
 #include <AK/WeakPtr.h>
+#include <Kernel/Arch/x86/SmapDisabler.h>
 #include <Kernel/FileSystem/FileDescription.h>
 #include <Kernel/PerformanceEventBuffer.h>
 #include <Kernel/Process.h>
@@ -49,8 +50,8 @@ static bool should_make_executable_exception_for_dynamic_loader(bool make_readab
 
     Elf32_Ehdr header;
     auto buffer = UserOrKernelBuffer::for_kernel_buffer((u8*)&header);
-    auto nread = inode.read_bytes(0, sizeof(header), buffer, nullptr);
-    if (nread != sizeof(header))
+    auto result = inode.read_bytes(0, sizeof(header), buffer, nullptr);
+    if (result.is_error() || result.value() != sizeof(header))
         return false;
 
     // The file is a valid ELF binary
@@ -246,6 +247,12 @@ KResultOr<FlatPtr> Process::sys$mmap(Userspace<const Syscall::SC_mmap_params*> u
 
     if (!region)
         return ENOMEM;
+
+    if (auto* event_buffer = current_perf_events_buffer()) {
+        [[maybe_unused]] auto res = event_buffer->append(PERF_EVENT_MMAP, region->vaddr().get(),
+            region->size(), name.is_null() ? region->name() : name);
+    }
+
     region->set_mmap(true);
     if (map_shared)
         region->set_shared(true);
@@ -430,6 +437,9 @@ KResultOr<int> Process::sys$set_mmap_name(Userspace<const Syscall::SC_set_mmap_n
         return EINVAL;
     if (!region->is_mmap())
         return EPERM;
+    if (auto* event_buffer = current_perf_events_buffer()) {
+        [[maybe_unused]] auto res = event_buffer->append(PERF_EVENT_MMAP, region->vaddr().get(), region->size(), name.characters());
+    }
     region->set_name(move(name));
     return 0;
 }
@@ -453,8 +463,13 @@ KResultOr<int> Process::sys$munmap(Userspace<void*> addr, size_t size)
     if (auto* whole_region = space().find_region_from_range(range_to_unmap)) {
         if (!whole_region->is_mmap())
             return EPERM;
+        auto base = whole_region->vaddr();
+        auto size = whole_region->size();
         bool success = space().deallocate_region(*whole_region);
         VERIFY(success);
+        if (auto* event_buffer = current_perf_events_buffer()) {
+            [[maybe_unused]] auto res = event_buffer->append(PERF_EVENT_MUNMAP, base.get(), size, nullptr);
+        }
         return 0;
     }
 
@@ -479,6 +494,11 @@ KResultOr<int> Process::sys$munmap(Userspace<void*> addr, size_t size)
         for (auto* new_region : new_regions) {
             new_region->map(space().page_directory());
         }
+
+        if (auto* event_buffer = current_perf_events_buffer()) {
+            [[maybe_unused]] auto res = event_buffer->append(PERF_EVENT_MUNMAP, range_to_unmap.base().get(), range_to_unmap.size(), nullptr);
+        }
+
         return 0;
     }
 
@@ -486,7 +506,7 @@ KResultOr<int> Process::sys$munmap(Userspace<void*> addr, size_t size)
     // slow: without caching
     const auto& regions = space().find_regions_intersecting(range_to_unmap);
 
-    // check if any of the regions is not mmapped, to not accientally
+    // Check if any of the regions is not mmapped, to not accidentally
     // error-out with just half a region map left
     for (auto* region : regions) {
         if (!region->is_mmap())
@@ -511,14 +531,19 @@ KResultOr<int> Process::sys$munmap(Userspace<void*> addr, size_t size)
         // We manually unmap the old region here, specifying that we *don't* want the VM deallocated.
         region->unmap(Region::ShouldDeallocateVirtualMemoryRange::No);
 
-        // otherwise just split the regions and collect them for future mapping
-        new_regions.append(space().split_region_around_range(*region, range_to_unmap));
+        // Otherwise just split the regions and collect them for future mapping
+        if (new_regions.try_append(space().split_region_around_range(*region, range_to_unmap)))
+            return ENOMEM;
     }
     // Instead we give back the unwanted VM manually at the end.
     space().page_directory().range_allocator().deallocate(range_to_unmap);
     // And finally we map the new region(s) using our page directory (they were just allocated and don't have one).
     for (auto* new_region : new_regions) {
         new_region->map(space().page_directory());
+    }
+
+    if (auto* event_buffer = current_perf_events_buffer()) {
+        [[maybe_unused]] auto res = event_buffer->append(PERF_EVENT_MUNMAP, range_to_unmap.base().get(), range_to_unmap.size(), nullptr);
     }
 
     return 0;
@@ -571,11 +596,11 @@ KResultOr<FlatPtr> Process::sys$mremap(Userspace<const Syscall::SC_mremap_params
     return ENOTIMPL;
 }
 
-KResultOr<FlatPtr> Process::sys$allocate_tls(size_t size)
+KResultOr<FlatPtr> Process::sys$allocate_tls(Userspace<const char*> initial_data, size_t size)
 {
     REQUIRE_PROMISE(stdio);
 
-    if (!size)
+    if (!size || size % PAGE_SIZE != 0)
         return EINVAL;
 
     if (!m_master_tls_region.is_null())
@@ -595,13 +620,20 @@ KResultOr<FlatPtr> Process::sys$allocate_tls(size_t size)
     if (!range.has_value())
         return ENOMEM;
 
-    auto region_or_error = space().allocate_region(range.value(), String(), PROT_READ | PROT_WRITE);
+    auto region_or_error = space().allocate_region(range.value(), String("Master TLS"), PROT_READ | PROT_WRITE);
     if (region_or_error.is_error())
         return region_or_error.error().error();
 
     m_master_tls_region = region_or_error.value()->make_weak_ptr();
     m_master_tls_size = size;
     m_master_tls_alignment = PAGE_SIZE;
+
+    {
+        Kernel::SmapDisabler disabler;
+        void* fault_at;
+        if (!Kernel::safe_memcpy((char*)m_master_tls_region.unsafe_ptr()->vaddr().as_ptr(), (char*)initial_data.ptr(), size, fault_at))
+            return EFAULT;
+    }
 
     auto tsr_result = main_thread->make_thread_specific_region({});
     if (tsr_result.is_error())

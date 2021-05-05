@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, The SerenityOS developers.
+ * Copyright (c) 2020, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -46,7 +46,8 @@
     __ENUMERATE_SHELL_BUILTIN(fg)      \
     __ENUMERATE_SHELL_BUILTIN(bg)      \
     __ENUMERATE_SHELL_BUILTIN(wait)    \
-    __ENUMERATE_SHELL_BUILTIN(dump)
+    __ENUMERATE_SHELL_BUILTIN(dump)    \
+    __ENUMERATE_SHELL_BUILTIN(kill)
 
 #define ENUMERATE_SHELL_OPTIONS()                                                                                    \
     __ENUMERATE_SHELL_OPTION(inline_exec_keep_empty_segments, false, "Keep empty segments in inline execute $(...)") \
@@ -102,6 +103,8 @@ public:
     Vector<AST::Command> expand_aliases(Vector<AST::Command>);
     String resolve_path(String) const;
     String resolve_alias(const String&) const;
+
+    static String find_in_path(const StringView& program_name);
 
     static bool has_history_event(StringView);
 
@@ -175,7 +178,7 @@ public:
     void restore_ios();
 
     u64 find_last_job_id() const;
-    const Job* find_job(u64 id);
+    const Job* find_job(u64 id, bool is_pid = false);
     const Job* current_job() const { return m_current_job; }
     void kill_job(const Job*, int sig);
 
@@ -271,6 +274,7 @@ private:
     void save_to(JsonObject&);
     void bring_cursor_to_beginning_of_a_line() const;
 
+    Optional<int> resolve_job_spec(const String&);
     void cache_path();
     void add_entry_to_cache(const String&);
     void stop_all_jobs();

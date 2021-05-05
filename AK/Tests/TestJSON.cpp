@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/TestSuite.h>
+#include <LibTest/TestCase.h>
 
 #include <AK/HashMap.h>
 #include <AK/JsonArray.h>
@@ -44,29 +44,6 @@ TEST_CASE(load_form)
         widget_object.for_each_member([&]([[maybe_unused]] auto& property_name, [[maybe_unused]] const JsonValue& property_value) {
         });
     });
-}
-
-BENCHMARK_CASE(load_4chan_catalog)
-{
-    FILE* fp = fopen("4chan_catalog.json", "r");
-    VERIFY(fp);
-
-    StringBuilder builder;
-    for (;;) {
-        char buffer[1024];
-        if (!fgets(buffer, sizeof(buffer), fp))
-            break;
-        builder.append(buffer);
-    }
-
-    fclose(fp);
-
-    auto json_string = builder.to_string();
-
-    for (int i = 0; i < 10; ++i) {
-        JsonValue form_json = JsonValue::from_string(json_string).value();
-        EXPECT(form_json.is_array());
-    }
 }
 
 TEST_CASE(json_empty_string)
@@ -121,5 +98,3 @@ TEST_CASE(json_duplicate_keys)
     json.set("test", "baz");
     EXPECT_EQ(json.to_string(), "{\"test\":\"baz\"}");
 }
-
-TEST_MAIN(JSON)

@@ -79,6 +79,7 @@ namespace Kernel {
     S(setegid)                \
     S(setuid)                 \
     S(setgid)                 \
+    S(setreuid)               \
     S(setresuid)              \
     S(setresgid)              \
     S(alarm)                  \
@@ -120,6 +121,7 @@ namespace Kernel {
     S(beep)                   \
     S(getsockname)            \
     S(getpeername)            \
+    S(socketpair)             \
     S(sched_setparam)         \
     S(sched_getparam)         \
     S(fchown)                 \
@@ -291,6 +293,13 @@ struct SC_getpeername_params {
     int sockfd;
     sockaddr* addr;
     socklen_t* addrlen;
+};
+
+struct SC_socketpair_params {
+    int domain;
+    int type;
+    int protocol;
+    int* sv;
 };
 
 struct SC_futex_params {

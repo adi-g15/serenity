@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/TestSuite.h>
+#include <LibTest/TestCase.h>
 
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
@@ -167,7 +167,6 @@ TEST_CASE(pointers)
 // This is a bit scary, thus this test. At least this test should fail in this case.
 TEST_CASE(ensure_that_format_works)
 {
-
     if (String::formatted("FAIL") != "FAIL") {
         fprintf(stderr, "FAIL\n");
         exit(1);
@@ -290,5 +289,3 @@ TEST_CASE(long_long_regression)
 
     EXPECT_EQ(builder.string_view(), "81985529216486895");
 }
-
-TEST_MAIN(Format)

@@ -16,15 +16,15 @@
 
 namespace ELF {
 
-static const char* name_for_dtag(Elf32_Sword d_tag);
+static const char* name_for_dtag(ElfW(Sword) d_tag);
 
 DynamicObject::DynamicObject(const String& filename, VirtualAddress base_address, VirtualAddress dynamic_section_address)
     : m_filename(filename)
     , m_base_address(base_address)
     , m_dynamic_address(dynamic_section_address)
 {
-    auto* header = (Elf32_Ehdr*)base_address.as_ptr();
-    auto* pheader = (Elf32_Phdr*)(base_address.as_ptr() + header->e_phoff);
+    auto* header = (ElfW(Ehdr)*)base_address.as_ptr();
+    auto* pheader = (ElfW(Phdr)*)(base_address.as_ptr() + header->e_phoff);
     m_elf_base_address = VirtualAddress(pheader->p_vaddr - pheader->p_offset);
     if (header->e_type == ET_DYN)
         m_is_elf_dynamic = true;
@@ -36,6 +36,7 @@ DynamicObject::DynamicObject(const String& filename, VirtualAddress base_address
 
 DynamicObject::~DynamicObject()
 {
+    // TODO: unmap the object
 }
 
 void DynamicObject::dump() const
@@ -177,7 +178,7 @@ void DynamicObject::parse()
         // TODO: FIXME, this shouldn't be hardcoded
         // The reason we need this here is that for some reason, when there only PLT relocations, the compiler
         // doesn't insert a 'PLTRELSZ' entry to the dynamic section
-        m_size_of_relocation_entry = sizeof(Elf32_Rel);
+        m_size_of_relocation_entry = sizeof(ElfW(Rel));
     }
 
     auto hash_section_address = hash_section().address().as_ptr();
@@ -190,21 +191,21 @@ DynamicObject::Relocation DynamicObject::RelocationSection::relocation(unsigned 
 {
     VERIFY(index < entry_count());
     unsigned offset_in_section = index * entry_size();
-    auto relocation_address = (Elf32_Rel*)address().offset(offset_in_section).as_ptr();
+    auto relocation_address = (ElfW(Rel)*)address().offset(offset_in_section).as_ptr();
     return Relocation(m_dynamic, *relocation_address, offset_in_section);
 }
 
 DynamicObject::Relocation DynamicObject::RelocationSection::relocation_at_offset(unsigned offset) const
 {
     VERIFY(offset <= (m_section_size_bytes - m_entry_size));
-    auto relocation_address = (Elf32_Rel*)address().offset(offset).as_ptr();
+    auto relocation_address = (ElfW(Rel)*)address().offset(offset).as_ptr();
     return Relocation(m_dynamic, *relocation_address, offset);
 }
 
 DynamicObject::Symbol DynamicObject::symbol(unsigned index) const
 {
     auto symbol_section = Section(*this, m_symbol_table_offset, (m_symbol_count * m_size_of_symbol_table_entry), m_size_of_symbol_table_entry, "DT_SYMTAB");
-    auto symbol_entry = (Elf32_Sym*)symbol_section.address().offset(index * symbol_section.entry_size()).as_ptr();
+    auto symbol_entry = (ElfW(Sym)*)symbol_section.address().offset(index * symbol_section.entry_size()).as_ptr();
     return Symbol(*this, index, *symbol_entry);
 }
 
@@ -238,16 +239,16 @@ DynamicObject::RelocationSection DynamicObject::plt_relocation_section() const
     return RelocationSection(Section(*this, m_plt_relocation_offset_location, m_size_of_plt_relocation_entry_list, m_size_of_relocation_entry, "DT_JMPREL"sv));
 }
 
-Elf32_Half DynamicObject::program_header_count() const
+ElfW(Half) DynamicObject::program_header_count() const
 {
-    auto* header = (const Elf32_Ehdr*)m_base_address.as_ptr();
+    auto* header = (const ElfW(Ehdr)*)m_base_address.as_ptr();
     return header->e_phnum;
 }
 
-const Elf32_Phdr* DynamicObject::program_headers() const
+const ElfW(Phdr) * DynamicObject::program_headers() const
 {
-    auto* header = (const Elf32_Ehdr*)m_base_address.as_ptr();
-    return (const Elf32_Phdr*)(m_base_address.as_ptr() + header->e_phoff);
+    auto* header = (const ElfW(Ehdr)*)m_base_address.as_ptr();
+    return (const ElfW(Phdr)*)(m_base_address.as_ptr() + header->e_phoff);
 }
 
 auto DynamicObject::HashSection::lookup_sysv_symbol(const StringView& name, u32 hash_value) const -> Optional<Symbol>
@@ -318,12 +319,12 @@ auto DynamicObject::HashSection::lookup_gnu_symbol(const StringView& name, u32 h
     return {};
 }
 
-StringView DynamicObject::symbol_string_table_string(Elf32_Word index) const
+StringView DynamicObject::symbol_string_table_string(ElfW(Word) index) const
 {
     return StringView { (const char*)base_address().offset(m_string_table_offset + index).as_ptr() };
 }
 
-const char* DynamicObject::raw_symbol_string_table_string(Elf32_Word index) const
+const char* DynamicObject::raw_symbol_string_table_string(ElfW(Word) index) const
 {
     return (const char*)base_address().offset(m_string_table_offset + index).as_ptr();
 }
@@ -334,7 +335,7 @@ DynamicObject::InitializationFunction DynamicObject::init_section_function() con
     return (InitializationFunction)init_section().address().as_ptr();
 }
 
-static const char* name_for_dtag(Elf32_Sword d_tag)
+static const char* name_for_dtag(ElfW(Sword) d_tag)
 {
     switch (d_tag) {
     case DT_NULL:
@@ -428,23 +429,23 @@ static const char* name_for_dtag(Elf32_Sword d_tag)
 
 auto DynamicObject::lookup_symbol(const StringView& name) const -> Optional<SymbolLookupResult>
 {
-    return lookup_symbol(name, compute_gnu_hash(name), compute_sysv_hash(name));
+    return lookup_symbol(HashSymbol { name });
 }
 
-auto DynamicObject::lookup_symbol(const StringView& name, u32 gnu_hash, u32 sysv_hash) const -> Optional<SymbolLookupResult>
+auto DynamicObject::lookup_symbol(const HashSymbol& symbol) const -> Optional<SymbolLookupResult>
 {
-    auto result = hash_section().lookup_symbol(name, gnu_hash, sysv_hash);
+    auto result = hash_section().lookup_symbol(symbol);
     if (!result.has_value())
         return {};
-    auto symbol = result.value();
-    if (symbol.is_undefined())
+    auto symbol_result = result.value();
+    if (symbol_result.is_undefined())
         return {};
-    return SymbolLookupResult { symbol.value(), symbol.address(), symbol.bind(), this };
+    return SymbolLookupResult { symbol_result.value(), symbol_result.size(), symbol_result.address(), symbol_result.bind(), this };
 }
 
 NonnullRefPtr<DynamicObject> DynamicObject::create(const String& filename, VirtualAddress base_address, VirtualAddress dynamic_section_address)
 {
-    return adopt(*new DynamicObject(filename, base_address, dynamic_section_address));
+    return adopt_ref(*new DynamicObject(filename, base_address, dynamic_section_address));
 }
 
 // offset is in PLT relocation table
@@ -469,4 +470,28 @@ VirtualAddress DynamicObject::patch_plt_entry(u32 relocation_offset)
     return symbol_location;
 }
 
+u32 DynamicObject::HashSymbol::gnu_hash() const
+{
+    if (!m_gnu_hash.has_value())
+        m_gnu_hash = compute_gnu_hash(m_name);
+    return m_gnu_hash.value();
+}
+
+u32 DynamicObject::HashSymbol::sysv_hash() const
+{
+    if (!m_sysv_hash.has_value())
+        m_sysv_hash = compute_sysv_hash(m_name);
+    return m_sysv_hash.value();
+}
+
+void* DynamicObject::symbol_for_name(const StringView& name)
+{
+    auto result = hash_section().lookup_symbol(name);
+    if (!result.has_value())
+        return nullptr;
+    auto symbol = result.value();
+    if (symbol.is_undefined())
+        return nullptr;
+    return base_address().offset(symbol.value()).as_ptr();
+}
 } // end namespace ELF

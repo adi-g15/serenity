@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, the SerenityOS developers
+ * Copyright (c) 2020, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -20,7 +20,6 @@ static void test_send(int);
 
 static void test(Function<void(int)> test_fn)
 {
-
     int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (fd < 0) {
         perror("socket");

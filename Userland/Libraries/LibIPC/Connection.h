@@ -14,6 +14,7 @@
 #include <LibCore/Notifier.h>
 #include <LibCore/Timer.h>
 #include <LibIPC/Message.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,8 +28,10 @@ namespace IPC {
 template<typename LocalEndpoint, typename PeerEndpoint>
 class Connection : public Core::Object {
 public:
-    Connection(LocalEndpoint& local_endpoint, NonnullRefPtr<Core::LocalSocket> socket)
-        : m_local_endpoint(local_endpoint)
+    using LocalStub = typename LocalEndpoint::Stub;
+
+    Connection(LocalStub& local_stub, NonnullRefPtr<Core::LocalSocket> socket)
+        : m_local_stub(local_stub)
         , m_socket(move(socket))
         , m_notifier(Core::Notifier::construct(m_socket->fd(), Core::Notifier::Read, this))
     {
@@ -48,19 +51,24 @@ public:
 
     void post_message(const Message& message)
     {
+        post_message(message.encode());
+    }
+
+    // FIXME: unnecessary copy
+    void post_message(MessageBuffer buffer)
+    {
         // NOTE: If this connection is being shut down, but has not yet been destroyed,
         //       the socket will be closed. Don't try to send more messages.
         if (!m_socket->is_open())
             return;
 
-        auto buffer = message.encode();
         // Prepend the message size.
         uint32_t message_size = buffer.data.size();
         buffer.data.prepend(reinterpret_cast<const u8*>(&message_size), sizeof(message_size));
 
 #ifdef __serenity__
-        for (int fd : buffer.fds) {
-            auto rc = sendfd(m_socket->fd(), fd);
+        for (auto& fd : buffer.fds) {
+            auto rc = sendfd(m_socket->fd(), fd->value());
             if (rc < 0) {
                 perror("sendfd");
                 shutdown();
@@ -242,13 +250,13 @@ protected:
         auto messages = move(m_unprocessed_messages);
         for (auto& message : messages) {
             if (message.endpoint_magic() == LocalEndpoint::static_magic())
-                if (auto response = m_local_endpoint.handle(message))
+                if (auto response = m_local_stub.handle(message))
                     post_message(*response);
         }
     }
 
 protected:
-    LocalEndpoint& m_local_endpoint;
+    LocalStub& m_local_stub;
     NonnullRefPtr<Core::LocalSocket> m_socket;
     RefPtr<Core::Timer> m_responsiveness_timer;
 

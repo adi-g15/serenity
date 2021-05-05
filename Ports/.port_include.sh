@@ -23,8 +23,12 @@ maybe_source() {
 
 enable_ccache() {
     if command -v ccache &>/dev/null; then
-        export CC="ccache ${CC}"
-        export CXX="ccache ${CXX}"
+        ccache_tooldir="${SERENITY_BUILD_DIR}/ccache"
+        mkdir -p "$ccache_tooldir"
+        for tool in gcc g++ c++; do
+            ln -sf "$(command -v ccache)" "${ccache_tooldir}/${SERENITY_ARCH}-pc-serenity-${tool}"
+        done
+        export PATH="${ccache_tooldir}:$PATH"
     fi
 }
 
@@ -48,12 +52,6 @@ host_env() {
 
 packagesdb="${DESTDIR}/usr/Ports/packages.db"
 
-MD5SUM=md5sum
-
-if [ `uname -s` = "OpenBSD" ]; then
-    MD5SUM="md5 -q"
-fi
-
 . "$@"
 shift
 
@@ -65,7 +63,7 @@ shift
 : "${useconfigure:=false}"
 : "${depends:=}"
 : "${patchlevel:=1}"
-: "${auth_type:=md5}"
+: "${auth_type:=}"
 : "${auth_import_key:=}"
 : "${auth_opts:=}"
 : "${launcher_name:=}"
@@ -117,59 +115,105 @@ func_defined post_fetch || post_fetch() {
     :
 }
 fetch() {
-    if [ "$auth_type" == "sig" ] && [ ! -z "${auth_import_key}" ]; then
+    if [ "$auth_type" = "sig" ] && [ ! -z "${auth_import_key}" ]; then
         # import gpg key if not existing locally
         # The default keyserver keys.openpgp.org prints "new key but contains no user ID - skipped"
         # and fails. Use a different key server.
         gpg --list-keys $auth_import_key || gpg --keyserver hkps://keyserver.ubuntu.com --recv-key $auth_import_key
     fi
 
+    tried_download_again=0
+
+    while true; do
+        OLDIFS=$IFS
+        IFS=$'\n'
+        for f in $files; do
+            IFS=$OLDIFS
+            read url filename auth_sum<<< $(echo "$f")
+            echo "Downloading URL: ${url}"
+
+            # FIXME: Serenity's curl port does not support https, even with openssl installed.
+            if which curl >/dev/null 2>&1 && ! curl https://example.com -so /dev/null; then
+                url=$(echo "$url" | sed "s/^https:\/\//http:\/\//")
+            fi
+
+            # download files
+            if [ -f "$filename" ]; then
+                echo "$filename already exists"
+            else
+                if which curl; then
+                    run_nocd curl ${curlopts:-} "$url" -L -o "$filename"
+                else
+                    run_nocd pro "$url" > "$filename"
+                fi
+            fi
+        done
+
+        verification_failed=0
+
+        OLDIFS=$IFS
+        IFS=$'\n'
+        for f in $files; do
+            IFS=$OLDIFS
+            read url filename auth_sum<<< $(echo "$f")
+
+            # check sha256sum if given
+            if [ "$auth_type" = "sha256" ]; then
+                echo "Expecting ${auth_type}sum: $auth_sum"
+                calc_sum="$(sha256sum $filename | cut -f1 -d' ')"
+                echo "${auth_type}sum($filename) = '$calc_sum'"
+                if [ "$calc_sum" != "$auth_sum" ]; then
+                    # remove downloaded file to re-download on next run
+                    rm -f $filename
+                    echo "${auth_type}sums mismatching, removed erronous download."
+                    if [ $tried_download_again -eq 1 ]; then
+                        echo "Please run script again."
+                        exit 1
+                    fi
+                    echo "Trying to download the files again."
+                    tried_download_again=1
+                    verification_failed=1
+                fi
+            fi
+        done
+
+        # check signature
+        if [ "$auth_type" = "sig" ]; then
+            if $NO_GPG; then
+                echo "WARNING: gpg signature check was disabled by --no-gpg-verification"
+            else
+                if $(gpg --verify $auth_opts); then
+                    echo "- Signature check OK."
+                else
+                    echo "- Signature check NOT OK"
+                    for f in $files; do
+                        rm -f $f
+                    done
+                    rm -rf "$workdir"
+                    echo "  Signature mismatching, removed erronous download."
+                    if [ $tried_download_again -eq 1 ]; then
+                        echo "Please run script again."
+                        exit 1
+                    fi
+                    echo "Trying to download the files again."
+                    tried_download_again=1
+                    verification_failed=1
+                fi
+            fi
+        fi
+
+        if [ $verification_failed -ne 1 ]; then
+            break
+        fi
+    done
+
+    # extract
     OLDIFS=$IFS
     IFS=$'\n'
     for f in $files; do
         IFS=$OLDIFS
         read url filename auth_sum<<< $(echo "$f")
-        echo "URL: ${url}"
 
-        # FIXME: Serenity's curl port does not support https, even with openssl installed.
-        if which curl && ! curl https://example.com -so /dev/null; then
-            url=$(echo "$url" | sed "s/^https:\/\//http:\/\//")
-        fi
-
-
-        # download files
-        if [ -f "$filename" ]; then
-            echo "$filename already exists"
-        else
-            if which curl; then
-                run_nocd curl ${curlopts:-} "$url" -L -o "$filename"
-            else
-                run_nocd pro "$url" > "$filename"
-            fi
-        fi
-
-        # check md5sum if given
-        if [ ! -z "$auth_sum" ]; then
-            if [ "$auth_type" == "md5" ] || [ "$auth_type" == "sha256" ] || [ "$auth_type" == "sha1" ]; then
-                echo "Expecting ${auth_type}sum: $auth_sum"
-                if [ "$auth_type" == "md5" ]; then
-                    calc_sum="$($MD5SUM $filename | cut -f1 -d' ')"
-                elif [ "$auth_type" == "sha256" ]; then
-                    calc_sum="$(sha256sum $filename | cut -f1 -d' ')"
-                elif [ "$auth_type" == "sha1" ]; then
-                    calc_sum="$(sha1sum $filename | cut -f1 -d' ')"
-                fi
-                echo "${auth_type}sum($filename) = '$calc_sum'"
-                if [ "$calc_sum" != "$auth_sum" ]; then
-                    # remove downloaded file to re-download on next run
-                    rm -f $filename
-                    echo "${auth_type}sum's mismatching, removed erronous download. Please run script again."
-                    exit 1
-                fi
-            fi
-        fi
-
-        # extract
         if [ ! -f "$workdir"/.${filename}_extracted ]; then
             case "$filename" in
                 *.tar.gz|*.tgz)
@@ -197,25 +241,6 @@ fetch() {
             esac
         fi
     done
-
-    # check signature
-    if [ "$auth_type" == "sig" ]; then
-        if $NO_GPG; then
-            echo "WARNING: gpg signature check was disabled by --no-gpg-verification"
-        else
-            if $(gpg --verify $auth_opts); then
-                echo "- Signature check OK."
-            else
-                echo "- Signature check NOT OK"
-                for f in $files; do
-                    rm -f $f
-                done
-                rm -rf "$workdir"
-                echo "  Signature mismatching, removed erronous download. Please run script again."
-                exit 1
-            fi
-        fi
-    fi
 
     post_fetch
 }
@@ -375,8 +400,12 @@ do_uninstall() {
     echo "Uninstalling $port!"
     uninstall
 }
-do_showdepends() {
-    echo -n $depends
+do_showproperty() {
+    if [ -z ${!1+x} ]; then
+        echo "Property '$1' is not set." >&2
+        exit 1
+    fi
+    echo ${!1}
 }
 do_all() {
     do_installdepends
@@ -393,8 +422,10 @@ parse_arguments() {
         do_all
     else
         case "$1" in
-            fetch|patch|configure|build|install|installdepends|clean|clean_dist|clean_all|uninstall|showdepends)
-                do_$1
+            fetch|patch|configure|build|install|installdepends|clean|clean_dist|clean_all|uninstall|showproperty)
+                method=$1
+                shift
+                do_${method} "$@"
                 ;;
             --auto)
                 do_all $1
@@ -405,7 +436,7 @@ parse_arguments() {
                 parse_arguments $@
                 ;;
             *)
-                >&2 echo "I don't understand $1! Supported arguments: fetch, patch, configure, build, install, installdepends, clean, clean_dist, clean_all, uninstall, showdepends."
+                >&2 echo "I don't understand $1! Supported arguments: fetch, patch, configure, build, install, installdepends, clean, clean_dist, clean_all, uninstall, showproperty."
                 exit 1
                 ;;
         esac

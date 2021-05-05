@@ -28,7 +28,7 @@ StyleProperties::StyleProperties(const StyleProperties& other)
 
 NonnullRefPtr<StyleProperties> StyleProperties::clone() const
 {
-    return adopt(*new StyleProperties(*this));
+    return adopt_ref(*new StyleProperties(*this));
 }
 
 void StyleProperties::set_property(CSS::PropertyID id, NonnullRefPtr<StyleValue> value)
@@ -576,6 +576,16 @@ Optional<CSS::ListStyleType> StyleProperties::list_style_type() const
         return CSS::ListStyleType::Square;
     case CSS::ValueID::Decimal:
         return CSS::ListStyleType::Decimal;
+    case CSS::ValueID::DecimalLeadingZero:
+        return CSS::ListStyleType::DecimalLeadingZero;
+    case CSS::ValueID::LowerAlpha:
+        return CSS::ListStyleType::LowerAlpha;
+    case CSS::ValueID::LowerLatin:
+        return CSS::ListStyleType::LowerLatin;
+    case CSS::ValueID::UpperAlpha:
+        return CSS::ListStyleType::UpperAlpha;
+    case CSS::ValueID::UpperLatin:
+        return CSS::ListStyleType::UpperLatin;
     default:
         return {};
     }

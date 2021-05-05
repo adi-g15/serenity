@@ -134,10 +134,8 @@ MousePacket PS2MouseDevice::parse_data_packet(const RawPacket& raw_packet)
     }
 
     packet.is_relative = true;
-#if PS2MOUSE_DEBUG
-    dbgln("PS2 Relative Mouse: Buttons {:x}", packet.buttons);
-    dbgln("Mouse: X {}, Y {}, Z {}", packet.x, packet.y, packet.z);
-#endif
+    dbgln_if(PS2MOUSE_DEBUG, "PS2 Relative Mouse: Buttons {:x}", packet.buttons);
+    dbgln_if(PS2MOUSE_DEBUG, "Mouse: X {}, Y {}, Z {}", packet.x, packet.y, packet.z);
     return packet;
 }
 
@@ -176,7 +174,7 @@ void PS2MouseDevice::set_sample_rate(u8 rate)
 
 UNMAP_AFTER_INIT RefPtr<PS2MouseDevice> PS2MouseDevice::try_to_initialize(const I8042Controller& ps2_controller)
 {
-    auto device = adopt(*new PS2MouseDevice(ps2_controller));
+    auto device = adopt_ref(*new PS2MouseDevice(ps2_controller));
     if (device->initialize())
         return device;
     return nullptr;

@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibTest/TestCase.h>
+
 #include <AK/IntrusiveList.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/RefPtr.h>
-#include <AK/TestSuite.h>
 
 class IntrusiveTestItem {
 public:
@@ -60,7 +61,7 @@ using IntrusiveRefPtrList = IntrusiveList<IntrusiveRefPtrItem, RefPtr<IntrusiveR
 
 TEST_CASE(intrusive_ref_ptr_no_ref_leaks)
 {
-    auto item = adopt(*new IntrusiveRefPtrItem());
+    auto item = adopt_ref(*new IntrusiveRefPtrItem());
     EXPECT_EQ(1u, item->ref_count());
     IntrusiveRefPtrList ref_list;
 
@@ -73,7 +74,7 @@ TEST_CASE(intrusive_ref_ptr_no_ref_leaks)
 
 TEST_CASE(intrusive_ref_ptr_clear)
 {
-    auto item = adopt(*new IntrusiveRefPtrItem());
+    auto item = adopt_ref(*new IntrusiveRefPtrItem());
     EXPECT_EQ(1u, item->ref_count());
     IntrusiveRefPtrList ref_list;
 
@@ -86,7 +87,7 @@ TEST_CASE(intrusive_ref_ptr_clear)
 
 TEST_CASE(intrusive_ref_ptr_destructor)
 {
-    auto item = adopt(*new IntrusiveRefPtrItem());
+    auto item = adopt_ref(*new IntrusiveRefPtrItem());
     EXPECT_EQ(1u, item->ref_count());
 
     {
@@ -107,7 +108,7 @@ using IntrusiveNonnullRefPtrList = IntrusiveList<IntrusiveNonnullRefPtrItem, Non
 
 TEST_CASE(intrusive_nonnull_ref_ptr_intrusive)
 {
-    auto item = adopt(*new IntrusiveNonnullRefPtrItem());
+    auto item = adopt_ref(*new IntrusiveNonnullRefPtrItem());
     EXPECT_EQ(1u, item->ref_count());
     IntrusiveNonnullRefPtrList nonnull_ref_list;
 
@@ -120,5 +121,3 @@ TEST_CASE(intrusive_nonnull_ref_ptr_intrusive)
 
     EXPECT(nonnull_ref_list.is_empty());
 }
-
-TEST_MAIN(IntrusiveList)

@@ -226,19 +226,19 @@ void Window::handle_mouse_event(const MouseEvent& event)
 
     switch (event.type()) {
     case Event::MouseMove:
-        m_client->post_message(Messages::WindowClient::MouseMove(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta(), event.is_drag(), event.mime_types()));
+        m_client->async_mouse_move(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta(), event.is_drag(), event.mime_types());
         break;
     case Event::MouseDown:
-        m_client->post_message(Messages::WindowClient::MouseDown(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta()));
+        m_client->async_mouse_down(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta());
         break;
     case Event::MouseDoubleClick:
-        m_client->post_message(Messages::WindowClient::MouseDoubleClick(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta()));
+        m_client->async_mouse_double_click(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta());
         break;
     case Event::MouseUp:
-        m_client->post_message(Messages::WindowClient::MouseUp(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta()));
+        m_client->async_mouse_up(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta());
         break;
     case Event::MouseWheel:
-        m_client->post_message(Messages::WindowClient::MouseWheel(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta()));
+        m_client->async_mouse_wheel(m_window_id, event.position(), (u32)event.button(), event.buttons(), event.modifiers(), event.wheel_delta());
         break;
     default:
         VERIFY_NOT_REACHED();
@@ -414,39 +414,38 @@ void Window::event(Core::Event& event)
 
     switch (event.type()) {
     case Event::WindowEntered:
-        m_client->post_message(Messages::WindowClient::WindowEntered(m_window_id));
+        m_client->async_window_entered(m_window_id);
         break;
     case Event::WindowLeft:
-        m_client->post_message(Messages::WindowClient::WindowLeft(m_window_id));
+        m_client->async_window_left(m_window_id);
         break;
     case Event::KeyDown:
         handle_keydown_event(static_cast<const KeyEvent&>(event));
         break;
     case Event::KeyUp:
-        m_client->post_message(
-            Messages::WindowClient::KeyUp(m_window_id,
-                (u32) static_cast<const KeyEvent&>(event).code_point(),
-                (u32) static_cast<const KeyEvent&>(event).key(),
-                static_cast<const KeyEvent&>(event).modifiers(),
-                (u32) static_cast<const KeyEvent&>(event).scancode()));
+        m_client->async_key_up(m_window_id,
+            (u32) static_cast<const KeyEvent&>(event).code_point(),
+            (u32) static_cast<const KeyEvent&>(event).key(),
+            static_cast<const KeyEvent&>(event).modifiers(),
+            (u32) static_cast<const KeyEvent&>(event).scancode());
         break;
     case Event::WindowActivated:
-        m_client->post_message(Messages::WindowClient::WindowActivated(m_window_id));
+        m_client->async_window_activated(m_window_id);
         break;
     case Event::WindowDeactivated:
-        m_client->post_message(Messages::WindowClient::WindowDeactivated(m_window_id));
+        m_client->async_window_deactivated(m_window_id);
         break;
     case Event::WindowInputEntered:
-        m_client->post_message(Messages::WindowClient::WindowInputEntered(m_window_id));
+        m_client->async_window_input_entered(m_window_id);
         break;
     case Event::WindowInputLeft:
-        m_client->post_message(Messages::WindowClient::WindowInputLeft(m_window_id));
+        m_client->async_window_input_left(m_window_id);
         break;
     case Event::WindowCloseRequest:
-        m_client->post_message(Messages::WindowClient::WindowCloseRequest(m_window_id));
+        m_client->async_window_close_request(m_window_id);
         break;
     case Event::WindowResized:
-        m_client->post_message(Messages::WindowClient::WindowResized(m_window_id, static_cast<const ResizeEvent&>(event).rect()));
+        m_client->async_window_resized(m_window_id, static_cast<const ResizeEvent&>(event).rect());
         break;
     default:
         break;
@@ -471,7 +470,7 @@ void Window::handle_keydown_event(const KeyEvent& event)
             return;
         }
     }
-    m_client->post_message(Messages::WindowClient::KeyDown(m_window_id, (u32)event.code_point(), (u32)event.key(), event.modifiers(), (u32)event.scancode()));
+    m_client->async_key_down(m_window_id, (u32)event.code_point(), (u32)event.key(), event.modifiers(), (u32)event.scancode());
 }
 
 void Window::set_global_cursor_tracking_enabled(bool enabled)
@@ -541,7 +540,7 @@ bool Window::invalidate_no_notify(const Gfx::IntRect& rect, bool with_frame)
 
     auto outer_rect = frame().render_rect();
     auto inner_rect = rect;
-    inner_rect.move_by(position());
+    inner_rect.translate_by(position());
     // FIXME: This seems slightly wrong; the inner rect shouldn't intersect the border part of the outer rect.
     inner_rect.intersect(outer_rect);
     if (inner_rect.is_empty())
@@ -556,7 +555,7 @@ bool Window::invalidate_no_notify(const Gfx::IntRect& rect, bool with_frame)
 
 void Window::refresh_client_size()
 {
-    client()->post_message(Messages::WindowClient::WindowResized(m_window_id, m_rect));
+    client()->async_window_resized(m_window_id, m_rect);
 }
 
 void Window::prepare_dirty_rects()
@@ -656,30 +655,37 @@ void Window::ensure_window_menu()
         m_window_menu->item((int)PopupMenuItem::Maximize).set_enabled(m_resizable);
 
         m_window_menu->on_item_activation = [&](auto& item) {
-            switch (static_cast<WindowMenuAction>(item.identifier())) {
-            case WindowMenuAction::MinimizeOrUnminimize:
-                WindowManager::the().minimize_windows(*this, !m_minimized);
-                if (!m_minimized)
-                    WindowManager::the().move_to_front_and_make_active(*this);
-                break;
-            case WindowMenuAction::MaximizeOrRestore:
-                WindowManager::the().maximize_windows(*this, !m_maximized);
-                WindowManager::the().move_to_front_and_make_active(*this);
-                break;
-            case WindowMenuAction::Close:
-                request_close();
-                break;
-            case WindowMenuAction::ToggleMenubarVisibility:
-                frame().invalidate();
-                item.set_checked(!item.is_checked());
-                m_should_show_menubar = item.is_checked();
-                frame().invalidate();
-                recalculate_rect();
-                Compositor::the().invalidate_occlusions();
-                Compositor::the().invalidate_screen();
-                break;
-            }
+            handle_window_menu_action(static_cast<WindowMenuAction>(item.identifier()));
         };
+    }
+}
+
+void Window::handle_window_menu_action(WindowMenuAction action)
+{
+    switch (action) {
+    case WindowMenuAction::MinimizeOrUnminimize:
+        WindowManager::the().minimize_windows(*this, !m_minimized);
+        if (!m_minimized)
+            WindowManager::the().move_to_front_and_make_active(*this);
+        break;
+    case WindowMenuAction::MaximizeOrRestore:
+        WindowManager::the().maximize_windows(*this, !m_maximized);
+        WindowManager::the().move_to_front_and_make_active(*this);
+        break;
+    case WindowMenuAction::Close:
+        request_close();
+        break;
+    case WindowMenuAction::ToggleMenubarVisibility: {
+        auto& item = *m_window_menu->item_by_identifier((unsigned)action);
+        frame().invalidate();
+        item.set_checked(!item.is_checked());
+        m_should_show_menubar = item.is_checked();
+        frame().invalidate();
+        recalculate_rect();
+        Compositor::the().invalidate_occlusions();
+        Compositor::the().invalidate_screen();
+        break;
+    }
     }
 }
 
@@ -911,7 +917,7 @@ bool Window::is_modal() const
     return true;
 }
 
-void Window::set_progress(int progress)
+void Window::set_progress(Optional<int> progress)
 {
     if (m_progress == progress)
         return;
@@ -948,8 +954,10 @@ bool Window::hit_test(const Gfx::IntPoint& point, bool include_frame) const
     if (threshold == 0 || !m_backing_store || !m_backing_store->has_alpha_channel())
         return true;
     auto relative_point = point.translated(-rect().location()) * m_backing_store->scale();
-    auto color = m_backing_store->get_pixel(relative_point);
-    return color.alpha() >= threshold;
+    u8 alpha = 0xff;
+    if (m_backing_store->rect().contains(relative_point))
+        alpha = m_backing_store->get_pixel(relative_point).alpha();
+    return alpha >= threshold;
 }
 
 void Window::set_menubar(Menubar* menubar)
@@ -967,7 +975,7 @@ void Window::set_menubar(Menubar* menubar)
         m_menubar->for_each_menu([&](Menu& menu) {
             int text_width = wm.font().width(Gfx::parse_ampersand_string(menu.name()));
             menu.set_rect_in_window_menubar({ next_menu_location.x(), 0, text_width + menubar_menu_margin, menubar_rect.height() });
-            next_menu_location.move_by(menu.rect_in_window_menubar().width(), 0);
+            next_menu_location.translate_by(menu.rect_in_window_menubar().width(), 0);
             return IterationDecision::Continue;
         });
     }
@@ -981,6 +989,16 @@ void Window::invalidate_menubar()
         return;
     // FIXME: This invalidates way more than the menubar!
     frame().invalidate();
+}
+
+void Window::set_modified(bool modified)
+{
+    if (m_modified == modified)
+        return;
+
+    m_modified = modified;
+    frame().set_button_icons();
+    frame().invalidate_titlebar();
 }
 
 }

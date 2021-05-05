@@ -7,6 +7,7 @@
 #include <Kernel/Debug.h>
 #include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/FileDescription.h>
+#include <Kernel/PerformanceEventBuffer.h>
 #include <Kernel/Process.h>
 #include <Kernel/VM/Region.h>
 
@@ -16,7 +17,7 @@ KResultOr<pid_t> Process::sys$fork(RegisterState& regs)
 {
     REQUIRE_PROMISE(proc);
     RefPtr<Thread> child_first_thread;
-    auto child = adopt(*new Process(child_first_thread, m_name, uid(), gid(), pid(), m_is_kernel_process, m_cwd, m_executable, m_tty, this));
+    auto child = adopt_ref(*new Process(child_first_thread, m_name, uid(), gid(), pid(), m_is_kernel_process, m_cwd, m_executable, m_tty, this));
     if (!child_first_thread)
         return ENOMEM;
     child->m_root_directory = m_root_directory;
@@ -82,6 +83,11 @@ KResultOr<pid_t> Process::sys$fork(RegisterState& regs)
 
         ScopedSpinLock processes_lock(g_processes_lock);
         g_processes->prepend(child);
+    }
+
+    if (g_profiling_all_threads) {
+        VERIFY(g_global_perf_events);
+        g_global_perf_events->add_process(*child, ProcessEventType::Create);
     }
 
     ScopedSpinLock lock(g_scheduler_lock);

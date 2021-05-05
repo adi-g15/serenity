@@ -32,7 +32,6 @@ public:
     virtual NonnullRefPtr<Inode> root_inode() const override;
 
     static void add_sys_bool(String&&, Lockable<bool>&, Function<void()>&& notify_callback = nullptr);
-    static void add_sys_string(String&&, Lockable<String>&, Function<void()>&& notify_callback = nullptr);
 
 private:
     ProcFS();
@@ -78,12 +77,12 @@ private:
     // ^Inode
     virtual KResult attach(FileDescription&) override;
     virtual void did_seek(FileDescription&, off_t) override;
-    virtual ssize_t read_bytes(off_t, ssize_t, UserOrKernelBuffer& buffer, FileDescription*) const override;
+    virtual KResultOr<ssize_t> read_bytes(off_t, ssize_t, UserOrKernelBuffer& buffer, FileDescription*) const override;
     virtual InodeMetadata metadata() const override;
     virtual KResult traverse_as_directory(Function<bool(const FS::DirectoryEntryView&)>) const override;
     virtual RefPtr<Inode> lookup(StringView name) override;
     virtual void flush_metadata() override;
-    virtual ssize_t write_bytes(off_t, ssize_t, const UserOrKernelBuffer& buffer, FileDescription*) override;
+    virtual KResultOr<ssize_t> write_bytes(off_t, ssize_t, const UserOrKernelBuffer& buffer, FileDescription*) override;
     virtual KResultOr<NonnullRefPtr<Inode>> create_child(const String& name, mode_t, dev_t, uid_t, gid_t) override;
     virtual KResult add_child(Inode&, const StringView& name, mode_t) override;
     virtual KResult remove_child(const StringView& name) override;
@@ -91,6 +90,7 @@ private:
     virtual KResult chmod(mode_t) override;
     virtual KResult chown(uid_t, gid_t) override;
     virtual KResultOr<NonnullRefPtr<Custody>> resolve_as_link(Custody& base, RefPtr<Custody>* out_parent = nullptr, int options = 0, int symlink_recursion_level = 0) const override;
+    virtual KResult set_mtime(time_t) override;
 
     KResult refresh_data(FileDescription&) const;
 
@@ -111,12 +111,12 @@ private:
     // ^Inode
     virtual KResult attach(FileDescription&) override;
     virtual void did_seek(FileDescription&, off_t) override;
-    virtual ssize_t read_bytes(off_t, ssize_t, UserOrKernelBuffer&, FileDescription*) const override { VERIFY_NOT_REACHED(); }
+    virtual KResultOr<ssize_t> read_bytes(off_t, ssize_t, UserOrKernelBuffer&, FileDescription*) const override { VERIFY_NOT_REACHED(); }
     virtual InodeMetadata metadata() const override;
     virtual KResult traverse_as_directory(Function<bool(const FS::DirectoryEntryView&)>) const override { VERIFY_NOT_REACHED(); }
     virtual RefPtr<Inode> lookup(StringView name) override;
     virtual void flush_metadata() override {};
-    virtual ssize_t write_bytes(off_t, ssize_t, const UserOrKernelBuffer&, FileDescription*) override { VERIFY_NOT_REACHED(); }
+    virtual KResultOr<ssize_t> write_bytes(off_t, ssize_t, const UserOrKernelBuffer&, FileDescription*) override { VERIFY_NOT_REACHED(); }
     virtual KResultOr<NonnullRefPtr<Inode>> create_child(const String& name, mode_t, dev_t, uid_t, gid_t) override;
     virtual KResult add_child(Inode&, const StringView& name, mode_t) override;
     virtual KResult remove_child(const StringView& name) override;
@@ -132,7 +132,7 @@ private:
     ProcFSProxyInode(ProcFS&, FileDescription&);
     static NonnullRefPtr<ProcFSProxyInode> create(ProcFS& fs, FileDescription& fd)
     {
-        return adopt(*new ProcFSProxyInode(fs, fd));
+        return adopt_ref(*new ProcFSProxyInode(fs, fd));
     }
 
     NonnullRefPtr<FileDescription> m_fd;

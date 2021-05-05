@@ -8,13 +8,15 @@
 
 #include <LibGUI/Model.h>
 
+namespace Profiler {
+
 class Profile;
 
 class IndividualSampleModel final : public GUI::Model {
 public:
     static NonnullRefPtr<IndividualSampleModel> create(Profile& profile, size_t event_index)
     {
-        return adopt(*new IndividualSampleModel(profile, event_index));
+        return adopt_ref(*new IndividualSampleModel(profile, event_index));
     }
 
     enum Column {
@@ -38,3 +40,5 @@ private:
     Profile& m_profile;
     const size_t m_event_index { 0 };
 };
+
+}

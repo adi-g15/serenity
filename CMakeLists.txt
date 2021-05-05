@@ -27,6 +27,7 @@ option(ENABLE_COMPILETIME_FORMAT_CHECK "Enable compiletime format string checks"
 option(ENABLE_PCI_IDS_DOWNLOAD "Enable download of the pci.ids database at build time" ON)
 option(BUILD_LAGOM "Build parts of the system targeting the host OS for fuzzing/testing" OFF)
 option(PRECOMPILE_COMMON_HEADERS "Precompile some common headers to speedup compilation" OFF)
+option(ENABLE_KERNEL_LTO "Build the kernel with link-time optimization" OFF)
 
 add_custom_target(run
     COMMAND ${CMAKE_SOURCE_DIR}/Meta/run.sh
@@ -80,7 +81,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wno-literal-suffix)
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     add_compile_options(-fconcepts)
-elseif ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang$")
     add_compile_options(-Wno-overloaded-virtual -Wno-user-defined-literals)
 endif()
 
@@ -111,19 +112,22 @@ set(CMAKE_STAGING_PREFIX ${CMAKE_BINARY_DIR}/Root)
 set(CMAKE_INSTALL_PREFIX ${CMAKE_BINARY_DIR}/Root)
 set(CMAKE_INSTALL_DATAROOTDIR ${CMAKE_BINARY_DIR}/Root/res)
 
+set(GCC_VERSION 11.1.0)
+
 if (${CMAKE_HOST_SYSTEM_NAME} MATCHES SerenityOS)
     message("Good job on building cmake!")
 else()
-    set(TOOLCHAIN_PATH ${CMAKE_SOURCE_DIR}/Toolchain/Local/${SERENITY_ARCH}/bin)
+    set(TOOLCHAIN_ROOT ${CMAKE_SOURCE_DIR}/Toolchain/Local/${SERENITY_ARCH}/)
+    set(TOOLCHAIN_PATH ${TOOLCHAIN_ROOT}/bin)
     set(TOOLCHAIN_PREFIX ${TOOLCHAIN_PATH}/${SERENITY_ARCH}-pc-serenity-)
 
     set(CMAKE_C_COMPILER ${TOOLCHAIN_PREFIX}gcc)
     set(CMAKE_CXX_COMPILER ${TOOLCHAIN_PREFIX}g++)
     set(CMAKE_ASM_COMPILER ${TOOLCHAIN_PREFIX}gcc)
     set(CMAKE_LINKER ${TOOLCHAIN_PREFIX}ld)
-    set(CMAKE_RANLIB ${TOOLCHAIN_PREFIX}ranlib)
+    set(CMAKE_RANLIB ${TOOLCHAIN_PREFIX}gcc-ranlib)
     set(CMAKE_STRIP ${TOOLCHAIN_PREFIX}strip)
-    set(CMAKE_AR ${TOOLCHAIN_PREFIX}ar)
+    set(CMAKE_AR ${TOOLCHAIN_PREFIX}gcc-ar)
 endif()
 
 foreach(lang ASM C CXX OBJC OBJCXX)
@@ -136,9 +140,10 @@ foreach(lang ASM C CXX OBJC OBJCXX)
     unset(CMAKE_${lang}_OSX_DEPLOYMENT_TARGET_FLAG)
     unset(CMAKE_${lang}_SYSROOT_FLAG)
     if (CMAKE_SYSTEM_NAME MATCHES Darwin)
-        ## MacOS Workaround. Don't generate install_name flag when cross compiling
+        ## macOS workaround. Use GNU ld flags for SONAMEs.
         set(CMAKE_${lang}_CREATE_SHARED_LIBRARY
-            "<CMAKE_${lang}_COMPILER> <LANGUAGE_COMPILE_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_${lang}_FLAGS> <LINK_FLAGS> -o <TARGET> <OBJECTS> <LINK_LIBRARIES>")
+            "<CMAKE_${lang}_COMPILER> <LANGUAGE_COMPILE_FLAGS> <CMAKE_SHARED_LIBRARY_CREATE_${lang}_FLAGS> <LINK_FLAGS> <SONAME_FLAG><TARGET_SONAME> -o <TARGET> <OBJECTS> <LINK_LIBRARIES>")
+        set(CMAKE_SHARED_LIBRARY_SONAME_${lang}_FLAG "-Wl,-soname,")
     endif()
 endforeach()
 
@@ -203,7 +208,9 @@ endif()
 add_link_options(--sysroot ${CMAKE_BINARY_DIR}/Root)
 
 include_directories(Userland/Libraries/LibC)
+include_directories(Userland/Libraries/LibCrypt)
 include_directories(Userland/Libraries/LibM)
+include_directories(Userland/Libraries/LibPthread)
 include_directories(Userland/Libraries/LibSystem)
 include_directories(Userland/Services)
 include_directories(Userland)

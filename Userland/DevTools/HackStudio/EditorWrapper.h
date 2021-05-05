@@ -26,6 +26,8 @@ public:
     Editor& editor() { return *m_editor; }
     const Editor& editor() const { return *m_editor; }
 
+    void save();
+
     GUI::Label& filename_label() { return *m_filename_label; }
     const GUI::Label& filename_label() const { return *m_filename_label; }
 
@@ -34,13 +36,20 @@ public:
 
     void set_mode_displayable();
     void set_mode_non_displayable();
+    void set_filename(const String&);
+    const String& filename() const { return m_filename; }
+    bool document_dirty() const { return m_document_dirty; }
 
 private:
     EditorWrapper();
 
+    void update_title();
+
+    String m_filename;
     RefPtr<GUI::Label> m_filename_label;
     RefPtr<GUI::Label> m_cursor_label;
     RefPtr<Editor> m_editor;
+    bool m_document_dirty { false };
 };
 
 }

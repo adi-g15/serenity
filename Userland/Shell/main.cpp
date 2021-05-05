@@ -107,7 +107,7 @@ int main(int argc, char** argv)
     if (format) {
         auto file = Core::File::open(format, Core::IODevice::ReadOnly);
         if (file.is_error()) {
-            fprintf(stderr, "Error: %s", file.error().characters());
+            warnln("Error: {}", file.error());
             return 1;
         }
 
@@ -163,7 +163,7 @@ int main(int argc, char** argv)
         Vector<String> args;
         for (auto* arg : script_args)
             args.empend(arg);
-        shell->set_local_variable("ARGV", adopt(*new Shell::AST::ListValue(move(args))));
+        shell->set_local_variable("ARGV", adopt_ref(*new Shell::AST::ListValue(move(args))));
     }
 
     if (command_to_run) {

@@ -79,7 +79,7 @@ Gfx::IntRect Label::text_rect(size_t line) const
     if (frame_thickness() > 0)
         indent = font().glyph_width('x') / 2;
     auto rect = frame_inner_rect();
-    rect.move_by(indent, line * (font().glyph_height() + 1));
+    rect.translate_by(indent, line * (font().glyph_height() + 1));
     rect.set_width(rect.width() - indent * 2);
     return rect;
 }
@@ -142,7 +142,10 @@ void Label::wrap_text()
         case '\t':
         case ' ': {
             if (start.has_value())
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
                 words.append(m_text.substring(start.value(), i - start.value()));
+#pragma GCC diagnostic pop
             start.clear();
             continue;
         }

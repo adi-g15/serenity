@@ -42,7 +42,7 @@ Mixer::~Mixer()
 
 NonnullRefPtr<BufferQueue> Mixer::create_queue(ClientConnection& client)
 {
-    auto queue = adopt(*new BufferQueue(client));
+    auto queue = adopt_ref(*new BufferQueue(client));
     pthread_mutex_lock(&m_pending_mutex);
     m_pending_mixing.append(*queue);
     m_added_queue = true;
@@ -116,10 +116,12 @@ void Mixer::set_main_volume(int volume)
 {
     if (volume < 0)
         m_main_volume = 0;
+    else if (volume > 200)
+        m_main_volume = 200;
     else
         m_main_volume = volume;
-    ClientConnection::for_each([volume](ClientConnection& client) {
-        client.did_change_main_mix_volume({}, volume);
+    ClientConnection::for_each([&](ClientConnection& client) {
+        client.did_change_main_mix_volume({}, m_main_volume);
     });
 }
 

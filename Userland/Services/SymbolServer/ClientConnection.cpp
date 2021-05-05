@@ -35,26 +35,24 @@ void ClientConnection::die()
     s_connections.remove(client_id());
 }
 
-OwnPtr<Messages::SymbolServer::GreetResponse> ClientConnection::handle(const Messages::SymbolServer::Greet&)
+void ClientConnection::greet()
 {
-    return make<Messages::SymbolServer::GreetResponse>();
 }
 
-OwnPtr<Messages::SymbolServer::SymbolicateResponse> ClientConnection::handle(const Messages::SymbolServer::Symbolicate& message)
+Messages::SymbolServer::SymbolicateResponse ClientConnection::symbolicate(String const& path, u32 address)
 {
-    auto path = message.path();
     if (!s_cache.contains(path)) {
         auto mapped_file = MappedFile::map(path);
         if (mapped_file.is_error()) {
             dbgln("Failed to map {}: {}", path, mapped_file.error().string());
             s_cache.set(path, {});
-            return make<Messages::SymbolServer::SymbolicateResponse>(false, String {}, 0, String {}, 0);
+            return { false, String {}, 0, String {}, 0 };
         }
         auto elf = make<ELF::Image>(mapped_file.value()->bytes());
         if (!elf->is_valid()) {
             dbgln("ELF not valid: {}", path);
             s_cache.set(path, {});
-            return make<Messages::SymbolServer::SymbolicateResponse>(false, String {}, 0, String {}, 0);
+            return { false, String {}, 0, String {}, 0 };
         }
         Debug::DebugInfo debug_info(move(elf));
         auto cached_elf = make<CachedELF>(mapped_file.release_value(), move(debug_info));
@@ -66,11 +64,11 @@ OwnPtr<Messages::SymbolServer::SymbolicateResponse> ClientConnection::handle(con
     auto& cached_elf = it->value;
 
     if (!cached_elf)
-        return make<Messages::SymbolServer::SymbolicateResponse>(false, String {}, 0, String {}, 0);
+        return { false, String {}, 0, String {}, 0 };
 
     u32 offset = 0;
-    auto symbol = cached_elf->debug_info.elf().symbolicate(message.address(), &offset);
-    auto source_position = cached_elf->debug_info.get_source_position(message.address());
+    auto symbol = cached_elf->debug_info.elf().symbolicate(address, &offset);
+    auto source_position = cached_elf->debug_info.get_source_position(address);
     String filename;
     u32 line_number = 0;
     if (source_position.has_value()) {
@@ -78,7 +76,7 @@ OwnPtr<Messages::SymbolServer::SymbolicateResponse> ClientConnection::handle(con
         line_number = source_position.value().line_number;
     }
 
-    return make<Messages::SymbolServer::SymbolicateResponse>(true, symbol, offset, filename, line_number);
+    return { true, symbol, offset, filename, line_number };
 }
 
 }

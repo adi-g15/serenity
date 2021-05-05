@@ -12,8 +12,7 @@
 
 namespace LaunchServer {
 
-class ClientConnection final : public IPC::ClientConnection<LaunchClientEndpoint, LaunchServerEndpoint>
-    , public LaunchServerEndpoint {
+class ClientConnection final : public IPC::ClientConnection<LaunchClientEndpoint, LaunchServerEndpoint> {
     C_OBJECT(ClientConnection)
 public:
     ~ClientConnection() override;
@@ -23,14 +22,14 @@ public:
 private:
     explicit ClientConnection(NonnullRefPtr<Core::LocalSocket>, int client_id);
 
-    virtual OwnPtr<Messages::LaunchServer::GreetResponse> handle(const Messages::LaunchServer::Greet&) override;
-    virtual OwnPtr<Messages::LaunchServer::OpenURLResponse> handle(const Messages::LaunchServer::OpenURL&) override;
-    virtual OwnPtr<Messages::LaunchServer::GetHandlersForURLResponse> handle(const Messages::LaunchServer::GetHandlersForURL&) override;
-    virtual OwnPtr<Messages::LaunchServer::GetHandlersWithDetailsForURLResponse> handle(const Messages::LaunchServer::GetHandlersWithDetailsForURL&) override;
-    virtual OwnPtr<Messages::LaunchServer::AddAllowedURLResponse> handle(const Messages::LaunchServer::AddAllowedURL&) override;
-    virtual OwnPtr<Messages::LaunchServer::AddAllowedHandlerWithAnyURLResponse> handle(const Messages::LaunchServer::AddAllowedHandlerWithAnyURL&) override;
-    virtual OwnPtr<Messages::LaunchServer::AddAllowedHandlerWithOnlySpecificURLsResponse> handle(const Messages::LaunchServer::AddAllowedHandlerWithOnlySpecificURLs&) override;
-    virtual OwnPtr<Messages::LaunchServer::SealAllowlistResponse> handle(const Messages::LaunchServer::SealAllowlist&) override;
+    virtual void greet() override;
+    virtual Messages::LaunchServer::OpenUrlResponse open_url(URL const&, String const&) override;
+    virtual Messages::LaunchServer::GetHandlersForUrlResponse get_handlers_for_url(URL const&) override;
+    virtual Messages::LaunchServer::GetHandlersWithDetailsForUrlResponse get_handlers_with_details_for_url(URL const&) override;
+    virtual void add_allowed_url(URL const&) override;
+    virtual void add_allowed_handler_with_any_url(String const&) override;
+    virtual void add_allowed_handler_with_only_specific_urls(String const&, Vector<URL> const&) override;
+    virtual void seal_allowlist() override;
 
     struct AllowlistEntry {
         String handler_name;

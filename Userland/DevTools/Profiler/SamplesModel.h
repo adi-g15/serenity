@@ -8,18 +8,21 @@
 
 #include <LibGUI/Model.h>
 
+namespace Profiler {
+
 class Profile;
 
 class SamplesModel final : public GUI::Model {
 public:
     static NonnullRefPtr<SamplesModel> create(Profile& profile)
     {
-        return adopt(*new SamplesModel(profile));
+        return adopt_ref(*new SamplesModel(profile));
     }
 
     enum Column {
         SampleIndex,
         Timestamp,
+        ProcessID,
         ThreadID,
         ExecutableName,
         InnermostStackFrame,
@@ -42,3 +45,5 @@ private:
     GUI::Icon m_user_frame_icon;
     GUI::Icon m_kernel_frame_icon;
 };
+
+}

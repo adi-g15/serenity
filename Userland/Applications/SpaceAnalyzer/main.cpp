@@ -253,7 +253,7 @@ int main(int argc, char* argv[])
 {
     auto app = GUI::Application::construct(argc, argv);
 
-    RefPtr<Tree> tree = adopt(*new Tree(""));
+    RefPtr<Tree> tree = adopt_ref(*new Tree(""));
 
     // Configure application window.
     auto app_icon = GUI::Icon::default_icon("app-space-analyzer");
@@ -271,11 +271,11 @@ int main(int argc, char* argv[])
 
     // Configure the menubar.
     auto menubar = GUI::Menubar::construct();
-    auto& app_menu = menubar->add_menu("File");
-    app_menu.add_action(GUI::Action::create("Analyze", [&](auto&) {
+    auto& file_menu = menubar->add_menu("&File");
+    file_menu.add_action(GUI::Action::create("&Analyze", [&](auto&) {
         analyze(tree, treemapwidget, statusbar);
     }));
-    app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) {
+    file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) {
         app->quit();
     }));
     auto& help_menu = menubar->add_menu("Help");

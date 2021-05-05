@@ -4,10 +4,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/StringBuilder.h>
 #include <AK/Utf8View.h>
 #include <LibCore/Timer.h>
-#include <LibGUI/DragOperation.h>
 #include <LibGUI/IconView.h>
 #include <LibGUI/Model.h>
 #include <LibGUI/Painter.h>
@@ -45,7 +43,7 @@ void IconView::scroll_into_view(const ModelIndex& index, bool scroll_horizontall
 {
     if (!index.is_valid())
         return;
-    ScrollableWidget::scroll_into_view(item_rect(index.row()), scroll_horizontally, scroll_vertically);
+    AbstractScrollableWidget::scroll_into_view(item_rect(index.row()), scroll_horizontally, scroll_vertically);
 }
 
 void IconView::resize_event(ResizeEvent& event)
@@ -60,7 +58,7 @@ void IconView::resize_event(ResizeEvent& event)
     }
 }
 
-void IconView::reinit_item_cache() const
+void IconView::rebuild_item_cache() const
 {
     auto prev_item_count = m_item_data_cache.size();
     size_t new_item_count = item_count();
@@ -94,7 +92,7 @@ void IconView::reinit_item_cache() const
 auto IconView::get_item_data(int item_index) const -> ItemData&
 {
     if (!m_item_data_cache_valid)
-        reinit_item_cache();
+        rebuild_item_cache();
 
     auto& item_data = m_item_data_cache[item_index];
     if (item_data.is_valid())
@@ -124,7 +122,7 @@ auto IconView::item_data_from_content_position(const Gfx::IntPoint& content_posi
 void IconView::model_did_update(unsigned flags)
 {
     AbstractView::model_did_update(flags);
-    if (!model() || (flags & GUI::Model::InvalidateAllIndexes)) {
+    if (!model() || (flags & GUI::Model::InvalidateAllIndices)) {
         m_item_data_cache.clear();
         AbstractView::clear_selection();
         m_selected_count_cache = 0;
@@ -164,7 +162,7 @@ void IconView::update_content_size()
     set_content_size({ content_width, content_height });
 
     if (!m_item_data_cache_valid)
-        reinit_item_cache();
+        rebuild_item_cache();
 
     for (int item_index = 0; item_index < item_count(); item_index++) {
         auto& item_data = m_item_data_cache[item_index];
@@ -221,11 +219,8 @@ void IconView::mousedown_event(MouseEvent& event)
         return AbstractView::mousedown_event(event);
     }
 
-    if (event.modifiers() & Mod_Ctrl) {
-        m_rubber_banding_store_selection = true;
-    } else {
+    if (!(event.modifiers() & Mod_Ctrl)) {
         clear_selection();
-        m_rubber_banding_store_selection = false;
     }
 
     auto adjusted_position = to_content_position(event.position());
@@ -378,7 +373,7 @@ void IconView::scroll_out_of_view_timer_fired()
     else if (m_out_of_view_position.x() < in_view_rect.left())
         adjust_x = -(SCROLL_OUT_OF_VIEW_HOT_MARGIN / 2) + max(-SCROLL_OUT_OF_VIEW_HOT_MARGIN, m_out_of_view_position.x() - in_view_rect.left());
 
-    ScrollableWidget::scroll_into_view({ scroll_to.translated(adjust_x, adjust_y), { 1, 1 } }, true, true);
+    AbstractScrollableWidget::scroll_into_view({ scroll_to.translated(adjust_x, adjust_y), { 1, 1 } }, true, true);
     update_rubber_banding(m_out_of_view_position);
 }
 
@@ -386,7 +381,7 @@ void IconView::update_item_rects(int item_index, ItemData& item_data) const
 {
     auto item_rect = this->item_rect(item_index);
     item_data.icon_rect.center_within(item_rect);
-    item_data.icon_rect.move_by(0, item_data.icon_offset_y);
+    item_data.icon_rect.translate_by(0, item_data.icon_offset_y);
     item_data.text_rect.center_horizontally_within(item_rect);
     item_data.text_rect.set_top(item_rect.y() + item_data.text_offset_y);
 }
@@ -423,7 +418,7 @@ void IconView::get_item_rects(int item_index, ItemData& item_data, const Gfx::Fo
     item_data.icon_rect = { 0, 0, 32, 32 };
     item_data.icon_rect.center_within(item_rect);
     item_data.icon_offset_y = -font.glyph_height() - 6;
-    item_data.icon_rect.move_by(0, item_data.icon_offset_y);
+    item_data.icon_rect.translate_by(0, item_data.icon_offset_y);
 
     int unwrapped_text_width = font.width(item_data.text);
     int available_width = item_rect.width() - 6;

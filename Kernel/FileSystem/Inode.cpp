@@ -60,9 +60,10 @@ KResultOr<NonnullOwnPtr<KBuffer>> Inode::read_entire(FileDescription* descriptio
     off_t offset = 0;
     for (;;) {
         auto buf = UserOrKernelBuffer::for_kernel_buffer(buffer);
-        nread = read_bytes(offset, sizeof(buffer), buf, description);
-        if (nread < 0)
-            return KResult((ErrnoCode)-nread);
+        auto result = read_bytes(offset, sizeof(buffer), buf, description);
+        if (result.is_error())
+            return result.error();
+        nread = result.value();
         VERIFY(nread <= (ssize_t)sizeof(buffer));
         if (nread <= 0)
             break;
@@ -112,24 +113,24 @@ Inode::~Inode()
 
 void Inode::will_be_destroyed()
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     if (m_metadata_dirty)
         flush_metadata();
 }
 
-int Inode::set_atime(time_t)
+KResult Inode::set_atime(time_t)
 {
-    return -ENOTIMPL;
+    return ENOTIMPL;
 }
 
-int Inode::set_ctime(time_t)
+KResult Inode::set_ctime(time_t)
 {
-    return -ENOTIMPL;
+    return ENOTIMPL;
 }
 
-int Inode::set_mtime(time_t)
+KResult Inode::set_mtime(time_t)
 {
-    return -ENOTIMPL;
+    return ENOTIMPL;
 }
 
 KResult Inode::increment_link_count()
@@ -144,13 +145,13 @@ KResult Inode::decrement_link_count()
 
 void Inode::set_shared_vmobject(SharedInodeVMObject& vmobject)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     m_shared_vmobject = vmobject;
 }
 
 bool Inode::bind_socket(LocalSocket& socket)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     if (m_socket)
         return false;
     m_socket = socket;
@@ -159,7 +160,7 @@ bool Inode::bind_socket(LocalSocket& socket)
 
 bool Inode::unbind_socket()
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     if (!m_socket)
         return false;
     m_socket = nullptr;
@@ -168,21 +169,21 @@ bool Inode::unbind_socket()
 
 void Inode::register_watcher(Badge<InodeWatcher>, InodeWatcher& watcher)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     VERIFY(!m_watchers.contains(&watcher));
     m_watchers.set(&watcher);
 }
 
 void Inode::unregister_watcher(Badge<InodeWatcher>, InodeWatcher& watcher)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     VERIFY(m_watchers.contains(&watcher));
     m_watchers.remove(&watcher);
 }
 
 NonnullRefPtr<FIFO> Inode::fifo()
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     VERIFY(metadata().is_fifo());
 
     // FIXME: Release m_fifo when it is closed by all readers and writers
@@ -195,7 +196,7 @@ NonnullRefPtr<FIFO> Inode::fifo()
 
 void Inode::set_metadata_dirty(bool metadata_dirty)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
 
     if (metadata_dirty) {
         // Sanity check.
@@ -217,7 +218,7 @@ void Inode::set_metadata_dirty(bool metadata_dirty)
 
 void Inode::did_add_child(const InodeIdentifier& child_id)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     for (auto& watcher : m_watchers) {
         watcher->notify_child_added({}, child_id);
     }
@@ -225,7 +226,7 @@ void Inode::did_add_child(const InodeIdentifier& child_id)
 
 void Inode::did_remove_child(const InodeIdentifier& child_id)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     for (auto& watcher : m_watchers) {
         watcher->notify_child_removed({}, child_id);
     }
@@ -235,7 +236,7 @@ KResult Inode::prepare_to_write_data()
 {
     // FIXME: It's a poor design that filesystems are expected to call this before writing out data.
     //        We should funnel everything through an interface at the VFS layer so this can happen from a single place.
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     if (fs().is_readonly())
         return EROFS;
     auto metadata = this->metadata();
@@ -248,13 +249,13 @@ KResult Inode::prepare_to_write_data()
 
 RefPtr<SharedInodeVMObject> Inode::shared_vmobject() const
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     return m_shared_vmobject.strong_ref();
 }
 
 bool Inode::is_shared_vmobject(const SharedInodeVMObject& other) const
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
     return m_shared_vmobject.unsafe_ptr() == &other;
 }
 

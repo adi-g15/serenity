@@ -20,7 +20,7 @@ template<class T, class... Args>
 static inline NonnullRefPtr<T>
 create_ast_node(Args&&... args)
 {
-    return adopt(*new T(forward<Args>(args)...));
+    return adopt_ref(*new T(forward<Args>(args)...));
 }
 
 class ASTNode : public RefCounted<ASTNode> {
@@ -58,7 +58,7 @@ public:
     }
 
     const String& name() const { return m_name; }
-    const NonnullRefPtrVector<SignedNumber> signed_numbers() const { return m_signed_numbers; }
+    const NonnullRefPtrVector<SignedNumber>& signed_numbers() const { return m_signed_numbers; }
 
 private:
     String m_name;
@@ -83,18 +83,21 @@ private:
 
 class CommonTableExpression : public ASTNode {
 public:
-    CommonTableExpression(String table_name, Vector<String> column_names)
+    CommonTableExpression(String table_name, Vector<String> column_names, NonnullRefPtr<Select> select_statement)
         : m_table_name(move(table_name))
         , m_column_names(move(column_names))
+        , m_select_statement(move(select_statement))
     {
     }
 
     const String& table_name() const { return m_table_name; }
     const Vector<String>& column_names() const { return m_column_names; }
+    const NonnullRefPtr<Select>& select_statement() const { return m_select_statement; }
 
 private:
     String m_table_name;
     Vector<String> m_column_names;
+    NonnullRefPtr<Select> m_select_statement;
 };
 
 class CommonTableExpressionList : public ASTNode {
@@ -537,6 +540,22 @@ private:
     RefPtr<Expression> m_else_expression;
 };
 
+class ExistsExpression : public Expression {
+public:
+    ExistsExpression(NonnullRefPtr<Select> select_statement, bool invert_expression)
+        : m_select_statement(move(select_statement))
+        , m_invert_expression(invert_expression)
+    {
+    }
+
+    const NonnullRefPtr<Select>& select_statement() const { return m_select_statement; }
+    bool invert_expression() const { return m_invert_expression; }
+
+private:
+    NonnullRefPtr<Select> m_select_statement;
+    bool m_invert_expression;
+};
+
 class CollateExpression : public NestedExpression {
 public:
     CollateExpression(NonnullRefPtr<Expression> expression, String collation_name)
@@ -605,6 +624,20 @@ private:
     NonnullRefPtr<Expression> m_expression;
 };
 
+class InSelectionExpression : public InvertibleNestedExpression {
+public:
+    InSelectionExpression(NonnullRefPtr<Expression> expression, NonnullRefPtr<Select> select_statement, bool invert_expression)
+        : InvertibleNestedExpression(move(expression), invert_expression)
+        , m_select_statement(move(select_statement))
+    {
+    }
+
+    const NonnullRefPtr<Select>& select_statement() const { return m_select_statement; }
+
+private:
+    NonnullRefPtr<Select> m_select_statement;
+};
+
 class InChainedExpression : public InvertibleNestedExpression {
 public:
     InChainedExpression(NonnullRefPtr<Expression> expression, NonnullRefPtr<ChainedExpression> expression_chain, bool invert_expression)
@@ -648,6 +681,15 @@ class ErrorStatement final : public Statement {
 
 class CreateTable : public Statement {
 public:
+    CreateTable(String schema_name, String table_name, RefPtr<Select> select_statement, bool is_temporary, bool is_error_if_table_exists)
+        : m_schema_name(move(schema_name))
+        , m_table_name(move(table_name))
+        , m_select_statement(move(select_statement))
+        , m_is_temporary(is_temporary)
+        , m_is_error_if_table_exists(is_error_if_table_exists)
+    {
+    }
+
     CreateTable(String schema_name, String table_name, NonnullRefPtrVector<ColumnDefinition> columns, bool is_temporary, bool is_error_if_table_exists)
         : m_schema_name(move(schema_name))
         , m_table_name(move(table_name))
@@ -659,16 +701,99 @@ public:
 
     const String& schema_name() const { return m_schema_name; }
     const String& table_name() const { return m_table_name; }
-    const NonnullRefPtrVector<ColumnDefinition> columns() const { return m_columns; }
+
+    bool has_selection() const { return !m_select_statement.is_null(); }
+    const RefPtr<Select>& select_statement() const { return m_select_statement; }
+
+    bool has_columns() const { return !m_columns.is_empty(); }
+    const NonnullRefPtrVector<ColumnDefinition>& columns() const { return m_columns; }
+
     bool is_temporary() const { return m_is_temporary; }
     bool is_error_if_table_exists() const { return m_is_error_if_table_exists; }
 
 private:
     String m_schema_name;
     String m_table_name;
+    RefPtr<Select> m_select_statement;
     NonnullRefPtrVector<ColumnDefinition> m_columns;
     bool m_is_temporary;
     bool m_is_error_if_table_exists;
+};
+
+class AlterTable : public Statement {
+public:
+    const String& schema_name() const { return m_schema_name; }
+    const String& table_name() const { return m_table_name; }
+
+protected:
+    AlterTable(String schema_name, String table_name)
+        : m_schema_name(move(schema_name))
+        , m_table_name(move(table_name))
+    {
+    }
+
+private:
+    String m_schema_name;
+    String m_table_name;
+};
+
+class RenameTable : public AlterTable {
+public:
+    RenameTable(String schema_name, String table_name, String new_table_name)
+        : AlterTable(move(schema_name), move(table_name))
+        , m_new_table_name(move(new_table_name))
+    {
+    }
+
+    const String& new_table_name() const { return m_new_table_name; }
+
+private:
+    String m_new_table_name;
+};
+
+class RenameColumn : public AlterTable {
+public:
+    RenameColumn(String schema_name, String table_name, String column_name, String new_column_name)
+        : AlterTable(move(schema_name), move(table_name))
+        , m_column_name(move(column_name))
+        , m_new_column_name(move(new_column_name))
+    {
+    }
+
+    const String& column_name() const { return m_column_name; }
+    const String& new_column_name() const { return m_new_column_name; }
+
+private:
+    String m_column_name;
+    String m_new_column_name;
+};
+
+class AddColumn : public AlterTable {
+public:
+    AddColumn(String schema_name, String table_name, NonnullRefPtr<ColumnDefinition> column)
+        : AlterTable(move(schema_name), move(table_name))
+        , m_column(move(column))
+    {
+    }
+
+    const NonnullRefPtr<ColumnDefinition>& column() const { return m_column; }
+
+private:
+    NonnullRefPtr<ColumnDefinition> m_column;
+};
+
+class DropColumn : public AlterTable {
+public:
+    DropColumn(String schema_name, String table_name, String column_name)
+        : AlterTable(move(schema_name), move(table_name))
+        , m_column_name(move(column_name))
+    {
+    }
+
+    const String& column_name() const { return m_column_name; }
+
+private:
+    String m_column_name;
 };
 
 class DropTable : public Statement {
@@ -688,6 +813,110 @@ private:
     String m_schema_name;
     String m_table_name;
     bool m_is_error_if_table_does_not_exist;
+};
+
+enum class ConflictResolution {
+    Abort,
+    Fail,
+    Ignore,
+    Replace,
+    Rollback,
+};
+
+class Insert : public Statement {
+public:
+    Insert(RefPtr<CommonTableExpressionList> common_table_expression_list, ConflictResolution conflict_resolution, String schema_name, String table_name, String alias, Vector<String> column_names, NonnullRefPtrVector<ChainedExpression> chained_expressions)
+        : m_common_table_expression_list(move(common_table_expression_list))
+        , m_conflict_resolution(conflict_resolution)
+        , m_schema_name(move(schema_name))
+        , m_table_name(move(table_name))
+        , m_alias(move(alias))
+        , m_column_names(move(column_names))
+        , m_chained_expressions(move(chained_expressions))
+    {
+    }
+
+    Insert(RefPtr<CommonTableExpressionList> common_table_expression_list, ConflictResolution conflict_resolution, String schema_name, String table_name, String alias, Vector<String> column_names, RefPtr<Select> select_statement)
+        : m_common_table_expression_list(move(common_table_expression_list))
+        , m_conflict_resolution(conflict_resolution)
+        , m_schema_name(move(schema_name))
+        , m_table_name(move(table_name))
+        , m_alias(move(alias))
+        , m_column_names(move(column_names))
+        , m_select_statement(move(select_statement))
+    {
+    }
+
+    Insert(RefPtr<CommonTableExpressionList> common_table_expression_list, ConflictResolution conflict_resolution, String schema_name, String table_name, String alias, Vector<String> column_names)
+        : m_common_table_expression_list(move(common_table_expression_list))
+        , m_conflict_resolution(conflict_resolution)
+        , m_schema_name(move(schema_name))
+        , m_table_name(move(table_name))
+        , m_alias(move(alias))
+        , m_column_names(move(column_names))
+    {
+    }
+
+    const RefPtr<CommonTableExpressionList>& common_table_expression_list() const { return m_common_table_expression_list; }
+    ConflictResolution conflict_resolution() const { return m_conflict_resolution; }
+    const String& schema_name() const { return m_schema_name; }
+    const String& table_name() const { return m_table_name; }
+    const String& alias() const { return m_alias; }
+    const Vector<String>& column_names() const { return m_column_names; }
+
+    bool default_values() const { return !has_expressions() && !has_selection(); };
+
+    bool has_expressions() const { return !m_chained_expressions.is_empty(); }
+    const NonnullRefPtrVector<ChainedExpression>& chained_expressions() const { return m_chained_expressions; }
+
+    bool has_selection() const { return !m_select_statement.is_null(); }
+    const RefPtr<Select>& select_statement() const { return m_select_statement; }
+
+private:
+    RefPtr<CommonTableExpressionList> m_common_table_expression_list;
+    ConflictResolution m_conflict_resolution;
+    String m_schema_name;
+    String m_table_name;
+    String m_alias;
+    Vector<String> m_column_names;
+    NonnullRefPtrVector<ChainedExpression> m_chained_expressions;
+    RefPtr<Select> m_select_statement;
+};
+
+class Update : public Statement {
+public:
+    struct UpdateColumns {
+        Vector<String> column_names;
+        NonnullRefPtr<Expression> expression;
+    };
+
+    Update(RefPtr<CommonTableExpressionList> common_table_expression_list, ConflictResolution conflict_resolution, NonnullRefPtr<QualifiedTableName> qualified_table_name, Vector<UpdateColumns> update_columns, NonnullRefPtrVector<TableOrSubquery> table_or_subquery_list, RefPtr<Expression> where_clause, RefPtr<ReturningClause> returning_clause)
+        : m_common_table_expression_list(move(common_table_expression_list))
+        , m_conflict_resolution(conflict_resolution)
+        , m_qualified_table_name(move(qualified_table_name))
+        , m_update_columns(move(update_columns))
+        , m_table_or_subquery_list(move(table_or_subquery_list))
+        , m_where_clause(move(where_clause))
+        , m_returning_clause(move(returning_clause))
+    {
+    }
+
+    const RefPtr<CommonTableExpressionList>& common_table_expression_list() const { return m_common_table_expression_list; }
+    ConflictResolution conflict_resolution() const { return m_conflict_resolution; }
+    const NonnullRefPtr<QualifiedTableName>& qualified_table_name() const { return m_qualified_table_name; }
+    const Vector<UpdateColumns>& update_columns() const { return m_update_columns; }
+    const NonnullRefPtrVector<TableOrSubquery>& table_or_subquery_list() const { return m_table_or_subquery_list; }
+    const RefPtr<Expression>& where_clause() const { return m_where_clause; }
+    const RefPtr<ReturningClause>& returning_clause() const { return m_returning_clause; }
+
+private:
+    RefPtr<CommonTableExpressionList> m_common_table_expression_list;
+    ConflictResolution m_conflict_resolution;
+    NonnullRefPtr<QualifiedTableName> m_qualified_table_name;
+    Vector<UpdateColumns> m_update_columns;
+    NonnullRefPtrVector<TableOrSubquery> m_table_or_subquery_list;
+    RefPtr<Expression> m_where_clause;
+    RefPtr<ReturningClause> m_returning_clause;
 };
 
 class Delete : public Statement {

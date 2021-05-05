@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, The SerenityOS developers.
+ * Copyright (c) 2020, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -34,6 +34,7 @@ class Fd2FdRedirection;
 class FunctionDeclaration;
 class ForLoop;
 class Glob;
+class Heredoc;
 class HistoryEvent;
 class Execute;
 class IfCond;

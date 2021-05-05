@@ -74,6 +74,7 @@ int seteuid(uid_t);
 int setegid(gid_t);
 int setuid(uid_t);
 int setgid(gid_t);
+int setreuid(uid_t, uid_t);
 int setresuid(uid_t, uid_t, uid_t);
 int setresgid(gid_t, gid_t, gid_t);
 pid_t tcgetpgrp(int fd);
@@ -129,8 +130,6 @@ enum {
     _PC_VDISABLE
 };
 
-#define HOST_NAME_MAX 64
-
 #define R_OK 4
 #define W_OK 2
 #define X_OK 1
@@ -171,14 +170,6 @@ enum {
 #define _SC_CLK_TCK _SC_CLK_TCK
 
 long sysconf(int name);
-
-struct crypt_data {
-    int initialized;
-    char result[65];
-};
-
-char* crypt(const char* key, const char* salt);
-char* crypt_r(const char* key, const char* salt, struct crypt_data* data);
 
 // If opterr is set (the default), print error messages to stderr.
 extern int opterr;

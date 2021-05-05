@@ -44,7 +44,7 @@ bool TimeManagement::is_valid_clock_id(clockid_t clock_id)
     };
 }
 
-KResultOr<Time> TimeManagement::current_time(clockid_t clock_id) const
+Time TimeManagement::current_time(clockid_t clock_id) const
 {
     switch (clock_id) {
     case CLOCK_MONOTONIC:
@@ -58,7 +58,8 @@ KResultOr<Time> TimeManagement::current_time(clockid_t clock_id) const
     case CLOCK_REALTIME_COARSE:
         return epoch_time(TimePrecision::Coarse);
     default:
-        return KResult(EINVAL);
+        // Syscall entrypoint is missing a is_valid_clock_id(..) check?
+        VERIFY_NOT_REACHED();
     }
 }
 
@@ -153,7 +154,7 @@ UNMAP_AFTER_INIT void TimeManagement::initialize(u32 cpu)
 
 void TimeManagement::set_system_timer(HardwareTimerBase& timer)
 {
-    VERIFY(Processor::id() == 0); // This should only be called on the BSP!
+    VERIFY(Processor::is_bootstrap_processor()); // This should only be called on the BSP!
     auto original_callback = m_system_timer->set_callback(nullptr);
     m_system_timer->disable();
     timer.set_callback(move(original_callback));
@@ -269,7 +270,7 @@ UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_non_legacy_hardware_timers()
         // Update the time. We don't really care too much about the
         // frequency of the interrupt because we'll query the main
         // counter to get an accurate time.
-        if (Processor::id() == 0) {
+        if (Processor::is_bootstrap_processor()) {
             // TODO: Have the other CPUs call system_timer_tick directly
             increment_time_since_boot_hpet();
         }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers
+ * Copyright (c) 2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -14,7 +14,7 @@ namespace Kernel {
 
 NonnullRefPtr<RamdiskDevice> RamdiskDevice::create(const RamdiskController& controller, NonnullOwnPtr<Region>&& region, int major, int minor)
 {
-    return adopt(*new RamdiskDevice(controller, move(region), major, minor));
+    return adopt_ref(*new RamdiskDevice(controller, move(region), major, minor));
 }
 
 RamdiskDevice::RamdiskDevice(const RamdiskController& controller, NonnullOwnPtr<Region>&& region, int major, int minor)
@@ -35,7 +35,7 @@ const char* RamdiskDevice::class_name() const
 
 void RamdiskDevice::start_request(AsyncBlockDeviceRequest& request)
 {
-    LOCKER(m_lock);
+    Locker locker(m_lock);
 
     u8* base = m_region->vaddr().as_ptr();
     size_t size = m_region->size();

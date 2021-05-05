@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers
+ * Copyright (c) 2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,7 +13,7 @@ namespace Kernel {
 
 NonnullRefPtr<RamdiskController> RamdiskController::initialize()
 {
-    return adopt(*new RamdiskController());
+    return adopt_ref(*new RamdiskController());
 }
 
 bool RamdiskController::reset()

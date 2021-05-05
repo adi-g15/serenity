@@ -553,7 +553,7 @@ void FormattingContext::compute_height_for_absolutely_positioned_non_replaced_el
 
 void FormattingContext::layout_absolutely_positioned_element(Box& box)
 {
-    auto& containing_block = context_box();
+    auto& containing_block = *box.containing_block();
     auto& box_model = box.box_model();
 
     auto specified_width = box.computed_values().width().resolved_or_auto(box, containing_block.width());
@@ -619,8 +619,9 @@ void FormattingContext::layout_absolutely_positioned_element(Box& box)
 
 void FormattingContext::compute_height_for_absolutely_positioned_replaced_element(ReplacedBox& box)
 {
-    // FIXME: Implement this.
-    return compute_height_for_absolutely_positioned_non_replaced_element(box);
+    // 10.6.5 Absolutely positioned, replaced elements
+    // The used value of 'height' is determined as for inline replaced elements.
+    box.set_height(compute_height_for_replaced_element(box));
 }
 
 }

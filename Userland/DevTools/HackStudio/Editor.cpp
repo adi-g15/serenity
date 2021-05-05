@@ -7,6 +7,7 @@
 
 #include "Editor.h"
 #include "Debugger/Debugger.h"
+#include "Debugger/EvaluateExpressionDialog.h"
 #include "EditorWrapper.h"
 #include "HackStudio.h"
 #include "Language.h"
@@ -16,6 +17,7 @@
 #include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
 #include <LibCpp/SyntaxHighlighter.h>
+#include <LibGUI/Action.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/GMLSyntaxHighlighter.h>
 #include <LibGUI/INISyntaxHighlighter.h>
@@ -42,6 +44,28 @@ Editor::Editor()
     m_documentation_tooltip_window->set_rect(0, 0, 500, 400);
     m_documentation_tooltip_window->set_window_type(GUI::WindowType::Tooltip);
     m_documentation_page_view = m_documentation_tooltip_window->set_main_widget<Web::OutOfProcessWebView>();
+    m_evaluate_expression_action = GUI::Action::create("Evaluate expression", { Mod_Ctrl, Key_E }, [this](auto&) {
+        if (!execution_position().has_value()) {
+            GUI::MessageBox::show(window(), "Program is not running", "Error", GUI::MessageBox::Type::Error);
+            return;
+        }
+        auto dialog = EvaluateExpressionDialog::construct(window());
+        dialog->exec();
+    });
+    m_move_execution_to_line_action = GUI::Action::create("Set execution point to line", [this](auto&) {
+        if (!execution_position().has_value()) {
+            GUI::MessageBox::show(window(), "Program must be paused", "Error", GUI::MessageBox::Type::Error);
+            return;
+        }
+        auto success = Debugger::the().set_execution_position(currently_open_file(), cursor().line());
+        if (success) {
+            set_execution_position(cursor().line());
+        } else {
+            GUI::MessageBox::show(window(), "Failed to set execution position", "Error", GUI::MessageBox::Type::Error);
+        }
+    });
+    add_custom_context_menu_action(*m_evaluate_expression_action);
+    add_custom_context_menu_action(*m_move_execution_to_line_action);
 }
 
 Editor::~Editor()
@@ -469,8 +493,8 @@ void Editor::on_edit_action(const GUI::Command& command)
     if (!m_language_client)
         return;
 
-    if (command.is_insert_text()) {
-        const GUI::InsertTextCommand& insert_command = static_cast<const GUI::InsertTextCommand&>(command);
+    if (is<GUI::InsertTextCommand>(command)) {
+        auto const& insert_command = static_cast<GUI::InsertTextCommand const&>(command);
         m_language_client->insert_text(
             code_document().file_path(),
             insert_command.text(),
@@ -479,8 +503,8 @@ void Editor::on_edit_action(const GUI::Command& command)
         return;
     }
 
-    if (command.is_remove_text()) {
-        const GUI::RemoveTextCommand& remove_command = static_cast<const GUI::RemoveTextCommand&>(command);
+    if (is<GUI::RemoveTextCommand>(command)) {
+        auto const& remove_command = static_cast<GUI::RemoveTextCommand const&>(command);
         m_language_client->remove_text(
             code_document().file_path(),
             remove_command.range().start().line(),

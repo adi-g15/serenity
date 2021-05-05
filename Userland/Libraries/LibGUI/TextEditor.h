@@ -11,8 +11,8 @@
 #include <AK/NonnullRefPtrVector.h>
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/Timer.h>
+#include <LibGUI/AbstractScrollableWidget.h>
 #include <LibGUI/Forward.h>
-#include <LibGUI/ScrollableWidget.h>
 #include <LibGUI/TextDocument.h>
 #include <LibGUI/TextRange.h>
 #include <LibGfx/TextAlignment.h>
@@ -22,7 +22,7 @@
 namespace GUI {
 
 class TextEditor
-    : public ScrollableWidget
+    : public AbstractScrollableWidget
     , public TextDocument::Client
     , public Syntax::HighlighterClient {
     C_OBJECT(TextEditor);
@@ -178,7 +178,7 @@ public:
 
     void add_code_point(u32 code_point);
     void reset_cursor_blink();
-    void toggle_selection_if_needed_for_event(bool is_selecting);
+    void update_selection(bool is_selecting);
 
     int number_of_visible_lines() const;
     Gfx::IntRect cursor_content_rect() const;

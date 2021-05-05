@@ -18,7 +18,7 @@ namespace GUI {
 
 NonnullRefPtr<TextDocument> TextDocument::create(Client* client)
 {
-    return adopt(*new TextDocument(client));
+    return adopt_ref(*new TextDocument(client));
 }
 
 TextDocument::TextDocument(Client* client)
@@ -26,11 +26,11 @@ TextDocument::TextDocument(Client* client)
     if (client)
         m_clients.set(client);
     append_line(make<TextDocumentLine>(*this));
+    set_modified(false);
 
-    // TODO: Instead of a repating timer, this we should call a delayed 2 sec timer when the user types.
-    m_undo_timer = Core::Timer::construct(
+    m_undo_timer = Core::Timer::create_single_shot(
         2000, [this] {
-            update_undo_timer();
+            update_undo();
         });
 }
 
@@ -91,6 +91,9 @@ bool TextDocument::set_text(const StringView& text)
         client->document_did_set_text();
 
     clear_text_guard.disarm();
+
+    // FIXME: Should the modified state be cleared on some of the earlier returns as well?
+    set_modified(false);
     return true;
 }
 
@@ -305,6 +308,11 @@ void TextDocument::update_views(Badge<TextDocumentLine>)
 
 void TextDocument::notify_did_change()
 {
+    set_modified(true);
+
+    if (m_undo_timer)
+        m_undo_timer->restart();
+
     if (m_client_notifications_enabled) {
         for (auto* client : m_clients)
             client->document_did_change();
@@ -628,7 +636,11 @@ TextPosition TextDocument::first_word_break_before(const TextPosition& position,
 
     auto target = position;
     auto line = this->line(target.line());
-    auto is_start_alphanumeric = isalnum(line.code_points()[target.column() - (start_at_column_before ? 1 : 0)]);
+    auto modifier = start_at_column_before ? 1 : 0;
+    if (target.column() == line.length())
+        modifier = 1;
+
+    auto is_start_alphanumeric = isalnum(line.code_points()[target.column() - modifier]);
 
     while (target.column() > 0) {
         auto prev_code_point = line.code_points()[target.column() - 1];
@@ -781,7 +793,7 @@ void RemoveTextCommand::undo()
     m_document.set_all_cursors(new_cursor);
 }
 
-void TextDocument::update_undo_timer()
+void TextDocument::update_undo()
 {
     m_undo_stack.finalize_current_combo();
 }
@@ -872,6 +884,11 @@ const TextDocumentSpan* TextDocument::span_at(const TextPosition& position) cons
             return &span;
     }
     return nullptr;
+}
+
+void TextDocument::set_modified(bool modified)
+{
+    m_modified = modified;
 }
 
 }

@@ -16,8 +16,7 @@
 namespace SymbolServer {
 
 class ClientConnection final
-    : public IPC::ClientConnection<SymbolClientEndpoint, SymbolServerEndpoint>
-    , public SymbolServerEndpoint {
+    : public IPC::ClientConnection<SymbolClientEndpoint, SymbolServerEndpoint> {
     C_OBJECT(ClientConnection);
 
 public:
@@ -27,8 +26,8 @@ public:
     virtual void die() override;
 
 private:
-    virtual OwnPtr<Messages::SymbolServer::GreetResponse> handle(const Messages::SymbolServer::Greet&) override;
-    virtual OwnPtr<Messages::SymbolServer::SymbolicateResponse> handle(const Messages::SymbolServer::Symbolicate&) override;
+    virtual void greet() override;
+    virtual Messages::SymbolServer::SymbolicateResponse symbolicate(String const&, u32) override;
 };
 
 }

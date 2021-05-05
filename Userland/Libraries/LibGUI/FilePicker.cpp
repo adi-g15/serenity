@@ -11,6 +11,7 @@
 #include <LibGUI/Action.h>
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
+#include <LibGUI/CommonLocationsProvider.h>
 #include <LibGUI/FileIconProvider.h>
 #include <LibGUI/FilePicker.h>
 #include <LibGUI/FilePickerDialogGML.h>
@@ -61,7 +62,7 @@ Optional<String> FilePicker::get_save_filepath(Window* parent_window, const Stri
     return {};
 }
 
-FilePicker::FilePicker(Window* parent_window, Mode mode, const StringView& file_name, const StringView& path)
+FilePicker::FilePicker(Window* parent_window, Mode mode, const StringView& filename, const StringView& path)
     : Dialog(parent_window)
     , m_model(FileSystemModel::create())
     , m_mode(mode)
@@ -147,7 +148,7 @@ FilePicker::FilePicker(Window* parent_window, Mode mode, const StringView& file_
     m_filename_textbox = *widget.find_descendant_of_type_named<GUI::TextBox>("filename_textbox");
     m_filename_textbox->set_focus(true);
     if (m_mode == Mode::Save) {
-        m_filename_textbox->set_text(file_name);
+        m_filename_textbox->set_text(filename);
         m_filename_textbox->select_all();
     }
     m_filename_textbox->on_return_pressed = [&] {
@@ -207,14 +208,20 @@ FilePicker::FilePicker(Window* parent_window, Mode mode, const StringView& file_
         }
     };
 
-    auto& common_locations_frame = *widget.find_descendant_of_type_named<GUI::Frame>("common_locations_frame");
+    auto& common_locations_frame = *widget.find_descendant_of_type_named<Frame>("common_locations_frame");
     common_locations_frame.set_background_role(Gfx::ColorRole::Tray);
-    auto add_common_location_button = [&](auto& name, String path) -> GUI::Button& {
+    m_model->on_complete = [&] {
+        for (auto location_button : m_common_location_buttons)
+            location_button.button.set_checked(m_model->root_path() == location_button.path);
+    };
+
+    for (auto& location : CommonLocationsProvider::common_locations()) {
+        String path = location.path;
         auto& button = common_locations_frame.add<GUI::Button>();
         button.set_button_style(Gfx::ButtonStyle::Tray);
         button.set_foreground_role(Gfx::ColorRole::TrayText);
         button.set_text_alignment(Gfx::TextAlignment::CenterLeft);
-        button.set_text(move(name));
+        button.set_text(location.name);
         button.set_icon(FileIconProvider::icon_for_path(path).bitmap_for_size(16));
         button.set_fixed_height(22);
         button.set_checkable(true);
@@ -222,26 +229,8 @@ FilePicker::FilePicker(Window* parent_window, Mode mode, const StringView& file_
         button.on_click = [this, path] {
             set_path(path);
         };
-        return button;
-    };
-
-    auto& root_button = add_common_location_button("Root", "/");
-    auto& home_button = add_common_location_button("Home", Core::StandardPaths::home_directory());
-    auto& desktop_button = add_common_location_button("Desktop", Core::StandardPaths::desktop_directory());
-
-    m_model->on_complete = [&] {
-        if (m_model->root_path() == Core::StandardPaths::home_directory()) {
-            home_button.set_checked(true);
-        } else if (m_model->root_path() == Core::StandardPaths::desktop_directory()) {
-            desktop_button.set_checked(true);
-        } else if (m_model->root_path() == "/") {
-            root_button.set_checked(true);
-        } else {
-            home_button.set_checked(false);
-            desktop_button.set_checked(false);
-            root_button.set_checked(false);
-        }
-    };
+        m_common_location_buttons.append({ path, button });
+    }
 
     set_path(path);
 }

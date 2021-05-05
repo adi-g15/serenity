@@ -16,8 +16,7 @@
 namespace ImageDecoder {
 
 class ClientConnection final
-    : public IPC::ClientConnection<ImageDecoderClientEndpoint, ImageDecoderServerEndpoint>
-    , public ImageDecoderServerEndpoint {
+    : public IPC::ClientConnection<ImageDecoderClientEndpoint, ImageDecoderServerEndpoint> {
     C_OBJECT(ClientConnection);
 
 public:
@@ -27,8 +26,8 @@ public:
     virtual void die() override;
 
 private:
-    virtual OwnPtr<Messages::ImageDecoderServer::GreetResponse> handle(const Messages::ImageDecoderServer::Greet&) override;
-    virtual OwnPtr<Messages::ImageDecoderServer::DecodeImageResponse> handle(const Messages::ImageDecoderServer::DecodeImage&) override;
+    virtual void greet() override;
+    virtual Messages::ImageDecoderServer::DecodeImageResponse decode_image(Core::AnonymousBuffer const&) override;
 };
 
 }

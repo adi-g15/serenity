@@ -30,8 +30,8 @@ EventLoop::EventLoop()
     : m_window_server(Core::LocalServer::construct())
     , m_wm_server(Core::LocalServer::construct())
 {
-    m_keyboard_fd = open("/dev/keyboard", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-    m_mouse_fd = open("/dev/mouse", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    m_keyboard_fd = open("/dev/keyboard0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    m_mouse_fd = open("/dev/mouse0", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
 
     bool ok = m_window_server->take_over_from_system_server("/tmp/portal/window");
     VERIFY(ok);
@@ -64,14 +64,14 @@ EventLoop::EventLoop()
         m_keyboard_notifier = Core::Notifier::construct(m_keyboard_fd, Core::Notifier::Read);
         m_keyboard_notifier->on_ready_to_read = [this] { drain_keyboard(); };
     } else {
-        dbgln("Couldn't open /dev/keyboard");
+        dbgln("Couldn't open /dev/keyboard0");
     }
 
     if (m_mouse_fd >= 0) {
         m_mouse_notifier = Core::Notifier::construct(m_mouse_fd, Core::Notifier::Read);
         m_mouse_notifier->on_ready_to_read = [this] { drain_mouse(); };
     } else {
-        dbgln("Couldn't open /dev/mouse");
+        dbgln("Couldn't open /dev/mouse0");
     }
 }
 
@@ -97,9 +97,7 @@ void EventLoop::drain_mouse()
         return;
     for (size_t i = 0; i < npackets; ++i) {
         auto& packet = packets[i];
-#if WSMESSAGELOOP_DEBUG
-        dbgln("EventLoop: Mouse X {}, Y {}, Z {}, relative={}", packet.x, packet.y, packet.z, packet.is_relative);
-#endif
+        dbgln_if(WSMESSAGELOOP_DEBUG, "EventLoop: Mouse X {}, Y {}, Z {}, relative={}", packet.x, packet.y, packet.z, packet.is_relative);
         buttons = packet.buttons;
 
         state.is_relative = packet.is_relative;
@@ -115,9 +113,7 @@ void EventLoop::drain_mouse()
 
         if (buttons != state.buttons) {
             state.buttons = buttons;
-#if WSMESSAGELOOP_DEBUG
-            dbgln("EventLoop: Mouse Button Event");
-#endif
+            dbgln_if(WSMESSAGELOOP_DEBUG, "EventLoop: Mouse Button Event");
             screen.on_receive_mouse_data(state);
             if (state.is_relative) {
                 state.x = 0;

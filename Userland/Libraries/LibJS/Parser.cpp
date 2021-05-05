@@ -228,7 +228,7 @@ NonnullRefPtr<Program> Parser::parse_program()
 {
     auto rule_start = push_start();
     ScopePusher scope(*this, ScopePusher::Var | ScopePusher::Let | ScopePusher::Function);
-    auto program = adopt(*new Program({ m_filename, rule_start.position(), position() }));
+    auto program = adopt_ref(*new Program({ m_filename, rule_start.position(), position() }));
 
     bool first = true;
     while (!done()) {
@@ -346,7 +346,6 @@ RefPtr<FunctionExpression> Parser::try_parse_arrow_function_expression(bool expe
     auto rule_start = push_start();
 
     ArmedScopeGuard state_rollback_guard = [&] {
-        m_parser_state.m_var_scopes.take_last();
         load_state();
     };
 

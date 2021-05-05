@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
- * Copyright (c) 2020, the SerenityOS developers
+ * Copyright (c) 2020, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -41,7 +41,7 @@ public:
     EditorWrapper& current_editor_wrapper();
     void set_current_editor_wrapper(RefPtr<EditorWrapper>);
 
-    String currently_open_file() const { return m_currently_open_file; }
+    const String& active_file() const { return m_current_editor_wrapper->filename(); }
     void initialize_menubar(GUI::Menubar&);
 
     Locator& locator()
@@ -49,6 +49,12 @@ public:
         VERIFY(m_locator);
         return *m_locator;
     }
+
+    enum class ContinueDecision {
+        No,
+        Yes
+    };
+    ContinueDecision warn_unsaved_changes(const String& prompt);
 
 private:
     static String get_full_path_of_serenity_source(const String& file);
@@ -86,12 +92,14 @@ private:
     NonnullRefPtr<GUI::Action> create_set_autocomplete_mode_action();
 
     void add_new_editor(GUI::Widget& parent);
-    RefPtr<EditorWrapper> get_editor_of_file(const String& file_name);
+    RefPtr<EditorWrapper> get_editor_of_file(const String& filename);
     String get_project_executable_path() const;
 
     void on_action_tab_change();
     void reveal_action_tab(GUI::Widget&);
     void initialize_debugger();
+
+    void handle_external_file_deletion(const String& filepath);
 
     void create_open_files_view(GUI::Widget& parent);
     void create_form_editor(GUI::Widget& parent);
@@ -110,15 +118,14 @@ private:
     void build(TerminalWrapper& wrapper);
 
     void hide_action_tabs();
+    bool any_document_is_dirty() const;
 
     NonnullRefPtrVector<EditorWrapper> m_all_editor_wrappers;
     RefPtr<EditorWrapper> m_current_editor_wrapper;
 
-    // FIXME: This doesn't seem compatible with multiple split editors
-    String m_currently_open_file;
-
     HashMap<String, NonnullRefPtr<ProjectFile>> m_open_files;
-    Vector<String> m_open_files_vector; // NOTE: This contains the keys from m_open_files
+    HashMap<String, NonnullRefPtr<Core::FileWatcher>> m_file_watchers;
+    Vector<String> m_open_files_vector; // NOTE: This contains the keys from m_open_files and m_file_watchers
 
     OwnPtr<Project> m_project;
 

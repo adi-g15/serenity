@@ -80,7 +80,7 @@ static bool parse_pwddb_entry(const String& line)
 {
     auto parts = line.split_view(':', true);
     if (parts.size() != 7) {
-        fprintf(stderr, "getpwent(): Malformed entry on line %u\n", s_line_number);
+        dbgln("getpwent(): Malformed entry on line {}", s_line_number);
         return false;
     }
 
@@ -94,12 +94,12 @@ static bool parse_pwddb_entry(const String& line)
 
     auto uid = uid_string.to_uint();
     if (!uid.has_value()) {
-        fprintf(stderr, "getpwent(): Malformed UID on line %u\n", s_line_number);
+        dbgln("getpwent(): Malformed UID on line {}", s_line_number);
         return false;
     }
     auto gid = gid_string.to_uint();
     if (!gid.has_value()) {
-        fprintf(stderr, "getpwent(): Malformed GID on line %u\n", s_line_number);
+        dbgln("getpwent(): Malformed GID on line {}", s_line_number);
         return false;
     }
 
@@ -124,7 +124,7 @@ struct passwd* getpwent()
             return nullptr;
 
         if (ferror(s_stream)) {
-            fprintf(stderr, "getpwent(): Read error: %s\n", strerror(ferror(s_stream)));
+            dbgln("getpwent(): Read error: {}", strerror(ferror(s_stream)));
             return nullptr;
         }
 
@@ -152,11 +152,11 @@ static void construct_pwd(struct passwd* pwd, char* buf, struct passwd** result)
     auto* buf_shell = &buf[s_dir.length() + 1 + s_gecos.length() + 1 + s_name.length() + 1 + s_gecos.length() + 1];
 
     bool ok = true;
-    ok = ok || s_name.copy_characters_to_buffer(buf_name, s_name.length() + 1);
-    ok = ok || s_passwd.copy_characters_to_buffer(buf_passwd, s_passwd.length() + 1);
-    ok = ok || s_gecos.copy_characters_to_buffer(buf_gecos, s_gecos.length() + 1);
-    ok = ok || s_dir.copy_characters_to_buffer(buf_dir, s_dir.length() + 1);
-    ok = ok || s_shell.copy_characters_to_buffer(buf_shell, s_shell.length() + 1);
+    ok = ok && s_name.copy_characters_to_buffer(buf_name, s_name.length() + 1);
+    ok = ok && s_passwd.copy_characters_to_buffer(buf_passwd, s_passwd.length() + 1);
+    ok = ok && s_gecos.copy_characters_to_buffer(buf_gecos, s_gecos.length() + 1);
+    ok = ok && s_dir.copy_characters_to_buffer(buf_dir, s_dir.length() + 1);
+    ok = ok && s_shell.copy_characters_to_buffer(buf_shell, s_shell.length() + 1);
 
     VERIFY(ok);
 

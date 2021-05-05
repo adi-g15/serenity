@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020-2021, SerenityOS developers
+ * Copyright (c) 2020-2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -161,7 +161,7 @@ String StyleFunctionRule::to_string() const
     builder.append(m_name);
     builder.append("(");
     append_raw(builder, ", ", m_values);
-    builder.append(");");
+    builder.append(")");
 
     return builder.to_string();
 }

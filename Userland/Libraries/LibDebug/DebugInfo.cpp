@@ -42,15 +42,11 @@ void DebugInfo::parse_scopes_impl(const Dwarf::DIE& die)
             return;
 
         if (child.get_attribute(Dwarf::Attribute::Inline).has_value()) {
-#if SPAM_DEBUG
-            dbgln("DWARF inlined functions are not supported");
-#endif
+            dbgln_if(SPAM_DEBUG, "DWARF inlined functions are not supported");
             return;
         }
         if (child.get_attribute(Dwarf::Attribute::Ranges).has_value()) {
-#if SPAM_DEBUG
-            dbgln("DWARF ranges are not supported");
-#endif
+            dbgln_if(SPAM_DEBUG, "DWARF ranges are not supported");
             return;
         }
         auto name = child.get_attribute(Dwarf::Attribute::Name);
@@ -61,9 +57,7 @@ void DebugInfo::parse_scopes_impl(const Dwarf::DIE& die)
             scope.name = name.value().data.as_string;
 
         if (!child.get_attribute(Dwarf::Attribute::LowPc).has_value()) {
-#if SPAM_DEBUG
-            dbgln("DWARF: Couldn't find attribute LowPc for scope");
-#endif
+            dbgln_if(SPAM_DEBUG, "DWARF: Couldn't find attribute LowPc for scope");
             return;
         }
         scope.address_low = child.get_attribute(Dwarf::Attribute::LowPc).value().data.as_u32;
@@ -92,7 +86,7 @@ void DebugInfo::prepare_lines()
 
     Vector<Dwarf::LineProgram::LineInfo> all_lines;
     while (!stream.eof()) {
-        Dwarf::LineProgram program(stream);
+        Dwarf::LineProgram program(m_dwarf_info, stream);
         all_lines.append(program.lines());
     }
 
@@ -187,7 +181,7 @@ static Optional<Dwarf::DIE> parse_variable_type_die(const Dwarf::DIE& variable_d
     if (!type_die_offset.has_value())
         return {};
 
-    VERIFY(type_die_offset.value().type == Dwarf::DIE::AttributeValue::Type::DieReference);
+    VERIFY(type_die_offset.value().type == Dwarf::AttributeValue::Type::DieReference);
 
     auto type_die = variable_die.get_die_at_offset(type_die_offset.value().data.as_u32);
     auto type_name = type_die.get_attribute(Dwarf::Attribute::Name);
@@ -212,11 +206,11 @@ static void parse_variable_location(const Dwarf::DIE& variable_die, DebugInfo::V
         return;
 
     switch (location_info.value().type) {
-    case Dwarf::DIE::AttributeValue::Type::UnsignedNumber:
+    case Dwarf::AttributeValue::Type::UnsignedNumber:
         variable_info.location_type = DebugInfo::VariableInfo::LocationType::Address;
         variable_info.location_data.address = location_info.value().data.as_u32;
         break;
-    case Dwarf::DIE::AttributeValue::Type::DwarfExpression: {
+    case Dwarf::AttributeValue::Type::DwarfExpression: {
         auto expression_bytes = ReadonlyBytes { location_info.value().data.as_raw_bytes.bytes, location_info.value().data.as_raw_bytes.length };
         auto value = Dwarf::Expression::evaluate(expression_bytes, regs);
 
@@ -253,13 +247,13 @@ OwnPtr<DebugInfo::VariableInfo> DebugInfo::create_variable_info(const Dwarf::DIE
         auto constant = variable_die.get_attribute(Dwarf::Attribute::ConstValue);
         VERIFY(constant.has_value());
         switch (constant.value().type) {
-        case Dwarf::DIE::AttributeValue::Type::UnsignedNumber:
+        case Dwarf::AttributeValue::Type::UnsignedNumber:
             variable_info->constant_data.as_u32 = constant.value().data.as_u32;
             break;
-        case Dwarf::DIE::AttributeValue::Type::SignedNumber:
+        case Dwarf::AttributeValue::Type::SignedNumber:
             variable_info->constant_data.as_i32 = constant.value().data.as_i32;
             break;
-        case Dwarf::DIE::AttributeValue::Type::String:
+        case Dwarf::AttributeValue::Type::String:
             variable_info->constant_data.as_string = constant.value().data.as_string;
             break;
         default:

@@ -54,9 +54,6 @@ public:
     static NonnullRefPtr<VM> create();
     ~VM();
 
-    bool should_log_exceptions() const { return m_should_log_exceptions; }
-    void set_should_log_exceptions(bool b) { m_should_log_exceptions = b; }
-
     Heap& heap() { return m_heap; }
     const Heap& heap() const { return m_heap; }
 
@@ -106,7 +103,12 @@ public:
             m_call_stack.append(&call_frame);
     }
 
-    void pop_call_frame() { m_call_stack.take_last(); }
+    void pop_call_frame()
+    {
+        m_call_stack.take_last();
+        if (m_call_stack.is_empty() && on_call_stack_emptied)
+            on_call_stack_emptied();
+    }
 
     CallFrame& call_frame() { return *m_call_stack.last(); }
     const CallFrame& call_frame() const { return *m_call_stack.last(); }
@@ -229,6 +231,7 @@ public:
 
     void promise_rejection_tracker(const Promise&, Promise::RejectionOperation) const;
 
+    AK::Function<void()> on_call_stack_emptied;
     AK::Function<void(const Promise&)> on_promise_unhandled_rejection;
     AK::Function<void(const Promise&)> on_promise_rejection_handled;
 
@@ -265,7 +268,6 @@ private:
     Shape* m_scope_object_shape { nullptr };
 
     bool m_underscore_is_last_value { false };
-    bool m_should_log_exceptions { false };
 };
 
 template<>

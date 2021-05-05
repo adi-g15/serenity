@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, the SerenityOS developers.
+ * Copyright (c) 2018-2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -33,14 +33,14 @@ public:
     virtual int total_samples() = 0;
     virtual u32 sample_rate() = 0;
     virtual u16 num_channels() = 0;
-    virtual u16 bits_per_sample() = 0;
+    virtual PcmSampleFormat pcm_format() = 0;
     virtual RefPtr<Core::File> file() = 0;
 };
 
 class Loader : public RefCounted<Loader> {
 public:
-    static NonnullRefPtr<Loader> create(const StringView& path) { return adopt(*new Loader(path)); }
-    static NonnullRefPtr<Loader> create(const ByteBuffer& buffer) { return adopt(*new Loader(buffer)); }
+    static NonnullRefPtr<Loader> create(const StringView& path) { return adopt_ref(*new Loader(path)); }
+    static NonnullRefPtr<Loader> create(const ByteBuffer& buffer) { return adopt_ref(*new Loader(buffer)); }
 
     bool has_error() const { return m_plugin ? m_plugin->has_error() : true; }
     const char* error_string() const { return m_plugin ? m_plugin->error_string() : "No loader plugin available"; }
@@ -62,7 +62,7 @@ public:
     int total_samples() const { return m_plugin ? m_plugin->total_samples() : 0; }
     u32 sample_rate() const { return m_plugin ? m_plugin->sample_rate() : 0; }
     u16 num_channels() const { return m_plugin ? m_plugin->num_channels() : 0; }
-    u16 bits_per_sample() const { return m_plugin ? m_plugin->bits_per_sample() : 0; }
+    u16 bits_per_sample() const { return m_plugin ? pcm_bits_per_sample(m_plugin->pcm_format()) : 0; }
     RefPtr<Core::File> file() const { return m_plugin ? m_plugin->file() : nullptr; }
 
 private:

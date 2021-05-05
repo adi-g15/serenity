@@ -176,7 +176,10 @@ int main(int argc, char** argv)
             if (!uninitialized_memory)
                 return Crash::Failure::UnexpectedError;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
             [[maybe_unused]] volatile auto x = uninitialized_memory[0][0];
+#pragma GCC diagnostic pop
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
@@ -199,7 +202,10 @@ int main(int argc, char** argv)
             if (!uninitialized_memory)
                 return Crash::Failure::UnexpectedError;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
             uninitialized_memory[4][0] = 1;
+#pragma GCC diagnostic pop
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
@@ -261,8 +267,14 @@ int main(int argc, char** argv)
                 return Crash::Failure::UnexpectedError;
 
             u8* bad_esp = bad_stack + 2048;
+#ifndef __LP64__
             asm volatile("mov %%eax, %%esp" ::"a"(bad_esp));
             asm volatile("pushl $0");
+#else
+            asm volatile("movq %%rax, %%rsp" ::"a"(bad_esp));
+            asm volatile("pushq $0");
+#endif
+
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }

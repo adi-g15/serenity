@@ -73,6 +73,31 @@ KResultOr<int> Process::sys$setgid(gid_t new_gid)
     return 0;
 }
 
+KResultOr<int> Process::sys$setreuid(uid_t new_ruid, uid_t new_euid)
+{
+    REQUIRE_PROMISE(id);
+
+    if (new_ruid == (uid_t)-1)
+        new_ruid = uid();
+    if (new_euid == (uid_t)-1)
+        new_euid = euid();
+
+    auto ok = [this](uid_t id) { return id == uid() || id == euid() || id == suid(); };
+    if (!ok(new_ruid) || !ok(new_euid))
+        return EPERM;
+
+    if (new_ruid < (uid_t)-1 || new_euid < (uid_t)-1)
+        return EINVAL;
+
+    if (euid() != new_euid)
+        set_dumpable(false);
+
+    ProtectedDataMutationScope scope { *this };
+    m_uid = new_ruid;
+    m_euid = new_euid;
+    return 0;
+}
+
 KResultOr<int> Process::sys$setresuid(uid_t new_ruid, uid_t new_euid, uid_t new_suid)
 {
     REQUIRE_PROMISE(id);
@@ -138,7 +163,8 @@ KResultOr<int> Process::sys$setgroups(ssize_t count, Userspace<const gid_t*> use
     }
 
     Vector<gid_t> new_extra_gids;
-    new_extra_gids.resize(count);
+    if (!new_extra_gids.try_resize(count))
+        return ENOMEM;
     if (!copy_n_from_user(new_extra_gids.data(), user_gids, count))
         return EFAULT;
 
@@ -149,7 +175,8 @@ KResultOr<int> Process::sys$setgroups(ssize_t count, Userspace<const gid_t*> use
     }
 
     ProtectedDataMutationScope scope { *this };
-    m_extra_gids.resize(unique_extra_gids.size());
+    if (!m_extra_gids.try_resize(unique_extra_gids.size()))
+        return ENOMEM;
     size_t i = 0;
     for (auto& extra_gid : unique_extra_gids) {
         if (extra_gid == gid())

@@ -17,7 +17,7 @@ namespace Kernel {
 
 void UDPSocket::for_each(Function<void(const UDPSocket&)> callback)
 {
-    LOCKER(sockets_by_port().lock(), Lock::Mode::Shared);
+    Locker locker(sockets_by_port().lock(), Lock::Mode::Shared);
     for (auto it : sockets_by_port().resource())
         callback(*it.value);
 }
@@ -33,7 +33,7 @@ SocketHandle<UDPSocket> UDPSocket::from_port(u16 port)
 {
     RefPtr<UDPSocket> socket;
     {
-        LOCKER(sockets_by_port().lock(), Lock::Mode::Shared);
+        Locker locker(sockets_by_port().lock(), Lock::Mode::Shared);
         auto it = sockets_by_port().resource().find(port);
         if (it == sockets_by_port().resource().end())
             return {};
@@ -50,13 +50,13 @@ UDPSocket::UDPSocket(int protocol)
 
 UDPSocket::~UDPSocket()
 {
-    LOCKER(sockets_by_port().lock());
+    Locker locker(sockets_by_port().lock());
     sockets_by_port().resource().remove(local_port());
 }
 
 NonnullRefPtr<UDPSocket> UDPSocket::create(int protocol)
 {
-    return adopt(*new UDPSocket(protocol));
+    return adopt_ref(*new UDPSocket(protocol));
 }
 
 KResultOr<size_t> UDPSocket::protocol_receive(ReadonlyBytes raw_ipv4_packet, UserOrKernelBuffer& buffer, size_t buffer_size, [[maybe_unused]] int flags)
@@ -97,14 +97,14 @@ KResult UDPSocket::protocol_connect(FileDescription&, ShouldBlock)
     return KSuccess;
 }
 
-int UDPSocket::protocol_allocate_local_port()
+KResultOr<u16> UDPSocket::protocol_allocate_local_port()
 {
     static const u16 first_ephemeral_port = 32768;
     static const u16 last_ephemeral_port = 60999;
     static const u16 ephemeral_port_range_size = last_ephemeral_port - first_ephemeral_port;
     u16 first_scan_port = first_ephemeral_port + get_good_random<u16>() % ephemeral_port_range_size;
 
-    LOCKER(sockets_by_port().lock());
+    Locker locker(sockets_by_port().lock());
     for (u16 port = first_scan_port;;) {
         auto it = sockets_by_port().resource().find(port);
         if (it == sockets_by_port().resource().end()) {
@@ -118,12 +118,12 @@ int UDPSocket::protocol_allocate_local_port()
         if (port == first_scan_port)
             break;
     }
-    return -EADDRINUSE;
+    return EADDRINUSE;
 }
 
 KResult UDPSocket::protocol_bind()
 {
-    LOCKER(sockets_by_port().lock());
+    Locker locker(sockets_by_port().lock());
     if (sockets_by_port().resource().contains(local_port()))
         return EADDRINUSE;
     sockets_by_port().resource().set(local_port(), this);

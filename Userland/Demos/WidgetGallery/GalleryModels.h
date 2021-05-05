@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021, the SerenityOS developers
+ * Copyright (c) 2021, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,7 +13,7 @@
 
 class MouseCursorModel final : public GUI::Model {
 public:
-    static NonnullRefPtr<MouseCursorModel> create() { return adopt(*new MouseCursorModel); }
+    static NonnullRefPtr<MouseCursorModel> create() { return adopt_ref(*new MouseCursorModel); }
     virtual ~MouseCursorModel() override { }
 
     enum Column {
@@ -86,7 +86,7 @@ private:
 
 class FileIconsModel final : public GUI::Model {
 public:
-    static NonnullRefPtr<FileIconsModel> create() { return adopt(*new FileIconsModel); }
+    static NonnullRefPtr<FileIconsModel> create() { return adopt_ref(*new FileIconsModel); }
     virtual ~FileIconsModel() override { }
 
     enum Column {

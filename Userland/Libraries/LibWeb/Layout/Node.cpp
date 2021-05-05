@@ -319,7 +319,7 @@ bool Node::handle_mousewheel(Badge<EventHandler>, const Gfx::IntPoint&, unsigned
         if (!containing_block->is_scrollable())
             return false;
         auto new_offset = containing_block->scroll_offset();
-        new_offset.move_by(0, wheel_delta);
+        new_offset.translate_by(0, wheel_delta);
         containing_block->set_scroll_offset(new_offset);
         return true;
     }
@@ -346,7 +346,7 @@ bool Node::is_inline_block() const
 
 NonnullRefPtr<NodeWithStyle> NodeWithStyle::create_anonymous_wrapper() const
 {
-    auto wrapper = adopt(*new BlockBox(const_cast<DOM::Document&>(document()), nullptr, m_computed_values.clone_inherited_values()));
+    auto wrapper = adopt_ref(*new BlockBox(const_cast<DOM::Document&>(document()), nullptr, m_computed_values.clone_inherited_values()));
     wrapper->m_font = m_font;
     wrapper->m_font_size = m_font_size;
     wrapper->m_line_height = m_line_height;

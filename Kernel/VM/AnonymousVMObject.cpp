@@ -41,13 +41,13 @@ RefPtr<VMObject> AnonymousVMObject::clone()
     // one would keep the one it still has. This ensures that the original
     // one and this one, as well as the clone have sufficient resources
     // to cow all pages as needed
-    m_shared_committed_cow_pages = adopt(*new CommittedCowPages(need_cow_pages));
+    m_shared_committed_cow_pages = adopt_ref(*new CommittedCowPages(need_cow_pages));
 
     // Both original and clone become COW. So create a COW map for ourselves
     // or reset all pages to be copied again if we were previously cloned
     ensure_or_reset_cow_map();
 
-    return adopt(*new AnonymousVMObject(*this));
+    return adopt_ref(*new AnonymousVMObject(*this));
 }
 
 RefPtr<AnonymousVMObject> AnonymousVMObject::create_with_size(size_t size, AllocationStrategy commit)
@@ -57,17 +57,17 @@ RefPtr<AnonymousVMObject> AnonymousVMObject::create_with_size(size_t size, Alloc
         if (!MM.commit_user_physical_pages(ceil_div(size, static_cast<size_t>(PAGE_SIZE))))
             return {};
     }
-    return adopt(*new AnonymousVMObject(size, commit));
+    return adopt_ref(*new AnonymousVMObject(size, commit));
 }
 
 NonnullRefPtr<AnonymousVMObject> AnonymousVMObject::create_with_physical_pages(NonnullRefPtrVector<PhysicalPage> physical_pages)
 {
-    return adopt(*new AnonymousVMObject(physical_pages));
+    return adopt_ref(*new AnonymousVMObject(physical_pages));
 }
 
 NonnullRefPtr<AnonymousVMObject> AnonymousVMObject::create_with_physical_page(PhysicalPage& page)
 {
-    return adopt(*new AnonymousVMObject(page));
+    return adopt_ref(*new AnonymousVMObject(page));
 }
 
 RefPtr<AnonymousVMObject> AnonymousVMObject::create_for_physical_range(PhysicalAddress paddr, size_t size)
@@ -76,7 +76,7 @@ RefPtr<AnonymousVMObject> AnonymousVMObject::create_for_physical_range(PhysicalA
         dbgln("Shenanigans! create_for_physical_range({}, {}) would wrap around", paddr, size);
         return nullptr;
     }
-    return adopt(*new AnonymousVMObject(paddr, size));
+    return adopt_ref(*new AnonymousVMObject(paddr, size));
 }
 
 AnonymousVMObject::AnonymousVMObject(size_t size, AllocationStrategy strategy)
@@ -161,7 +161,7 @@ AnonymousVMObject::~AnonymousVMObject()
 
 int AnonymousVMObject::purge()
 {
-    LOCKER(m_paging_lock);
+    Locker locker(m_paging_lock);
     return purge_impl();
 }
 
@@ -443,9 +443,7 @@ PageFaultResponse AnonymousVMObject::handle_cow_fault(size_t page_index, Virtual
     auto& page_slot = physical_pages()[page_index];
     bool have_committed = m_shared_committed_cow_pages && is_nonvolatile(page_index);
     if (page_slot->ref_count() == 1) {
-#if PAGE_FAULT_DEBUG
-        dbgln("    >> It's a COW page but nobody is sharing it anymore. Remap r/w");
-#endif
+        dbgln_if(PAGE_FAULT_DEBUG, "    >> It's a COW page but nobody is sharing it anymore. Remap r/w");
         set_should_cow(page_index, false);
         if (have_committed) {
             if (m_shared_committed_cow_pages->return_one())
@@ -456,14 +454,10 @@ PageFaultResponse AnonymousVMObject::handle_cow_fault(size_t page_index, Virtual
 
     RefPtr<PhysicalPage> page;
     if (have_committed) {
-#if PAGE_FAULT_DEBUG
-        dbgln("    >> It's a committed COW page and it's time to COW!");
-#endif
+        dbgln_if(PAGE_FAULT_DEBUG, "    >> It's a committed COW page and it's time to COW!");
         page = m_shared_committed_cow_pages->allocate_one();
     } else {
-#if PAGE_FAULT_DEBUG
-        dbgln("    >> It's a COW page and it's time to COW!");
-#endif
+        dbgln_if(PAGE_FAULT_DEBUG, "    >> It's a COW page and it's time to COW!");
         page = MM.allocate_user_physical_page(MemoryManager::ShouldZeroFill::No);
         if (page.is_null()) {
             dmesgln("MM: handle_cow_fault was unable to allocate a physical page");

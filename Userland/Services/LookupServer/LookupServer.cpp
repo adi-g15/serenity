@@ -37,7 +37,7 @@ LookupServer::LookupServer()
     s_the = this;
 
     auto config = Core::ConfigFile::get_for_system("LookupServer");
-    dbgln("Using network config file at {}", config->file_name());
+    dbgln("Using network config file at {}", config->filename());
     m_nameservers = config->read_entry("DNS", "Nameservers", "1.1.1.1,1.0.0.1").split(',');
 
     load_etc_hosts();
@@ -46,6 +46,7 @@ LookupServer::LookupServer()
         m_dns_server = DNSServer::construct(this);
         // TODO: drop root privileges here.
     }
+    m_mdns = MulticastDNS::construct(this);
 
     m_local_server = Core::LocalServer::construct(this);
     m_local_server->on_ready_to_accept = [this]() {
@@ -113,9 +114,7 @@ void LookupServer::load_etc_hosts()
 
 Vector<DNSAnswer> LookupServer::lookup(const DNSName& name, unsigned short record_type)
 {
-#if LOOKUPSERVER_DEBUG
-    dbgln("Got request for '{}'", name.as_string());
-#endif
+    dbgln_if(LOOKUPSERVER_DEBUG, "Got request for '{}'", name.as_string());
 
     Vector<DNSAnswer> answers;
     auto add_answer = [&](const DNSAnswer& answer) {
@@ -144,9 +143,7 @@ Vector<DNSAnswer> LookupServer::lookup(const DNSName& name, unsigned short recor
         for (auto& answer : cached_answers.value()) {
             // TODO: Actually remove expired answers from the cache.
             if (answer.type() == record_type && !answer.has_expired()) {
-#if LOOKUPSERVER_DEBUG
-                dbgln("Cache hit: {} -> {}", name.as_string(), answer.record_data());
-#endif
+                dbgln_if(LOOKUPSERVER_DEBUG, "Cache hit: {} -> {}", name.as_string(), answer.record_data());
                 add_answer(answer);
             }
         }
@@ -154,11 +151,17 @@ Vector<DNSAnswer> LookupServer::lookup(const DNSName& name, unsigned short recor
             return answers;
     }
 
+    // Look up .local names using mDNS instead of DNS nameservers.
+    if (name.as_string().ends_with(".local")) {
+        answers = m_mdns->lookup(name, record_type);
+        for (auto& answer : answers)
+            put_in_cache(answer);
+        return answers;
+    }
+
     // Third, ask the upstream nameservers.
     for (auto& nameserver : m_nameservers) {
-#if LOOKUPSERVER_DEBUG
-        dbgln("Doing lookup using nameserver '{}'", nameserver);
-#endif
+        dbgln_if(LOOKUPSERVER_DEBUG, "Doing lookup using nameserver '{}'", nameserver);
         bool did_get_response = false;
         int retries = 3;
         Vector<DNSAnswer> upstream_answers;

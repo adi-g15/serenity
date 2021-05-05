@@ -35,26 +35,24 @@ void ClientConnection::die()
     s_connections.remove(client_id());
 }
 
-OwnPtr<Messages::ClipboardServer::GreetResponse> ClientConnection::handle(const Messages::ClipboardServer::Greet&)
+void ClientConnection::greet()
 {
-    return make<Messages::ClipboardServer::GreetResponse>();
 }
 
-OwnPtr<Messages::ClipboardServer::SetClipboardDataResponse> ClientConnection::handle(const Messages::ClipboardServer::SetClipboardData& message)
+void ClientConnection::set_clipboard_data(Core::AnonymousBuffer const& data, String const& mime_type, IPC::Dictionary const& metadata)
 {
-    Storage::the().set_data(message.data(), message.mime_type(), message.metadata().entries());
-    return make<Messages::ClipboardServer::SetClipboardDataResponse>();
+    Storage::the().set_data(data, mime_type, metadata.entries());
 }
 
-OwnPtr<Messages::ClipboardServer::GetClipboardDataResponse> ClientConnection::handle(const Messages::ClipboardServer::GetClipboardData&)
+Messages::ClipboardServer::GetClipboardDataResponse ClientConnection::get_clipboard_data()
 {
     auto& storage = Storage::the();
-    return make<Messages::ClipboardServer::GetClipboardDataResponse>(storage.buffer(), storage.mime_type(), storage.metadata());
+    return { storage.buffer(), storage.mime_type(), storage.metadata() };
 }
 
 void ClientConnection::notify_about_clipboard_change()
 {
-    post_message(Messages::ClipboardClient::ClipboardDataChanged(Storage::the().mime_type()));
+    async_clipboard_data_changed(Storage::the().mime_type());
 }
 
 }

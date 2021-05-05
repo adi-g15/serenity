@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2021, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2021, Luke Wilde <lukew@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -33,10 +34,14 @@
 #include <LibWeb/HTML/AttributeNames.h>
 #include <LibWeb/HTML/EventNames.h>
 #include <LibWeb/HTML/HTMLAnchorElement.h>
+#include <LibWeb/HTML/HTMLAreaElement.h>
 #include <LibWeb/HTML/HTMLBodyElement.h>
+#include <LibWeb/HTML/HTMLEmbedElement.h>
+#include <LibWeb/HTML/HTMLFormElement.h>
 #include <LibWeb/HTML/HTMLFrameSetElement.h>
 #include <LibWeb/HTML/HTMLHeadElement.h>
 #include <LibWeb/HTML/HTMLHtmlElement.h>
+#include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/HTML/HTMLScriptElement.h>
 #include <LibWeb/HTML/HTMLTitleElement.h>
 #include <LibWeb/InProcessWebView.h>
@@ -269,7 +274,7 @@ void Document::set_title(const String& title)
     }
 
     title_element->remove_all_children(true);
-    title_element->append_child(adopt(*new Text(*this, title)));
+    title_element->append_child(adopt_ref(*new Text(*this, title)));
 
     if (auto* page = this->page()) {
         if (frame() == &page->main_frame())
@@ -433,7 +438,7 @@ void Document::update_style()
 
 RefPtr<Layout::Node> Document::create_layout_node()
 {
-    return adopt(*new Layout::InitialContainingBlockBox(*this, CSS::StyleProperties::create()));
+    return adopt_ref(*new Layout::InitialContainingBlockBox(*this, CSS::StyleProperties::create()));
 }
 
 void Document::set_link_color(Color color)
@@ -511,6 +516,7 @@ NonnullRefPtr<HTMLCollection> Document::get_elements_by_class_name(FlyString con
     });
 }
 
+// https://html.spec.whatwg.org/multipage/obsolete.html#dom-document-applets
 NonnullRefPtr<HTMLCollection> Document::applets()
 {
     // FIXME: This should return the same HTMLCollection object every time,
@@ -518,12 +524,69 @@ NonnullRefPtr<HTMLCollection> Document::applets()
     return HTMLCollection::create(*this, [] { return false; });
 }
 
+// https://html.spec.whatwg.org/multipage/obsolete.html#dom-document-anchors
 NonnullRefPtr<HTMLCollection> Document::anchors()
 {
     // FIXME: This should return the same HTMLCollection object every time,
     //        but that would cause a reference cycle since HTMLCollection refs the root.
     return HTMLCollection::create(*this, [](Element const& element) {
         return is<HTML::HTMLAnchorElement>(element) && element.has_attribute(HTML::AttributeNames::name);
+    });
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-images
+NonnullRefPtr<HTMLCollection> Document::images()
+{
+    // FIXME: This should return the same HTMLCollection object every time,
+    //        but that would cause a reference cycle since HTMLCollection refs the root.
+    return HTMLCollection::create(*this, [](Element const& element) {
+        return is<HTML::HTMLImageElement>(element);
+    });
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-embeds
+NonnullRefPtr<HTMLCollection> Document::embeds()
+{
+    // FIXME: This should return the same HTMLCollection object every time,
+    //        but that would cause a reference cycle since HTMLCollection refs the root.
+    return HTMLCollection::create(*this, [](Element const& element) {
+        return is<HTML::HTMLEmbedElement>(element);
+    });
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-plugins
+NonnullRefPtr<HTMLCollection> Document::plugins()
+{
+    return embeds();
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-links
+NonnullRefPtr<HTMLCollection> Document::links()
+{
+    // FIXME: This should return the same HTMLCollection object every time,
+    //        but that would cause a reference cycle since HTMLCollection refs the root.
+    return HTMLCollection::create(*this, [](Element const& element) {
+        return (is<HTML::HTMLAnchorElement>(element) || is<HTML::HTMLAreaElement>(element)) && element.has_attribute(HTML::AttributeNames::href);
+    });
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-forms
+NonnullRefPtr<HTMLCollection> Document::forms()
+{
+    // FIXME: This should return the same HTMLCollection object every time,
+    //        but that would cause a reference cycle since HTMLCollection refs the root.
+    return HTMLCollection::create(*this, [](Element const& element) {
+        return is<HTML::HTMLFormElement>(element);
+    });
+}
+
+// https://html.spec.whatwg.org/multipage/dom.html#dom-document-scripts
+NonnullRefPtr<HTMLCollection> Document::scripts()
+{
+    // FIXME: This should return the same HTMLCollection object every time,
+    //        but that would cause a reference cycle since HTMLCollection refs the root.
+    return HTMLCollection::create(*this, [](Element const& element) {
+        return is<HTML::HTMLScriptElement>(element);
     });
 }
 
@@ -560,6 +623,35 @@ JS::Interpreter& Document::interpreter()
         auto& vm = Bindings::main_thread_vm();
         // TODO: Hook up vm.on_promise_unhandled_rejection and vm.on_promise_rejection_handled
         // See https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Using_promises#promise_rejection_events
+        vm.on_call_stack_emptied = [this] {
+            auto& vm = m_interpreter->vm();
+            vm.run_queued_promise_jobs();
+            // Note: This is not an exception check for the promise jobs, they will just leave any
+            // exception that already exists intact and never throw a new one (without cleaning it
+            // up, that is). Taking care of any previous unhandled exception just happens to be the
+            // very last thing we want to do, even after running promise jobs.
+            if (auto* exception = vm.exception()) {
+                auto value = exception->value();
+                if (value.is_object()) {
+                    auto& object = value.as_object();
+                    auto name = object.get_without_side_effects(vm.names.name).value_or(JS::js_undefined());
+                    auto message = object.get_without_side_effects(vm.names.message).value_or(JS::js_undefined());
+                    if (name.is_accessor() || name.is_native_property() || message.is_accessor() || message.is_native_property()) {
+                        // The result is not going to be useful, let's just print the value. This affects DOMExceptions, for example.
+                        dbgln("Unhandled JavaScript exception: {}", value);
+                    } else {
+                        dbgln("Unhandled JavaScript exception: [{}] {}", name, message);
+                    }
+                } else {
+                    dbgln("Unhandled JavaScript exception: {}", value);
+                }
+                for (auto& traceback_frame : exception->traceback()) {
+                    auto& function_name = traceback_frame.function_name;
+                    auto& source_range = traceback_frame.source_range;
+                    dbgln("  {} at {}:{}:{}", function_name, source_range.filename, source_range.start.line, source_range.start.column);
+                }
+            }
+        };
         m_interpreter = JS::Interpreter::create<Bindings::WindowObject>(vm, *m_window);
     }
     return *m_interpreter;
@@ -598,17 +690,17 @@ NonnullRefPtr<Element> Document::create_element_ns(const String& namespace_, con
 
 NonnullRefPtr<DocumentFragment> Document::create_document_fragment()
 {
-    return adopt(*new DocumentFragment(*this));
+    return adopt_ref(*new DocumentFragment(*this));
 }
 
 NonnullRefPtr<Text> Document::create_text_node(const String& data)
 {
-    return adopt(*new Text(*this, data));
+    return adopt_ref(*new Text(*this, data));
 }
 
 NonnullRefPtr<Comment> Document::create_comment(const String& data)
 {
-    return adopt(*new Comment(*this, data));
+    return adopt_ref(*new Comment(*this, data));
 }
 
 NonnullRefPtr<Range> Document::create_range()
@@ -732,10 +824,10 @@ void Document::adopt_node(Node& node)
 ExceptionOr<NonnullRefPtr<Node>> Document::adopt_node_binding(NonnullRefPtr<Node> node)
 {
     if (is<Document>(*node))
-        return DOM ::NotSupportedError::create("Cannot adopt a document into a document");
+        return DOM ::NotSupportedError::create("Cannot adopt_ref a document into a document");
 
     if (is<ShadowRoot>(*node))
-        return DOM::HierarchyRequestError::create("Cannot adopt a shadow root into a document");
+        return DOM::HierarchyRequestError::create("Cannot adopt_ref a shadow root into a document");
 
     if (is<DocumentFragment>(*node) && downcast<DocumentFragment>(*node).host())
         return node;

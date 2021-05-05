@@ -53,7 +53,10 @@ private:
     NonnullRefPtr<Statement> parse_statement();
     NonnullRefPtr<Statement> parse_statement_with_expression_list(RefPtr<CommonTableExpressionList>);
     NonnullRefPtr<CreateTable> parse_create_table_statement();
+    NonnullRefPtr<CreateTable> parse_alter_table_statement();
     NonnullRefPtr<DropTable> parse_drop_table_statement();
+    NonnullRefPtr<Delete> parse_insert_statement(RefPtr<CommonTableExpressionList>);
+    NonnullRefPtr<Delete> parse_update_statement(RefPtr<CommonTableExpressionList>);
     NonnullRefPtr<Delete> parse_delete_statement(RefPtr<CommonTableExpressionList>);
     NonnullRefPtr<Select> parse_select_statement(RefPtr<CommonTableExpressionList>);
     NonnullRefPtr<CommonTableExpressionList> parse_common_table_expression_list();
@@ -68,6 +71,7 @@ private:
     Optional<NonnullRefPtr<Expression>> parse_chained_expression();
     Optional<NonnullRefPtr<Expression>> parse_cast_expression();
     Optional<NonnullRefPtr<Expression>> parse_case_expression();
+    Optional<NonnullRefPtr<Expression>> parse_exists_expression(bool invert_expression, TokenType opening_token = TokenType::Exists);
     Optional<NonnullRefPtr<Expression>> parse_collate_expression(NonnullRefPtr<Expression> expression);
     Optional<NonnullRefPtr<Expression>> parse_is_expression(NonnullRefPtr<Expression> expression);
     Optional<NonnullRefPtr<Expression>> parse_match_expression(NonnullRefPtr<Expression> lhs, bool invert_expression);
@@ -84,6 +88,27 @@ private:
     NonnullRefPtr<ResultColumn> parse_result_column();
     NonnullRefPtr<TableOrSubquery> parse_table_or_subquery();
     NonnullRefPtr<OrderingTerm> parse_ordering_term();
+    void parse_schema_and_table_name(String& schema_name, String& table_name);
+    ConflictResolution parse_conflict_resolution();
+
+    template<typename ParseCallback>
+    void parse_comma_separated_list(bool surrounded_by_parentheses, ParseCallback&& parse_callback)
+    {
+        if (surrounded_by_parentheses)
+            consume(TokenType::ParenOpen);
+
+        while (!has_errors() && !match(TokenType::Eof)) {
+            parse_callback();
+
+            if (!match(TokenType::Comma))
+                break;
+
+            consume(TokenType::Comma);
+        };
+
+        if (surrounded_by_parentheses)
+            consume(TokenType::ParenClose);
+    }
 
     Token consume();
     Token consume(TokenType type);

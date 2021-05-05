@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, The SerenityOS developers.
+ * Copyright (c) 2020, the SerenityOS developers.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -16,7 +16,7 @@ public:
     virtual ~GeminiResponse() override;
     static NonnullRefPtr<GeminiResponse> create(int status, String meta)
     {
-        return adopt(*new GeminiResponse(status, meta));
+        return adopt_ref(*new GeminiResponse(status, meta));
     }
 
     int status() const { return m_status; }

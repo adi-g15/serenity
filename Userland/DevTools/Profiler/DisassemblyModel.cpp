@@ -14,6 +14,8 @@
 #include <ctype.h>
 #include <stdio.h>
 
+namespace Profiler {
+
 static const Gfx::Bitmap& heat_gradient()
 {
     static RefPtr<Gfx::Bitmap> bitmap;
@@ -48,10 +50,14 @@ DisassemblyModel::DisassemblyModel(Profile& profile, ProfileNode& node)
         kernel_elf = make<ELF::Image>((const u8*)m_kernel_file->data(), m_kernel_file->size());
         elf = kernel_elf.ptr();
     } else {
-        // FIXME: This is kinda rickety looking with all the -> -> ->
-        auto library_data = node.process(profile)->library_metadata->library_containing(node.address());
+        auto process = node.process(profile, node.timestamp());
+        if (!process) {
+            dbgln("no process for address {:p}", node.address());
+            return;
+        }
+        auto library_data = process->library_metadata.library_containing(node.address());
         if (!library_data) {
-            dbgln("no library data");
+            dbgln("no library data for address {:p}", node.address());
             return;
         }
         elf = &library_data->object->elf;
@@ -180,4 +186,6 @@ GUI::Variant DisassemblyModel::data(const GUI::ModelIndex& index, GUI::ModelRole
 void DisassemblyModel::update()
 {
     did_update();
+}
+
 }

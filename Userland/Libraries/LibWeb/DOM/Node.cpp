@@ -232,9 +232,9 @@ void Node::insert_before(NonnullRefPtr<Node> node, RefPtr<Node> child, bool supp
         document().adopt_node(node_to_insert);
 
         if (!child)
-            TreeNode<Node>::append_child(node);
+            TreeNode<Node>::append_child(node_to_insert);
         else
-            TreeNode<Node>::insert_before(node, child);
+            TreeNode<Node>::insert_before(node_to_insert, child);
 
         // FIXME: If parent is a shadow host and node is a slottable, then assign a slot for node.
         // FIXME: If parent’s root is a shadow root, and parent is a slot whose assigned nodes is the empty list, then run signal a slot change for parent.
@@ -354,7 +354,7 @@ NonnullRefPtr<Node> Node::clone_node(Document* document, bool clone_children) co
     if (is<Element>(this)) {
         auto& element = *downcast<Element>(this);
         auto qualified_name = QualifiedName(element.local_name(), element.prefix(), element.namespace_());
-        auto element_copy = adopt(*new Element(*document, move(qualified_name)));
+        auto element_copy = adopt_ref(*new Element(*document, move(qualified_name)));
         element.for_each_attribute([&](auto& name, auto& value) {
             element_copy->set_attribute(name, value);
         });
@@ -370,22 +370,22 @@ NonnullRefPtr<Node> Node::clone_node(Document* document, bool clone_children) co
         copy = move(document_copy);
     } else if (is<DocumentType>(this)) {
         auto document_type = downcast<DocumentType>(this);
-        auto document_type_copy = adopt(*new DocumentType(*document));
+        auto document_type_copy = adopt_ref(*new DocumentType(*document));
         document_type_copy->set_name(document_type->name());
         document_type_copy->set_public_id(document_type->public_id());
         document_type_copy->set_system_id(document_type->system_id());
         copy = move(document_type_copy);
     } else if (is<Text>(this)) {
         auto text = downcast<Text>(this);
-        auto text_copy = adopt(*new Text(*document, text->data()));
+        auto text_copy = adopt_ref(*new Text(*document, text->data()));
         copy = move(text_copy);
     } else if (is<Comment>(this)) {
         auto comment = downcast<Comment>(this);
-        auto comment_copy = adopt(*new Comment(*document, comment->data()));
+        auto comment_copy = adopt_ref(*new Comment(*document, comment->data()));
         copy = move(comment_copy);
     } else if (is<ProcessingInstruction>(this)) {
         auto processing_instruction = downcast<ProcessingInstruction>(this);
-        auto processing_instruction_copy = adopt(*new ProcessingInstruction(*document, processing_instruction->data(), processing_instruction->target()));
+        auto processing_instruction_copy = adopt_ref(*new ProcessingInstruction(*document, processing_instruction->data(), processing_instruction->target()));
         copy = move(processing_instruction_copy);
     } else {
         dbgln("clone_node() not implemented for NodeType {}", (u16)m_type);
@@ -537,6 +537,14 @@ u16 Node::compare_document_position(RefPtr<Node> other)
 bool Node::is_host_including_inclusive_ancestor_of(const Node& other) const
 {
     return is_inclusive_ancestor_of(other) || (is<DocumentFragment>(other.root()) && downcast<DocumentFragment>(other.root())->host() && is_inclusive_ancestor_of(*downcast<DocumentFragment>(other.root())->host().ptr()));
+}
+
+// https://dom.spec.whatwg.org/#dom-node-ownerdocument
+RefPtr<Document> Node::owner_document() const
+{
+    if (is_document())
+        return nullptr;
+    return m_document;
 }
 
 }

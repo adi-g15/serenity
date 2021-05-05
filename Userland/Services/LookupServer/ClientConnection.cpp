@@ -28,31 +28,31 @@ void ClientConnection::die()
     s_connections.remove(client_id());
 }
 
-OwnPtr<Messages::LookupServer::LookupNameResponse> ClientConnection::handle(const Messages::LookupServer::LookupName& message)
+Messages::LookupServer::LookupNameResponse ClientConnection::lookup_name(String const& name)
 {
-    auto answers = LookupServer::the().lookup(message.name(), T_A);
+    auto answers = LookupServer::the().lookup(name, T_A);
     if (answers.is_empty())
-        return make<Messages::LookupServer::LookupNameResponse>(1, Vector<String>());
+        return { 1, Vector<String>() };
     Vector<String> addresses;
     for (auto& answer : answers) {
         addresses.append(answer.record_data());
     }
-    return make<Messages::LookupServer::LookupNameResponse>(0, move(addresses));
+    return { 0, move(addresses) };
 }
 
-OwnPtr<Messages::LookupServer::LookupAddressResponse> ClientConnection::handle(const Messages::LookupServer::LookupAddress& message)
+Messages::LookupServer::LookupAddressResponse ClientConnection::lookup_address(String const& address)
 {
-    if (message.address().length() != 4)
-        return make<Messages::LookupServer::LookupAddressResponse>(1, String());
-    IPv4Address address { (const u8*)message.address().characters() };
+    if (address.length() != 4)
+        return { 1, String() };
+    IPv4Address ip_address { (const u8*)address.characters() };
     auto name = String::formatted("{}.{}.{}.{}.in-addr.arpa",
-        address[3],
-        address[2],
-        address[1],
-        address[0]);
+        ip_address[3],
+        ip_address[2],
+        ip_address[1],
+        ip_address[0]);
     auto answers = LookupServer::the().lookup(name, T_PTR);
     if (answers.is_empty())
-        return make<Messages::LookupServer::LookupAddressResponse>(1, String());
-    return make<Messages::LookupServer::LookupAddressResponse>(0, answers[0].record_data());
+        return { 1, String() };
+    return { 0, answers[0].record_data() };
 }
 }

@@ -35,9 +35,7 @@ public:
     // ^Device
     virtual mode_t required_mode() const override { return 0440; }
 
-    //FIXME: It should be something like String::formatted("keyboard{}", minor())
-    // instead of a fixed string like this
-    virtual String device_name() const override { return "keyboard"; }
+    virtual String device_name() const override { return String::formatted("keyboard{}", minor()); }
 
     void update_modifier(u8 modifier, bool state)
     {
@@ -58,6 +56,7 @@ protected:
     bool m_caps_lock_on { false };
     bool m_num_lock_on { false };
     bool m_has_e0_prefix { false };
+    bool m_both_shift_keys_pressed { false };
 
     void key_state_changed(u8 raw, bool pressed);
 };

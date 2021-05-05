@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
  * Copyright (c) 2019-2020, William McPherson <willmcpherson2@gmail.com>
+ * Copyright (c) 2021, kleines Filmröllchen <malu.bertsch@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -64,7 +65,6 @@ int main(int argc, char** argv)
         while (!Core::EventLoop::current().was_exit_requested()) {
             track_manager.fill_buffer(buffer);
             audio->write(reinterpret_cast<u8*>(buffer.data()), buffer_size);
-            Core::EventLoop::current().post_event(main_widget, make<Core::CustomEvent>(0));
             Core::EventLoop::wake();
 
             if (need_to_write_wav) {
@@ -84,10 +84,15 @@ int main(int argc, char** argv)
     });
     audio_thread->start();
 
+    auto main_widget_updater = Core::Timer::construct(150, [&] {
+        Core::EventLoop::current().post_event(main_widget, make<Core::CustomEvent>(0));
+    });
+    main_widget_updater->start();
+
     auto menubar = GUI::Menubar::construct();
 
-    auto& app_menu = menubar->add_menu("File");
-    app_menu.add_action(GUI::Action::create("Export", { Mod_Ctrl, Key_E }, [&](const GUI::Action&) {
+    auto& file_menu = menubar->add_menu("File");
+    file_menu.add_action(GUI::Action::create("Export", { Mod_Ctrl, Key_E }, [&](const GUI::Action&) {
         save_path = GUI::FilePicker::get_save_filepath(window, "Untitled", "wav");
         if (!save_path.has_value())
             return;
@@ -99,8 +104,8 @@ int main(int argc, char** argv)
         }
         need_to_write_wav = true;
     }));
-    app_menu.add_separator();
-    app_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
+    file_menu.add_separator();
+    file_menu.add_action(GUI::CommonActions::make_quit_action([](auto&) {
         GUI::Application::the()->quit();
         return;
     }));

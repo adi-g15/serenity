@@ -45,7 +45,7 @@ public:
 
     static NonnullRefPtr<Document> create(const URL& url = "about:blank")
     {
-        return adopt(*new Document(url));
+        return adopt_ref(*new Document(url));
     }
     static NonnullRefPtr<Document> create_with_global_object(Bindings::WindowObject&)
     {
@@ -142,6 +142,12 @@ public:
 
     NonnullRefPtr<HTMLCollection> applets();
     NonnullRefPtr<HTMLCollection> anchors();
+    NonnullRefPtr<HTMLCollection> images();
+    NonnullRefPtr<HTMLCollection> embeds();
+    NonnullRefPtr<HTMLCollection> plugins();
+    NonnullRefPtr<HTMLCollection> links();
+    NonnullRefPtr<HTMLCollection> forms();
+    NonnullRefPtr<HTMLCollection> scripts();
 
     const String& source() const { return m_source; }
     void set_source(const String& source) { m_source = source; }

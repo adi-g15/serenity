@@ -51,6 +51,13 @@ EditorWrapper::EditorWrapper()
     m_editor->on_open = [](String path) {
         open_file(path);
     };
+
+    m_editor->on_change = [this] {
+        bool was_dirty = m_document_dirty;
+        m_document_dirty = true;
+        if (!was_dirty)
+            update_title();
+    };
 }
 
 EditorWrapper::~EditorWrapper()
@@ -79,6 +86,29 @@ void EditorWrapper::set_mode_non_displayable()
     palette.set_color(Gfx::ColorRole::BaseText, Color::from_rgb(0xffffff));
     editor().set_palette(palette);
     editor().document().set_text("The contents of this file could not be displayed. Is it a binary file?");
+}
+
+void EditorWrapper::set_filename(const String& filename)
+{
+    m_filename = filename;
+    update_title();
+}
+
+void EditorWrapper::save()
+{
+    editor().write_to_file(filename());
+    m_document_dirty = false;
+    update_title();
+}
+
+void EditorWrapper::update_title()
+{
+    StringBuilder title;
+    title.append(m_filename);
+
+    if (m_document_dirty)
+        title.append(" (*)");
+    m_filename_label->set_text(title.to_string());
 }
 
 }

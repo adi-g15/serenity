@@ -489,24 +489,27 @@ static bool parse_and_run(JS::Interpreter& interpreter, const StringView& source
         vm->clear_exception();
         out("Uncaught exception: ");
         print(exception->value());
-        auto& trace = exception->trace();
-        if (trace.size() > 1) {
+        auto& traceback = exception->traceback();
+        if (traceback.size() > 1) {
             unsigned repetitions = 0;
-            for (size_t i = 0; i < trace.size(); ++i) {
-                auto& function_name = trace[i];
-                if (i + 1 < trace.size() && trace[i + 1] == function_name) {
-                    repetitions++;
-                    continue;
+            for (size_t i = 0; i < traceback.size(); ++i) {
+                auto& traceback_frame = traceback[i];
+                if (i + 1 < traceback.size()) {
+                    auto& next_traceback_frame = traceback[i + 1];
+                    if (next_traceback_frame.function_name == traceback_frame.function_name) {
+                        repetitions++;
+                        continue;
+                    }
                 }
                 if (repetitions > 4) {
                     // If more than 5 (1 + >4) consecutive function calls with the same name, print
                     // the name only once and show the number of repetitions instead. This prevents
                     // printing ridiculously large call stacks of recursive functions.
-                    outln(" -> {}", function_name);
+                    outln(" -> {}", traceback_frame.function_name);
                     outln(" {} more calls", repetitions);
                 } else {
                     for (size_t j = 0; j < repetitions + 1; ++j)
-                        outln(" -> {}", function_name);
+                        outln(" -> {}", traceback_frame.function_name);
                 }
                 repetitions = 0;
             }
@@ -571,8 +574,8 @@ JS_DEFINE_NATIVE_FUNCTION(ReplObject::repl_help)
     outln("REPL commands:");
     outln("    exit(code): exit the REPL with specified code. Defaults to 0.");
     outln("    help(): display this menu");
-    outln("    load(files): accepts file names as params to load into running session. For example load(\"js/1.js\", \"js/2.js\", \"js/3.js\")");
-    outln("    save(file): accepts a file name, writes REPL input history to a file. For example: save(\"foo.txt\")");
+    outln("    load(files): accepts filenames as params to load into running session. For example load(\"js/1.js\", \"js/2.js\", \"js/3.js\")");
+    outln("    save(file): accepts a filename, writes REPL input history to a file. For example: save(\"foo.txt\")");
     return JS::js_undefined();
 }
 
@@ -582,10 +585,10 @@ JS_DEFINE_NATIVE_FUNCTION(ReplObject::load_file)
         return JS::Value(false);
 
     for (auto& file : vm.call_frame().arguments) {
-        String file_name = file.as_string().string();
-        auto js_file = Core::File::construct(file_name);
+        String filename = file.as_string().string();
+        auto js_file = Core::File::construct(filename);
         if (!js_file->open(Core::IODevice::ReadOnly)) {
-            warnln("Failed to open {}: {}", file_name, js_file->error_string());
+            warnln("Failed to open {}: {}", filename, js_file->error_string());
             continue;
         }
         auto file_contents = js_file->read_all();

@@ -1251,7 +1251,8 @@ Value Identifier::execute(Interpreter& interpreter, GlobalObject& global_object)
 
     auto value = interpreter.vm().get_variable(string(), global_object);
     if (value.is_empty()) {
-        interpreter.vm().throw_exception<ReferenceError>(global_object, ErrorType::UnknownIdentifier, string());
+        if (!interpreter.exception())
+            interpreter.vm().throw_exception<ReferenceError>(global_object, ErrorType::UnknownIdentifier, string());
         return {};
     }
     return value;
@@ -1694,7 +1695,7 @@ Value ObjectExpression::execute(Interpreter& interpreter, GlobalObject& global_o
 void MemberExpression::dump(int indent) const
 {
     print_indent(indent);
-    outln("%{}(computed={})", class_name(), is_computed());
+    outln("{}(computed={})", class_name(), is_computed());
     m_object->dump(indent + 1);
     m_property->dump(indent + 1);
 }

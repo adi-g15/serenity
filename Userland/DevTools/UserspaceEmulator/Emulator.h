@@ -160,7 +160,7 @@ private:
     pid_t virt$setsid();
     int virt$watch_file(FlatPtr, size_t);
     int virt$readlink(FlatPtr);
-    u32 virt$allocate_tls(size_t);
+    u32 virt$allocate_tls(FlatPtr, size_t);
     int virt$ptsname(int fd, FlatPtr buffer, size_t buffer_size);
     int virt$beep();
     int virt$ftruncate(int fd, FlatPtr length_addr);
@@ -169,6 +169,7 @@ private:
     int virt$recvfd(int, int);
     int virt$sendfd(int, int);
     int virt$msyscall(FlatPtr);
+    int virt$futex(FlatPtr);
 
     bool find_malloc_symbols(const MmapRegion& libc_text);
 

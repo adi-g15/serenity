@@ -122,18 +122,21 @@ public:
     virtual bool is_code_document() const { return false; }
 
     bool is_empty() const;
+    bool is_modified() const { return m_modified; }
+    void set_modified(bool);
 
 protected:
     explicit TextDocument(Client* client);
 
 private:
-    void update_undo_timer();
+    void update_undo();
 
     NonnullOwnPtrVector<TextDocumentLine> m_lines;
     Vector<TextDocumentSpan> m_spans;
 
     HashTable<Client*> m_clients;
     bool m_client_notifications_enabled { true };
+    bool m_modified { false };
 
     UndoStack m_undo_stack;
     RefPtr<Core::Timer> m_undo_timer;
@@ -203,7 +206,6 @@ public:
     virtual void perform_formatting(const TextDocument::Client&) override;
     virtual void undo() override;
     virtual void redo() override;
-    virtual bool is_insert_text() const override { return true; }
     const String& text() const { return m_text; }
     const TextRange& range() const { return m_range; }
 
@@ -217,7 +219,6 @@ public:
     RemoveTextCommand(TextDocument&, const String&, const TextRange&);
     virtual void undo() override;
     virtual void redo() override;
-    virtual bool is_remove_text() const override { return true; }
     const TextRange& range() const { return m_range; }
 
 private:
