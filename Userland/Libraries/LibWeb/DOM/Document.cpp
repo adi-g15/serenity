@@ -184,7 +184,7 @@ const Element* Document::document_element() const
     return first_child_of_type<Element>();
 }
 
-const HTML::HTMLHtmlElement* Document::html_element() const
+HTML::HTMLHtmlElement* Document::html_element()
 {
     auto* html = document_element();
     if (is<HTML::HTMLHtmlElement>(html))
@@ -192,7 +192,7 @@ const HTML::HTMLHtmlElement* Document::html_element() const
     return nullptr;
 }
 
-const HTML::HTMLHeadElement* Document::head() const
+HTML::HTMLHeadElement* Document::head()
 {
     auto* html = html_element();
     if (!html)
@@ -200,7 +200,7 @@ const HTML::HTMLHeadElement* Document::head() const
     return html->first_child_of_type<HTML::HTMLHeadElement>();
 }
 
-const HTML::HTMLElement* Document::body() const
+HTML::HTMLElement* Document::body()
 {
     auto* html = html_element();
     if (!html)
@@ -222,7 +222,9 @@ ExceptionOr<void> Document::set_body(HTML::HTMLElement& new_body)
 
     auto* existing_body = body();
     if (existing_body) {
-        TODO();
+        auto replace_result = existing_body->parent()->replace_child(new_body, *existing_body);
+        if (replace_result.is_exception())
+            return NonnullRefPtr<DOMException>(replace_result.exception());
         return {};
     }
 
@@ -230,7 +232,9 @@ ExceptionOr<void> Document::set_body(HTML::HTMLElement& new_body)
     if (!document_element)
         return DOM::HierarchyRequestError::create("Missing document element");
 
-    document_element->append_child(new_body);
+    auto append_result = document_element->append_child(new_body);
+    if (append_result.is_exception())
+        return NonnullRefPtr<DOMException>(append_result.exception());
     return {};
 }
 

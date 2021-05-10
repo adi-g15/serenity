@@ -47,6 +47,7 @@ public:
         virtual void document_did_change() = 0;
         virtual void document_did_set_text() = 0;
         virtual void document_did_set_cursor(const TextPosition&) = 0;
+        virtual void document_did_update_undo_stack() = 0;
 
         virtual bool is_automatic_indentation_enabled() const = 0;
         virtual int soft_tab_width() const = 0;
@@ -112,6 +113,8 @@ public:
     void undo();
     void redo();
 
+    UndoStack const& undo_stack() const { return m_undo_stack; }
+
     void notify_did_change();
     void set_all_cursors(const TextPosition&);
 
@@ -122,24 +125,20 @@ public:
     virtual bool is_code_document() const { return false; }
 
     bool is_empty() const;
-    bool is_modified() const { return m_modified; }
-    void set_modified(bool);
+    bool is_modified() const { return m_undo_stack.is_current_modified(); }
+    void set_unmodified();
 
 protected:
     explicit TextDocument(Client* client);
 
 private:
-    void update_undo();
-
     NonnullOwnPtrVector<TextDocumentLine> m_lines;
     Vector<TextDocumentSpan> m_spans;
 
     HashTable<Client*> m_clients;
     bool m_client_notifications_enabled { true };
-    bool m_modified { false };
 
     UndoStack m_undo_stack;
-    RefPtr<Core::Timer> m_undo_timer;
 
     RegexResult m_regex_result;
     size_t m_regex_result_match_index { 0 };
@@ -206,6 +205,8 @@ public:
     virtual void perform_formatting(const TextDocument::Client&) override;
     virtual void undo() override;
     virtual void redo() override;
+    virtual bool merge_with(GUI::Command const&) override;
+    virtual String action_text() const override;
     const String& text() const { return m_text; }
     const TextRange& range() const { return m_range; }
 
@@ -220,6 +221,8 @@ public:
     virtual void undo() override;
     virtual void redo() override;
     const TextRange& range() const { return m_range; }
+    virtual bool merge_with(GUI::Command const&) override;
+    virtual String action_text() const override;
 
 private:
     String m_text;

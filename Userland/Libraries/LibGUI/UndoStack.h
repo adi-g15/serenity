@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Function.h>
 #include <AK/NonnullOwnPtrVector.h>
 #include <LibGUI/Forward.h>
 
@@ -16,23 +17,28 @@ public:
     UndoStack();
     ~UndoStack();
 
-    void push(NonnullOwnPtr<Command>&&);
+    void push(NonnullOwnPtr<Command>);
 
-    bool can_undo() const { return m_stack_index < m_stack.size() && !m_stack.is_empty(); }
-    bool can_redo() const { return m_stack_index > 0 && !m_stack.is_empty(); }
+    bool can_undo() const;
+    bool can_redo() const;
 
     void undo();
     void redo();
 
-    void finalize_current_combo();
+    void set_current_unmodified();
+    bool is_current_modified() const;
+
+    void clear();
+
+    Optional<String> undo_action_text() const;
+    Optional<String> redo_action_text() const;
+
+    Function<void()> on_state_change;
 
 private:
-    struct UndoCommandsContainer {
-        NonnullOwnPtrVector<Command> m_undo_vector;
-    };
-
-    NonnullOwnPtrVector<UndoCommandsContainer> m_stack;
+    NonnullOwnPtrVector<Command> m_stack;
     size_t m_stack_index { 0 };
+    Optional<size_t> m_clean_index;
 };
 
 }

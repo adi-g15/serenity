@@ -6,6 +6,8 @@
 
 #include "CardStack.h"
 
+namespace Solitaire {
+
 CardStack::CardStack()
     : m_position({ 0, 0 })
     , m_type(Invalid)
@@ -73,8 +75,6 @@ void CardStack::draw(GUI::Painter& painter, const Gfx::Color& background_color)
         if (!card.is_moving())
             card.clear_and_draw(painter, background_color);
     }
-
-    m_dirty = false;
 }
 
 void CardStack::rebound_cards()
@@ -215,4 +215,6 @@ void CardStack::calculate_bounding_box()
     }
 
     m_bounding_box.set_size(Card::width + width, Card::height + height);
+}
+
 }

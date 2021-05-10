@@ -9,6 +9,8 @@
 #include "Card.h"
 #include <AK/Vector.h>
 
+namespace Solitaire {
+
 class CardStack final {
 public:
     enum Type {
@@ -22,7 +24,6 @@ public:
     CardStack();
     CardStack(const Gfx::IntPoint& position, Type type);
 
-    bool is_dirty() const { return m_dirty; }
     bool is_empty() const { return m_stack.is_empty(); }
     bool is_focused() const { return m_focused; }
     Type type() const { return m_type; }
@@ -32,7 +33,6 @@ public:
     const Gfx::IntRect& bounding_box() const { return m_bounding_box; }
 
     void set_focused(bool focused) { m_focused = focused; }
-    void set_dirty() { m_dirty = true; };
 
     void push(NonnullRefPtr<Card> card);
     NonnullRefPtr<Card> pop();
@@ -57,7 +57,7 @@ private:
         case Foundation:
             return { 2, 1, 4, 1 };
         case Normal:
-            return { 0, 15, 1, 3 };
+            return { 0, 20, 1, 3 };
         case Stock:
         case Waste:
             return { 2, 1, 8, 1 };
@@ -75,6 +75,7 @@ private:
     Type m_type { Invalid };
     StackRules m_rules;
     bool m_focused { false };
-    bool m_dirty { false };
     Gfx::IntRect m_base;
 };
+
+}

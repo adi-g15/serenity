@@ -243,7 +243,7 @@ void dump_tree(StringBuilder& builder, const Layout::Node& layout_node, bool sho
         for (auto& property : properties) {
             for (size_t i = 0; i < indent; ++i)
                 builder.append("    ");
-            builder.appendf("  (%s: %s)\n", property.name.characters(), property.value.characters());
+            builder.appendff("  ({}: {})\n", property.name, property.value);
         }
     }
 
@@ -350,6 +350,9 @@ void dump_selector(StringBuilder& builder, const CSS::Selector& selector)
                 break;
             case CSS::Selector::SimpleSelector::PseudoClass::LastOfType:
                 pseudo_class_description = "LastOfType";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::NthChild:
+                pseudo_class_description = "NthChild";
                 break;
             case CSS::Selector::SimpleSelector::PseudoClass::Focus:
                 pseudo_class_description = "Focus";

@@ -26,12 +26,14 @@ TextDocument::TextDocument(Client* client)
     if (client)
         m_clients.set(client);
     append_line(make<TextDocumentLine>(*this));
-    set_modified(false);
+    set_unmodified();
 
-    m_undo_timer = Core::Timer::create_single_shot(
-        2000, [this] {
-            update_undo();
-        });
+    m_undo_stack.on_state_change = [this] {
+        if (m_client_notifications_enabled) {
+            for (auto* client : m_clients)
+                client->document_did_update_undo_stack();
+        }
+    };
 }
 
 TextDocument::~TextDocument()
@@ -41,6 +43,7 @@ TextDocument::~TextDocument()
 bool TextDocument::set_text(const StringView& text)
 {
     m_client_notifications_enabled = false;
+    m_undo_stack.clear();
     m_spans.clear();
     remove_all_lines();
 
@@ -93,7 +96,7 @@ bool TextDocument::set_text(const StringView& text)
     clear_text_guard.disarm();
 
     // FIXME: Should the modified state be cleared on some of the earlier returns as well?
-    set_modified(false);
+    set_unmodified();
     return true;
 }
 
@@ -308,11 +311,6 @@ void TextDocument::update_views(Badge<TextDocumentLine>)
 
 void TextDocument::notify_did_change()
 {
-    set_modified(true);
-
-    if (m_undo_timer)
-        m_undo_timer->restart();
-
     if (m_client_notifications_enabled) {
         for (auto* client : m_clients)
             client->document_did_change();
@@ -344,7 +342,7 @@ String TextDocument::text() const
 String TextDocument::text_in_range(const TextRange& a_range) const
 {
     auto range = a_range.normalized();
-    if (is_empty() || line_count() < range.end().line() - range.start().line() || line(range.start().line()).is_empty())
+    if (is_empty() || line_count() < range.end().line() - range.start().line())
         return String("");
 
     StringBuilder builder;
@@ -713,6 +711,28 @@ InsertTextCommand::InsertTextCommand(TextDocument& document, const String& text,
 {
 }
 
+String InsertTextCommand::action_text() const
+{
+    return "Insert Text";
+}
+
+bool InsertTextCommand::merge_with(GUI::Command const& other)
+{
+    if (!is<InsertTextCommand>(other))
+        return false;
+    auto& typed_other = static_cast<InsertTextCommand const&>(other);
+    if (m_range.end() != typed_other.m_range.start())
+        return false;
+    if (m_range.start().line() != m_range.end().line())
+        return false;
+    StringBuilder builder(m_text.length() + typed_other.m_text.length());
+    builder.append(m_text);
+    builder.append(typed_other.m_text);
+    m_text = builder.to_string();
+    m_range.set_end(typed_other.m_range.end());
+    return true;
+}
+
 void InsertTextCommand::perform_formatting(const TextDocument::Client& client)
 {
     const size_t tab_width = client.soft_tab_width();
@@ -781,6 +801,31 @@ RemoveTextCommand::RemoveTextCommand(TextDocument& document, const String& text,
 {
 }
 
+String RemoveTextCommand::action_text() const
+{
+    return "Remove Text";
+}
+
+bool RemoveTextCommand::merge_with(GUI::Command const& other)
+{
+    if (!is<RemoveTextCommand>(other))
+        return false;
+    auto& typed_other = static_cast<RemoveTextCommand const&>(other);
+    if (m_range.start() != typed_other.m_range.end())
+        return false;
+    if (m_range.start().line() != m_range.end().line())
+        return false;
+    // Merge backspaces
+    StringBuilder builder(m_text.length() + typed_other.m_text.length());
+    builder.append(typed_other.m_text);
+    builder.append(m_text);
+    m_text = builder.to_string();
+    m_range.set_start(typed_other.m_range.start());
+    return true;
+
+    return false;
+}
+
 void RemoveTextCommand::redo()
 {
     m_document.remove(m_range);
@@ -791,11 +836,6 @@ void RemoveTextCommand::undo()
 {
     auto new_cursor = m_document.insert_at(m_range.start(), m_text);
     m_document.set_all_cursors(new_cursor);
-}
-
-void TextDocument::update_undo()
-{
-    m_undo_stack.finalize_current_combo();
 }
 
 TextPosition TextDocument::insert_at(const TextPosition& position, const StringView& text, const Client* client)
@@ -886,9 +926,9 @@ const TextDocumentSpan* TextDocument::span_at(const TextPosition& position) cons
     return nullptr;
 }
 
-void TextDocument::set_modified(bool modified)
+void TextDocument::set_unmodified()
 {
-    m_modified = modified;
+    m_undo_stack.set_current_unmodified();
 }
 
 }

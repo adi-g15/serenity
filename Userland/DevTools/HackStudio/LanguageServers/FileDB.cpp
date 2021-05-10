@@ -7,6 +7,7 @@
 #include "FileDB.h"
 
 #include <AK/LexicalPath.h>
+#include <AK/NonnullRefPtr.h>
 #include <LibCore/File.h>
 
 namespace LanguageServers {
@@ -18,7 +19,7 @@ RefPtr<const GUI::TextDocument> FileDB::get(const String& filename) const
     if (!document_optional.has_value())
         return nullptr;
 
-    return document_optional.value();
+    return *document_optional.value();
 }
 
 RefPtr<GUI::TextDocument> FileDB::get(const String& filename)
@@ -102,6 +103,7 @@ public:
     virtual void document_did_change() override {};
     virtual void document_did_set_text() override {};
     virtual void document_did_set_cursor(const GUI::TextPosition&) override {};
+    virtual void document_did_update_undo_stack() override { }
 
     virtual bool is_automatic_indentation_enabled() const override { return false; }
     virtual int soft_tab_width() const override { return 4; }

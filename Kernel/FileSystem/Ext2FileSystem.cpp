@@ -27,6 +27,7 @@ struct Ext2FSDirectoryEntry {
     String name;
     InodeIndex inode_index { 0 };
     u8 file_type { 0 };
+    u16 record_length { 0 };
 };
 
 static u8 to_ext2_file_type(mode_t mode)
@@ -426,6 +427,15 @@ KResult Ext2FSInode::flush_block_list()
         ++output_block_index;
         --remaining_blocks;
     }
+    // e2fsck considers all blocks reachable through any of the pointers in
+    // m_raw_inode.i_block as part of this inode regardless of the value in
+    // m_raw_inode.i_size. When it finds more blocks than the amount that
+    // is indicated by i_size or i_blocks it offers to repair the filesystem
+    // by changing those values. That will actually cause further corruption.
+    // So we must zero all pointers to blocks that are now unused.
+    for (unsigned i = new_shape.direct_blocks; i < EXT2_NDIR_BLOCKS; ++i) {
+        m_raw_inode.i_block[i] = 0;
+    }
     if (inode_dirty) {
         if constexpr (EXT2_DEBUG) {
             dbgln("Ext2FSInode[{}]::flush_block_list(): Writing {} direct block(s) to i_block array of inode {}", identifier(), min((size_t)EXT2_NDIR_BLOCKS, m_block_list.size()), index());
@@ -454,6 +464,7 @@ KResult Ext2FSInode::flush_block_list()
             if (auto result = fs().set_block_allocation_state(m_raw_inode.i_block[EXT2_IND_BLOCK], false); result.is_error())
                 return result;
             old_shape.meta_blocks--;
+            m_raw_inode.i_block[EXT2_IND_BLOCK] = 0;
         }
     }
 
@@ -475,6 +486,8 @@ KResult Ext2FSInode::flush_block_list()
         } else {
             if (auto result = shrink_doubly_indirect_block(m_raw_inode.i_block[EXT2_DIND_BLOCK], old_shape.doubly_indirect_blocks, new_shape.doubly_indirect_blocks, old_shape.meta_blocks); result.is_error())
                 return result;
+            if (new_shape.doubly_indirect_blocks == 0)
+                m_raw_inode.i_block[EXT2_DIND_BLOCK] = 0;
         }
     }
 
@@ -496,6 +509,8 @@ KResult Ext2FSInode::flush_block_list()
         } else {
             if (auto result = shrink_triply_indirect_block(m_raw_inode.i_block[EXT2_TIND_BLOCK], old_shape.triply_indirect_blocks, new_shape.triply_indirect_blocks, old_shape.meta_blocks); result.is_error())
                 return result;
+            if (new_shape.triply_indirect_blocks == 0)
+                m_raw_inode.i_block[EXT2_TIND_BLOCK] = 0;
         }
     }
 
@@ -957,6 +972,9 @@ KResultOr<ssize_t> Ext2FSInode::write_bytes(off_t offset, ssize_t count, const U
     VERIFY(offset >= 0);
     VERIFY(count >= 0);
 
+    if (count == 0)
+        return 0;
+
     Locker inode_locker(m_lock);
 
     if (auto result = prepare_to_write_data(); result.is_error())
@@ -1053,64 +1071,86 @@ KResult Ext2FSInode::traverse_as_directory(Function<bool(const FS::DirectoryEntr
     Locker locker(m_lock);
     VERIFY(is_directory());
 
-    auto buffer_or = read_entire();
-    if (buffer_or.is_error())
-        return buffer_or.error();
+    u8 buffer[max_block_size];
+    auto buf = UserOrKernelBuffer::for_kernel_buffer(buffer);
 
-    auto& buffer = *buffer_or.value();
-    auto* entry = reinterpret_cast<ext2_dir_entry_2*>(buffer.data());
+    auto block_size = fs().block_size();
+    bool allow_cache = true;
 
-    while (entry < buffer.end_pointer()) {
-        if (entry->inode != 0) {
-            dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::traverse_as_directory(): inode {}, name_len: {}, rec_len: {}, file_type: {}, name: {}", identifier(), entry->inode, entry->name_len, entry->rec_len, entry->file_type, StringView(entry->name, entry->name_len));
-            if (!callback({ { entry->name, entry->name_len }, { fsid(), entry->inode }, entry->file_type }))
-                break;
+    if (m_block_list.is_empty())
+        m_block_list = compute_block_list();
+
+    // Directory entries are guaranteed not to span multiple blocks,
+    // so we can iterate over blocks separately.
+    for (auto& block_index : m_block_list) {
+        VERIFY(block_index.value() != 0);
+        if (auto result = fs().read_block(block_index, &buf, block_size, 0, allow_cache); result.is_error()) {
+            return result;
         }
-        entry = (ext2_dir_entry_2*)((char*)entry + entry->rec_len);
+        auto* entry = reinterpret_cast<ext2_dir_entry_2*>(buffer);
+        auto* entries_end = reinterpret_cast<ext2_dir_entry_2*>(buffer + block_size);
+        while (entry < entries_end) {
+            if (entry->inode != 0) {
+                dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::traverse_as_directory(): inode {}, name_len: {}, rec_len: {}, file_type: {}, name: {}", identifier(), entry->inode, entry->name_len, entry->rec_len, entry->file_type, StringView(entry->name, entry->name_len));
+                if (!callback({ { entry->name, entry->name_len }, { fsid(), entry->inode }, entry->file_type }))
+                    return KSuccess;
+            }
+            entry = (ext2_dir_entry_2*)((char*)entry + entry->rec_len);
+        }
     }
 
     return KSuccess;
 }
 
-KResult Ext2FSInode::write_directory(const Vector<Ext2FSDirectoryEntry>& entries)
+KResult Ext2FSInode::write_directory(Vector<Ext2FSDirectoryEntry>& entries)
 {
     Locker locker(m_lock);
-
-    int directory_size = 0;
-    for (auto& entry : entries)
-        directory_size += EXT2_DIR_REC_LEN(entry.name.length());
-
     auto block_size = fs().block_size();
 
-    int blocks_needed = ceil_div(static_cast<size_t>(directory_size), block_size);
-    int occupied_size = blocks_needed * block_size;
-
-    dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::write_directory(): New directory contents to write (size {}, occupied {}):", identifier(), directory_size, occupied_size);
-
-    auto directory_data = ByteBuffer::create_uninitialized(occupied_size);
-    OutputMemoryStream stream { directory_data };
-
+    // Calculate directory size and record length of entries so that
+    // the following constraints are met:
+    // - All used blocks must be entirely filled.
+    // - Entries are aligned on a 4-byte boundary.
+    // - No entry may span multiple blocks.
+    size_t directory_size = 0;
+    size_t space_in_block = block_size;
     for (size_t i = 0; i < entries.size(); ++i) {
         auto& entry = entries[i];
+        entry.record_length = EXT2_DIR_REC_LEN(entry.name.length());
+        space_in_block -= entry.record_length;
+        if (i + 1 < entries.size()) {
+            if (EXT2_DIR_REC_LEN(entries[i + 1].name.length()) > space_in_block) {
+                entry.record_length += space_in_block;
+                space_in_block = block_size;
+            }
+        } else {
+            entry.record_length += space_in_block;
+        }
+        directory_size += entry.record_length;
+    }
 
-        int record_length = EXT2_DIR_REC_LEN(entry.name.length());
-        if (i == entries.size() - 1)
-            record_length += occupied_size - directory_size;
+    dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::write_directory(): New directory contents to write (size {}):", identifier(), directory_size);
 
-        dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::write_directory(): Writing inode: {}, name_len: {}, rec_len: {}, file_type: {}, name: {}", identifier(), entry.inode_index, u16(entry.name.length()), u16(record_length), u8(entry.file_type), entry.name);
+    auto directory_data = ByteBuffer::create_uninitialized(directory_size);
+    OutputMemoryStream stream { directory_data };
+
+    for (auto& entry : entries) {
+        dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::write_directory(): Writing inode: {}, name_len: {}, rec_len: {}, file_type: {}, name: {}", identifier(), entry.inode_index, u16(entry.name.length()), u16(entry.record_length), u8(entry.file_type), entry.name);
 
         stream << u32(entry.inode_index.value());
-        stream << u16(record_length);
+        stream << u16(entry.record_length);
         stream << u8(entry.name.length());
         stream << u8(entry.file_type);
         stream << entry.name.bytes();
-
-        int padding = record_length - entry.name.length() - 8;
+        int padding = entry.record_length - entry.name.length() - 8;
         for (int j = 0; j < padding; ++j)
             stream << u8(0);
     }
 
-    stream.fill_to_end(0);
+    VERIFY(stream.is_end());
+
+    if (auto result = resize(stream.size()); result.is_error())
+        return result;
 
     auto buffer = UserOrKernelBuffer::for_kernel_buffer(stream.data());
     auto result = write_bytes(0, stream.size(), buffer, nullptr);

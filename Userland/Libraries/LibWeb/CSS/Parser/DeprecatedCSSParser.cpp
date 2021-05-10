@@ -11,6 +11,7 @@
 #include <LibWeb/CSS/CSSStyleRule.h>
 #include <LibWeb/CSS/Parser/DeprecatedCSSParser.h>
 #include <LibWeb/CSS/PropertyID.h>
+#include <LibWeb/CSS/Selector.h>
 #include <LibWeb/DOM/Document.h>
 #include <ctype.h>
 #include <stdlib.h>
@@ -369,14 +370,30 @@ public:
         return original_index != index;
     }
 
-    bool is_valid_selector_char(char ch) const
+    static bool is_valid_selector_char(char ch)
     {
-        return isalnum(ch) || ch == '-' || ch == '_' || ch == '(' || ch == ')' || ch == '@';
+        return isalnum(ch) || ch == '-' || ch == '+' || ch == '_' || ch == '(' || ch == ')' || ch == '@';
+    }
+
+    static bool is_valid_selector_args_char(char ch)
+    {
+        return is_valid_selector_char(ch) || ch == ' ' || ch == '\t';
     }
 
     bool is_combinator(char ch) const
     {
         return ch == '~' || ch == '>' || ch == '+';
+    }
+
+    static StringView capture_selector_args(const String& pseudo_name)
+    {
+        if (const auto start_pos = pseudo_name.find('('); start_pos.has_value()) {
+            const auto start = start_pos.value() + 1;
+            if (const auto end_pos = pseudo_name.index_of(")", start); end_pos.has_value()) {
+                return pseudo_name.substring_view(start, end_pos.value() - start).trim_whitespace();
+            }
+        }
+        return {};
     }
 
     Optional<CSS::Selector::SimpleSelector> parse_simple_selector()
@@ -394,15 +411,9 @@ public:
         if (peek() == '*') {
             type = CSS::Selector::SimpleSelector::Type::Universal;
             consume_one();
-            return CSS::Selector::SimpleSelector {
-                type,
-                CSS::Selector::SimpleSelector::PseudoClass::None,
-                CSS::Selector::SimpleSelector::PseudoElement::None,
-                String(),
-                CSS::Selector::SimpleSelector::AttributeMatchType::None,
-                String(),
-                String()
-            };
+            CSS::Selector::SimpleSelector result;
+            result.type = type;
+            return result;
         }
 
         if (peek() == '.') {
@@ -430,15 +441,9 @@ public:
             value = value.to_lowercase();
         }
 
-        CSS::Selector::SimpleSelector simple_selector {
-            type,
-            CSS::Selector::SimpleSelector::PseudoClass::None,
-            CSS::Selector::SimpleSelector::PseudoElement::None,
-            value,
-            CSS::Selector::SimpleSelector::AttributeMatchType::None,
-            String(),
-            String()
-        };
+        CSS::Selector::SimpleSelector simple_selector;
+        simple_selector.type = type;
+        simple_selector.value = value;
         buffer.clear();
 
         if (peek() == '[') {
@@ -513,8 +518,19 @@ public:
                     return {};
                 buffer.append(')');
             } else {
-                while (is_valid_selector_char(peek()))
-                    buffer.append(consume_one());
+                int nesting_level = 0;
+                while (true) {
+                    const auto ch = peek();
+                    if (ch == '(')
+                        ++nesting_level;
+                    else if (ch == ')' && nesting_level > 0)
+                        --nesting_level;
+
+                    if (nesting_level > 0 ? is_valid_selector_args_char(ch) : is_valid_selector_char(ch))
+                        buffer.append(consume_one());
+                    else
+                        break;
+                };
             }
 
             auto pseudo_name = String::copy(buffer);
@@ -547,6 +563,9 @@ public:
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::FirstOfType;
             } else if (pseudo_name.equals_ignoring_case("last-of-type")) {
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::LastOfType;
+            } else if (pseudo_name.starts_with("nth-child", CaseSensitivity::CaseInsensitive)) {
+                simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::NthChild;
+                simple_selector.nth_child_pattern = CSS::Selector::SimpleSelector::NthChildPattern::parse(capture_selector_args(pseudo_name));
             } else if (pseudo_name.equals_ignoring_case("before")) {
                 simple_selector.pseudo_element = CSS::Selector::SimpleSelector::PseudoElement::Before;
             } else if (pseudo_name.equals_ignoring_case("after")) {

@@ -5,9 +5,11 @@
  */
 
 #include "IndividualSampleModel.h"
-#include "ProcessPickerWidget.h"
 #include "Profile.h"
-#include "ProfileTimelineWidget.h"
+#include "TimelineContainer.h"
+#include "TimelineHeader.h"
+#include "TimelineTrack.h"
+#include "TimelineView.h"
 #include <LibCore/ArgsParser.h>
 #include <LibCore/ElapsedTimer.h>
 #include <LibCore/EventLoop.h>
@@ -25,6 +27,7 @@
 #include <LibGUI/Model.h>
 #include <LibGUI/ProcessChooser.h>
 #include <LibGUI/Splitter.h>
+#include <LibGUI/Statusbar.h>
 #include <LibGUI/TabWidget.h>
 #include <LibGUI/TableView.h>
 #include <LibGUI/TreeView.h>
@@ -88,10 +91,44 @@ int main(int argc, char** argv)
     main_widget.set_fill_with_background_color(true);
     main_widget.set_layout<GUI::VerticalBoxLayout>();
 
-    main_widget.add<ProfileTimelineWidget>(*profile);
-    main_widget.add<ProcessPickerWidget>(*profile);
+    auto timeline_header_container = GUI::Widget::construct();
+    timeline_header_container->set_layout<GUI::VerticalBoxLayout>();
+    timeline_header_container->set_fill_with_background_color(true);
+    timeline_header_container->set_shrink_to_fit(true);
 
-    auto& tab_widget = main_widget.add<GUI::TabWidget>();
+    auto timeline_view = TimelineView::construct(*profile);
+    for (auto& process : profile->processes()) {
+        bool matching_event_found = false;
+        for (auto& event : profile->events()) {
+            if (event.pid == process.pid && process.valid_at(event.timestamp)) {
+                matching_event_found = true;
+                break;
+            }
+        }
+        if (!matching_event_found)
+            continue;
+        auto& timeline_header = timeline_header_container->add<TimelineHeader>(*profile, process);
+        timeline_header.set_shrink_to_fit(true);
+        timeline_header.on_selection_change = [&](bool selected) {
+            auto end_valid = process.end_valid == 0 ? profile->last_timestamp() : process.end_valid;
+            if (selected)
+                profile->add_process_filter(process.pid, process.start_valid, end_valid);
+            else
+                profile->remove_process_filter(process.pid, process.start_valid, end_valid);
+
+            timeline_header_container->for_each_child_widget([](auto& other_timeline_header) {
+                static_cast<TimelineHeader&>(other_timeline_header).update_selection();
+                return IterationDecision::Continue;
+            });
+        };
+        timeline_view->add<TimelineTrack>(*timeline_view, *profile, process);
+    }
+
+    auto& main_splitter = main_widget.add<GUI::VerticalSplitter>();
+
+    [[maybe_unused]] auto& timeline_container = main_splitter.add<TimelineContainer>(*timeline_header_container, *timeline_view);
+
+    auto& tab_widget = main_splitter.add<GUI::TabWidget>();
 
     auto& tree_tab = tab_widget.add_tab<GUI::Widget>("Call Tree");
     tree_tab.set_layout<GUI::VerticalBoxLayout>();
@@ -122,6 +159,28 @@ int main(int argc, char** argv)
     samples_table_view.on_selection = [&](const GUI::ModelIndex& index) {
         auto model = IndividualSampleModel::create(*profile, index.data(GUI::ModelRole::Custom).to_integer<size_t>());
         individual_sample_view.set_model(move(model));
+    };
+
+    const u64 start_of_trace = profile->first_timestamp();
+    const u64 end_of_trace = start_of_trace + profile->length_in_ms();
+    const auto clamp_timestamp = [start_of_trace, end_of_trace](u64 timestamp) -> u64 {
+        return min(end_of_trace, max(timestamp, start_of_trace));
+    };
+
+    auto& statusbar = main_widget.add<GUI::Statusbar>();
+    timeline_view->on_selection_change = [&] {
+        auto& view = *timeline_view;
+        StringBuilder builder;
+        u64 normalized_start_time = clamp_timestamp(min(view.select_start_time(), view.select_end_time()));
+        u64 normalized_end_time = clamp_timestamp(max(view.select_start_time(), view.select_end_time()));
+        u64 normalized_hover_time = clamp_timestamp(view.hover_time());
+        builder.appendff("Time: {} ms", normalized_hover_time - start_of_trace);
+        if (normalized_start_time != normalized_end_time) {
+            auto start = normalized_start_time - start_of_trace;
+            auto end = normalized_end_time - start_of_trace;
+            builder.appendff(", Selection: {} - {} ms", start, end);
+        }
+        statusbar.set_text(builder.to_string());
     };
 
     auto menubar = GUI::Menubar::construct();

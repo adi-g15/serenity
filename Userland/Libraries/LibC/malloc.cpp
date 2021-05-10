@@ -157,13 +157,16 @@ enum class CallerWillInitializeMemory {
 
 static void* malloc_impl(size_t size, CallerWillInitializeMemory caller_will_initialize_memory)
 {
-    LOCKER(malloc_lock());
+    LibThread::Locker locker(malloc_lock());
 
     if (s_log_malloc)
         dbgln("LibC: malloc({})", size);
 
-    if (!size)
-        return nullptr;
+    if (!size) {
+        // Legally we could just return a null pointer here, but this is more
+        // compatible with existing software.
+        size = 1;
+    }
 
     g_malloc_stats.number_of_malloc_calls++;
 
@@ -244,8 +247,13 @@ static void* malloc_impl(size_t size, CallerWillInitializeMemory caller_will_ini
 
     --block->m_free_chunks;
     void* ptr = block->m_freelist;
+    if (ptr) {
+        block->m_freelist = block->m_freelist->next;
+    } else {
+        ptr = block->m_slot + block->m_next_lazy_freelist_index * block->m_size;
+        block->m_next_lazy_freelist_index++;
+    }
     VERIFY(ptr);
-    block->m_freelist = block->m_freelist->next;
     if (block->is_full()) {
         g_malloc_stats.number_of_blocks_full++;
         dbgln_if(MALLOC_DEBUG, "Block {:p} is now full in size class {}", block, good_size);
@@ -270,7 +278,7 @@ static void free_impl(void* ptr)
 
     g_malloc_stats.number_of_free_calls++;
 
-    LOCKER(malloc_lock());
+    LibThread::Locker locker(malloc_lock());
 
     void* block_base = (void*)((FlatPtr)ptr & ChunkedBlock::ChunkedBlock::block_mask);
     size_t magic = *(size_t*)block_base;
@@ -372,7 +380,7 @@ size_t malloc_size(void* ptr)
 {
     if (!ptr)
         return 0;
-    LOCKER(malloc_lock());
+    LibThread::Locker locker(malloc_lock());
     void* page_base = (void*)((FlatPtr)ptr & ChunkedBlock::block_mask);
     auto* header = (const CommonHeader*)page_base;
     auto size = header->m_size;
@@ -390,7 +398,7 @@ void* realloc(void* ptr, size_t size)
     if (!size)
         return nullptr;
 
-    LOCKER(malloc_lock());
+    LibThread::Locker locker(malloc_lock());
     auto existing_allocation_size = malloc_size(ptr);
 
     if (size <= existing_allocation_size) {

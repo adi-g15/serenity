@@ -176,6 +176,14 @@ public:
         return false;
     }
 
+    bool constexpr starts_with(Span<const T> other) const
+    {
+        if (size() < other.size())
+            return false;
+
+        return TypedTransfer<T>::compare(data(), other.data(), other.size());
+    }
+
     ALWAYS_INLINE constexpr const T& at(size_t index) const
     {
         VERIFY(index < this->m_size);
@@ -187,7 +195,7 @@ public:
         return this->m_values[index];
     }
 
-    ALWAYS_INLINE constexpr T& operator[](size_t index) const
+    ALWAYS_INLINE constexpr const T& operator[](size_t index) const
     {
         return at(index);
     }

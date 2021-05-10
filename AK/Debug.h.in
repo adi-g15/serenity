@@ -150,6 +150,10 @@
 #cmakedefine01 GIF_DEBUG
 #endif
 
+#ifndef GL_DEBUG
+#cmakedefine01 GL_DEBUG
+#endif
+
 #ifndef GLOBAL_DTORS_DEBUG
 #cmakedefine01 GLOBAL_DTORS_DEBUG
 #endif
@@ -282,6 +286,10 @@
 #cmakedefine01 PATH_DEBUG
 #endif
 
+#ifndef PDF_DEBUG
+#cmakedefine01 PDF_DEBUG
+#endif
+
 #ifndef PNG_DEBUG
 #cmakedefine01 PNG_DEBUG
 #endif
@@ -390,6 +398,10 @@
 #cmakedefine01 UPDATE_COALESCING_DEBUG
 #endif
 
+#ifndef WASM_BINPARSER_DEBUG
+#cmakedefine01 WASM_BINPARSER_DEBUG
+#endif
+
 #ifndef WINDOWMANAGER_DEBUG
 #cmakedefine01 WINDOWMANAGER_DEBUG
 #endif
@@ -405,3 +417,4 @@
 #ifndef WSSCREEN_DEBUG
 #cmakedefine01 WSSCREEN_DEBUG
 #endif
+

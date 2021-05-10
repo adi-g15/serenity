@@ -8,6 +8,7 @@
 
 #include <LibGfx/Matrix.h>
 #include <LibGfx/Vector3.h>
+#include <LibGfx/Vector4.h>
 #include <math.h>
 
 namespace Gfx {
@@ -15,8 +16,8 @@ namespace Gfx {
 template<typename T>
 class Matrix4x4 final : public Matrix<4, T> {
 public:
-    Matrix4x4() = default;
-    Matrix4x4(T _11, T _12, T _13, T _14,
+    constexpr Matrix4x4() = default;
+    constexpr Matrix4x4(T _11, T _12, T _13, T _14,
         T _21, T _22, T _23, T _24,
         T _31, T _32, T _33, T _34,
         T _41, T _42, T _43, T _44)
@@ -29,10 +30,10 @@ public:
     {
     }
 
-    auto elements() const { return m_elements; }
-    auto elements() { return m_elements; }
+    constexpr auto elements() const { return m_elements; }
+    constexpr auto elements() { return m_elements; }
 
-    Matrix4x4 operator*(const Matrix4x4& other) const
+    constexpr Matrix4x4 operator*(const Matrix4x4& other) const
     {
         Matrix4x4 product;
         for (int i = 0; i < 4; ++i) {
@@ -46,7 +47,16 @@ public:
         return product;
     }
 
-    Vector3<T> transform_point(const Vector3<T>& p) const
+    constexpr Vector4<T> operator*(const Vector4<T>& v) const
+    {
+        return Vector4<T>(
+            v.x() * m_elements[0][0] + v.y() * m_elements[1][0] + v.z() * m_elements[2][0] + v.w() * m_elements[3][0],
+            v.x() * m_elements[0][1] + v.y() * m_elements[1][1] + v.z() * m_elements[2][1] + v.w() * m_elements[3][1],
+            v.x() * m_elements[0][2] + v.y() * m_elements[1][2] + v.z() * m_elements[2][2] + v.w() * m_elements[3][2],
+            v.x() * m_elements[0][3] + v.y() * m_elements[1][3] + v.z() * m_elements[2][3] + v.w() * m_elements[3][3]);
+    }
+
+    constexpr Vector3<T> transform_point(const Vector3<T>& p) const
     {
         return Vector3<T>(
             p.x() * m_elements[0][0] + p.y() * m_elements[1][0] + p.z() * m_elements[2][0] + m_elements[3][0],
@@ -54,7 +64,16 @@ public:
             p.x() * m_elements[0][2] + p.y() * m_elements[1][2] + p.z() * m_elements[2][2] + m_elements[3][2]);
     }
 
-    static Matrix4x4 translate(const Vector3<T>& p)
+    constexpr static Matrix4x4 identity()
+    {
+        return Matrix4x4(
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            0, 0, 0, 1);
+    }
+
+    constexpr static Matrix4x4 translate(const Vector3<T>& p)
     {
         return Matrix4x4(
             1, 0, 0, 0,
@@ -63,7 +82,7 @@ public:
             p.x(), p.y(), p.z(), 1);
     }
 
-    static Matrix4x4 scale(const Vector3<T>& s)
+    constexpr static Matrix4x4 scale(const Vector3<T>& s)
     {
         return Matrix4x4(
             s.x(), 0, 0, 0,
@@ -72,7 +91,7 @@ public:
             0, 0, 0, 1);
     }
 
-    static Matrix4x4 rotate(const Vector3<T>& axis, T angle)
+    constexpr static Matrix4x4 rotate(const Vector3<T>& axis, T angle)
     {
         T c = cos(angle);
         T s = sin(angle);

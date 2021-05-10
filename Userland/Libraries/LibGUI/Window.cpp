@@ -109,7 +109,7 @@ void Window::move_to_front()
     if (!is_visible())
         return;
 
-    WindowServerConnection::the().move_window_to_front(m_window_id);
+    WindowServerConnection::the().async_move_window_to_front(m_window_id);
 }
 
 void Window::show()
@@ -896,6 +896,9 @@ void Window::set_frameless(bool frameless)
     if (!is_visible())
         return;
     WindowServerConnection::the().set_frameless(m_window_id, frameless);
+
+    if (!frameless)
+        apply_icon();
 }
 
 bool Window::is_maximized() const

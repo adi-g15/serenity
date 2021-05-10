@@ -363,9 +363,10 @@ static OwnPtr<Command> parse_complex_command(char* argv[])
     while (command && argv[optind] && argv[optind + 1]) {
         StringView arg = argv[++optind];
 
-        enum { And,
-            Or } binary_operation
-            = And;
+        enum {
+            And,
+            Or,
+        } binary_operation { And };
 
         if (arg == "-a") {
             optind++;
@@ -465,8 +466,8 @@ static void walk_tree(const char* root_path, Command& command)
 
 int main(int argc, char* argv[])
 {
-    auto root_path = parse_options(argc, argv);
+    LexicalPath root_path(parse_options(argc, argv));
     auto command = parse_all_commands(argv);
-    walk_tree(root_path, *command);
+    walk_tree(root_path.string().characters(), *command);
     return g_there_was_an_error ? 1 : 0;
 }

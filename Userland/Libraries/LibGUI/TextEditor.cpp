@@ -1324,8 +1324,6 @@ void TextEditor::did_change()
 {
     update_content_size();
     recompute_all_visual_lines();
-    m_undo_action->set_enabled(can_undo());
-    m_redo_action->set_enabled(can_redo());
     if (m_autocomplete_box && !m_should_keep_autocomplete_box) {
         m_autocomplete_box->close();
         if (m_autocomplete_timer)
@@ -1636,6 +1634,30 @@ void TextEditor::document_did_change()
     update();
 }
 
+void TextEditor::document_did_update_undo_stack()
+{
+    auto make_action_text = [](auto prefix, auto suffix) {
+        StringBuilder builder;
+        builder.append(prefix);
+        if (suffix.has_value()) {
+            builder.append(' ');
+            builder.append(suffix.value());
+        }
+        return builder.to_string();
+    };
+
+    m_undo_action->set_enabled(can_undo());
+    m_redo_action->set_enabled(can_redo());
+
+    m_undo_action->set_text(make_action_text("&Undo", document().undo_stack().undo_action_text()));
+    m_redo_action->set_text(make_action_text("&Redo", document().undo_stack().redo_action_text()));
+
+    // FIXME: This is currently firing more often than it should.
+    //        Ideally we'd only send this out when the undo stack modified state actually changes.
+    if (on_modified_change)
+        on_modified_change(document().is_modified());
+}
+
 void TextEditor::document_did_set_text()
 {
     m_line_visual_data.clear();
@@ -1796,6 +1818,18 @@ void TextEditor::set_ruler_visible(bool visible)
     m_ruler_visible = visible;
     recompute_all_visual_lines();
     update();
+}
+
+void TextEditor::undo()
+{
+    clear_selection();
+    document().undo();
+}
+
+void TextEditor::redo()
+{
+    clear_selection();
+    document().redo();
 }
 
 }
