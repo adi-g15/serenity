@@ -4,12 +4,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/ArrayIterator.h>
 #include <LibJS/Runtime/ArrayIteratorPrototype.h>
 #include <LibJS/Runtime/Error.h>
 #include <LibJS/Runtime/GlobalObject.h>
 #include <LibJS/Runtime/IteratorOperations.h>
+#include <LibJS/Runtime/TypedArray.h>
 
 namespace JS {
 
@@ -24,13 +26,17 @@ void ArrayIteratorPrototype::initialize(GlobalObject& global_object)
     Object::initialize(global_object);
 
     define_native_function(vm.names.next, next, 0, Attribute::Configurable | Attribute::Writable);
-    define_property(global_object.vm().well_known_symbol_to_string_tag(), js_string(global_object.heap(), "Array Iterator"), Attribute::Configurable);
+
+    // 23.1.5.2.2 %ArrayIteratorPrototype% [ @@toStringTag ], https://tc39.es/ecma262/#sec-%arrayiteratorprototype%-@@tostringtag
+    define_property(*vm.well_known_symbol_to_string_tag(), js_string(global_object.heap(), "Array Iterator"), Attribute::Configurable);
 }
 
 ArrayIteratorPrototype::~ArrayIteratorPrototype()
 {
 }
 
+// 23.1.5.2.1 %ArrayIteratorPrototype%.next ( ), https://tc39.es/ecma262/#sec-%arrayiteratorprototype%.next
+// FIXME: This seems to be CreateArrayIterator (https://tc39.es/ecma262/#sec-createarrayiterator) instead of %ArrayIteratorPrototype%.next.
 JS_DEFINE_NATIVE_FUNCTION(ArrayIteratorPrototype::next)
 {
     auto this_value = vm.this_value(global_object);
@@ -48,8 +54,23 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayIteratorPrototype::next)
 
     auto index = iterator.index();
     auto iteration_kind = iterator.iteration_kind();
-    // FIXME: Typed array check
-    auto length = array.indexed_properties().array_like_size();
+
+    size_t length;
+
+    if (array.is_typed_array()) {
+        auto& typed_array = static_cast<TypedArrayBase&>(array);
+
+        if (typed_array.viewed_array_buffer()->is_detached()) {
+            vm.throw_exception<TypeError>(global_object, ErrorType::DetachedArrayBuffer);
+            return {};
+        }
+
+        length = typed_array.array_length();
+    } else {
+        length = length_of_array_like(global_object, array);
+        if (vm.exception())
+            return {};
+    }
 
     if (index >= length) {
         iterator.m_array = js_undefined();

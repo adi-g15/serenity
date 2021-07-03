@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, Sam Atkins <atkinssj@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -65,7 +66,7 @@ static bool add_launch_handler_actions_to_menu(RefPtr<GUI::Menu>& menu, const Di
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio thread recvfd sendfd accept unix cpath rpath wpath fattr proc exec sigaction", nullptr) < 0) {
+    if (pledge("stdio thread recvfd sendfd unix cpath rpath wpath fattr proc exec sigaction", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -93,7 +94,7 @@ int main(int argc, char** argv)
 
     auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio thread recvfd sendfd accept cpath rpath wpath fattr proc exec unix", nullptr) < 0) {
+    if (pledge("stdio thread recvfd sendfd cpath rpath wpath fattr proc exec unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -187,7 +188,7 @@ void do_paste(const String& target_directory, GUI::Window* window)
 void do_create_link(const Vector<String>& selected_file_paths, GUI::Window* window)
 {
     auto path = selected_file_paths.first();
-    auto destination = String::formatted("{}/{}", Core::StandardPaths::desktop_directory(), LexicalPath { path }.basename());
+    auto destination = String::formatted("{}/{}", Core::StandardPaths::desktop_directory(), LexicalPath::basename(path));
     if (auto result = Core::File::link_file(destination, path); result.is_error()) {
         GUI::MessageBox::show(window, String::formatted("Could not create desktop shortcut:\n{}", result.error()), "File Manager",
             GUI::MessageBox::Type::Error);
@@ -206,7 +207,7 @@ void do_unzip_archive(const Vector<String>& selected_file_paths, GUI::Window* wi
     }
 
     if (!unzip_pid) {
-        int rc = execlp("/bin/unzip", "/bin/unzip", "-o", output_directory_path.characters(), archive_file_path.characters(), nullptr);
+        int rc = execlp("/bin/unzip", "/bin/unzip", "-d", output_directory_path.characters(), archive_file_path.characters(), nullptr);
         if (rc < 0) {
             perror("execlp");
             _exit(1);
@@ -352,7 +353,7 @@ int run_in_desktop_mode([[maybe_unused]] RefPtr<Core::ConfigFile> config)
 
     auto desktop_view_context_menu = GUI::Menu::construct("Directory View");
 
-    auto file_manager_action = GUI::Action::create("Show in &File Manager", {}, Gfx::Bitmap::load_from_file("/res/icons/16x16/app-file-manager.png"), [&](const GUI::Action&) {
+    auto file_manager_action = GUI::Action::create("Show in File &Manager", {}, Gfx::Bitmap::load_from_file("/res/icons/16x16/app-file-manager.png"), [&](const GUI::Action&) {
         Desktop::Launcher::open(URL::create_with_file_protocol(directory_view.path()));
     });
 
@@ -430,7 +431,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     auto top = config->read_num_entry("Window", "Top", 75);
     auto width = config->read_num_entry("Window", "Width", 640);
     auto height = config->read_num_entry("Window", "Height", 480);
-    window->set_rect({ left, top, width, height });
+    auto was_maximized = config->read_bool_entry("Window", "Maximized", false);
 
     auto& widget = window->set_main_widget<GUI::Widget>();
 
@@ -679,6 +680,25 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         window);
     cut_action->set_enabled(false);
 
+    auto open_in_new_window_action
+        = GUI::Action::create(
+            "Open in New &Window",
+            {},
+            Gfx::Bitmap::load_from_file("/res/icons/16x16/app-file-manager.png"),
+            [&](GUI::Action const& action) {
+                Vector<String> paths;
+                if (action.activator() == tree_view_directory_context_menu)
+                    paths = tree_view_selected_file_paths();
+                else
+                    paths = directory_view.selected_file_paths();
+
+                for (auto& path : paths) {
+                    if (Core::File::is_directory(path))
+                        Desktop::Launcher::open(URL::create_with_file_protocol(path));
+                }
+            },
+            window);
+
     auto shortcut_action
         = GUI::Action::create(
             "Create Desktop &Shortcut",
@@ -717,7 +737,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
                 selected = directory_view.selected_file_paths();
             } else {
                 path = directories_model->full_path(tree_view.selection().first());
-                container_dir_path = LexicalPath(path).basename();
+                container_dir_path = LexicalPath::basename(path);
                 selected = tree_view_selected_file_paths();
             }
 
@@ -790,7 +810,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     });
     focus_dependent_delete_action->set_enabled(false);
 
-    auto mkdir_action = GUI::Action::create("New &Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [&](const GUI::Action&) {
+    auto mkdir_action = GUI::Action::create("&New Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [&](const GUI::Action&) {
         directory_view.mkdir_action().activate();
         refresh_tree_view();
     });
@@ -805,11 +825,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     auto& file_menu = menubar->add_menu("&File");
     file_menu.add_action(mkdir_action);
     file_menu.add_action(touch_action);
-    file_menu.add_action(copy_action);
-    file_menu.add_action(cut_action);
-    file_menu.add_action(paste_action);
     file_menu.add_action(focus_dependent_delete_action);
-    file_menu.add_action(directory_view.open_terminal_action());
     file_menu.add_separator();
     file_menu.add_action(properties_action);
     file_menu.add_separator();
@@ -817,7 +833,14 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         GUI::Application::the()->quit();
     }));
 
-    auto action_show_dotfiles = GUI::Action::create_checkable("Show &Dotfiles", { Mod_Ctrl, Key_H }, [&](auto& action) {
+    auto& edit_menu = menubar->add_menu("&Edit");
+    edit_menu.add_action(copy_action);
+    edit_menu.add_action(cut_action);
+    edit_menu.add_action(paste_action);
+    edit_menu.add_separator();
+    edit_menu.add_action(select_all_action);
+
+    auto action_show_dotfiles = GUI::Action::create_checkable("&Show Dotfiles", { Mod_Ctrl, Key_H }, [&](auto& action) {
         directory_view.set_should_show_dotfiles(action.is_checked());
         refresh_tree_view();
         config->write_bool_entry("DirectoryView", "ShowDotFiles", action.is_checked());
@@ -857,6 +880,8 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     go_menu.add_action(open_parent_directory_action);
     go_menu.add_action(go_home_action);
     go_menu.add_action(go_to_location_action);
+    go_menu.add_separator();
+    go_menu.add_action(directory_view.open_terminal_action());
 
     auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("File Manager", GUI::Icon::default_icon("app-file-manager"), window));
@@ -871,10 +896,14 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     main_toolbar.add_separator();
     main_toolbar.add_action(mkdir_action);
     main_toolbar.add_action(touch_action);
+    main_toolbar.add_action(focus_dependent_delete_action);
+
+    main_toolbar.add_separator();
     main_toolbar.add_action(copy_action);
     main_toolbar.add_action(cut_action);
     main_toolbar.add_action(paste_action);
-    main_toolbar.add_action(focus_dependent_delete_action);
+
+    main_toolbar.add_separator();
     main_toolbar.add_action(directory_view.open_terminal_action());
 
     main_toolbar.add_separator();
@@ -894,16 +923,18 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         {
             LexicalPath lexical_path(new_path);
 
-            auto segment_index_of_new_path_in_breadcrumbbar = [&]() -> Optional<size_t> {
-                for (size_t i = 0; i < breadcrumbbar.segment_count(); ++i) {
-                    if (breadcrumbbar.segment_data(i) == new_path)
-                        return i;
-                }
-                return {};
-            }();
+            auto segment_index_of_new_path_in_breadcrumbbar = breadcrumbbar.find_segment_with_data(new_path);
 
             if (segment_index_of_new_path_in_breadcrumbbar.has_value()) {
-                breadcrumbbar.set_selected_segment(segment_index_of_new_path_in_breadcrumbbar.value());
+                auto new_segment_index = segment_index_of_new_path_in_breadcrumbbar.value();
+                breadcrumbbar.set_selected_segment(new_segment_index);
+
+                // If the path change was because the directory we were in was deleted,
+                // remove the breadcrumbs for it.
+                if ((new_segment_index + 1 < breadcrumbbar.segment_count())
+                    && !Core::File::is_directory(breadcrumbbar.segment_data(new_segment_index + 1))) {
+                    breadcrumbbar.remove_end_segments(new_segment_index + 1);
+                }
             } else {
                 breadcrumbbar.clear_segments();
 
@@ -921,7 +952,15 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
                 breadcrumbbar.set_selected_segment(breadcrumbbar.segment_count() - 1);
 
                 breadcrumbbar.on_segment_click = [&](size_t segment_index) {
-                    directory_view.open(breadcrumbbar.segment_data(segment_index));
+                    auto selected_path = breadcrumbbar.segment_data(segment_index);
+                    if (Core::File::is_directory(selected_path)) {
+                        directory_view.open(selected_path);
+                    } else {
+                        dbgln("Breadcrumb path '{}' doesn't exist", selected_path);
+                        breadcrumbbar.remove_end_segments(segment_index);
+                        auto existing_path_segment = breadcrumbbar.find_segment_with_data(directory_view.path());
+                        breadcrumbbar.set_selected_segment(existing_path_segment.value());
+                    }
                 };
             }
         }
@@ -975,6 +1014,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
             || !directory_view.current_view().selection().is_empty());
     };
 
+    directory_context_menu->add_action(open_in_new_window_action);
     directory_context_menu->add_action(copy_action);
     directory_context_menu->add_action(cut_action);
     directory_context_menu->add_action(folder_specific_paste_action);
@@ -992,6 +1032,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     directory_view_context_menu->add_separator();
     directory_view_context_menu->add_action(properties_action);
 
+    tree_view_directory_context_menu->add_action(open_in_new_window_action);
     tree_view_directory_context_menu->add_action(copy_action);
     tree_view_directory_context_menu->add_action(cut_action);
     tree_view_directory_context_menu->add_action(paste_action);
@@ -1040,7 +1081,8 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         }
     };
 
-    tree_view.on_selection = [&](const GUI::ModelIndex& index) {
+    tree_view.on_selection_change = [&] {
+        const auto& index = tree_view.selection().first();
         if (directories_model->m_previously_selected_index.is_valid())
             directories_model->update_node_on_selection(directories_model->m_previously_selected_index, false);
 
@@ -1084,7 +1126,7 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         for (auto& url_to_copy : urls) {
             if (!url_to_copy.is_valid() || url_to_copy.path() == directory)
                 continue;
-            auto new_path = String::formatted("{}/{}", directory, LexicalPath(url_to_copy.path()).basename());
+            auto new_path = String::formatted("{}/{}", directory, LexicalPath::basename(url_to_copy.path()));
             if (url_to_copy.path() == new_path)
                 continue;
 
@@ -1114,14 +1156,14 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
         go_to_location_action->activate();
     };
 
-    tree_view.on_drop = [&](const GUI::ModelIndex& index, GUI::DropEvent& event) {
+    tree_view.on_drop = [&](const GUI::ModelIndex& index, const GUI::DropEvent& event) {
         if (!event.mime_data().has_urls())
             return;
         auto& target_node = directories_model->node(index);
         if (!target_node.is_directory())
             return;
         copy_urls_to_directory(event.mime_data().urls(), target_node.full_path());
-        event.accept();
+        const_cast<GUI::DropEvent&>(event).accept();
     };
 
     directory_view.open(initial_location);
@@ -1130,6 +1172,10 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
     paste_action->set_enabled(GUI::Clipboard::the().mime_type() == "text/uri-list" && access(initial_location.characters(), W_OK) == 0);
 
     window->show();
+
+    window->set_rect({ left, top, width, height });
+    if (was_maximized)
+        window->set_maximized(true);
 
     // Read directory read mode from config.
     auto dir_view_mode = config->read_entry("DirectoryView", "ViewMode", "Icon");
@@ -1153,10 +1199,13 @@ int run_in_windowed_mode(RefPtr<Core::ConfigFile> config, String initial_locatio
 
     // Write window position to config file on close request.
     window->on_close_request = [&] {
-        config->write_num_entry("Window", "Left", window->x());
-        config->write_num_entry("Window", "Top", window->y());
-        config->write_num_entry("Window", "Width", window->width());
-        config->write_num_entry("Window", "Height", window->height());
+        config->write_bool_entry("Window", "Maximized", window->is_maximized());
+        if (!window->is_maximized()) {
+            config->write_num_entry("Window", "Left", window->x());
+            config->write_num_entry("Window", "Top", window->y());
+            config->write_num_entry("Window", "Width", window->width());
+            config->write_num_entry("Window", "Height", window->height());
+        }
         config->sync();
 
         return GUI::Window::CloseRequestDecision::Close;

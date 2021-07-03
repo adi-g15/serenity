@@ -18,12 +18,26 @@ if [ "$(uname -s)" = "Darwin" ]; then
     export PATH="/usr/local/opt/e2fsprogs/sbin:$PATH"
 fi
 
+SCRIPT_DIR="$(dirname "${0}")"
+
+# Prepend the toolchain qemu directory so we pick up QEMU from there
+PATH="$SCRIPT_DIR/../Toolchain/Local/qemu/bin:$PATH"
+
+# Also prepend the i686 toolchain directory because that's where most
+# people will have their QEMU binaries if they built them before the
+# directory was changed to Toolchain/Local/qemu.
+PATH="$SCRIPT_DIR/../Toolchain/Local/i686/bin:$PATH"
+
 disk_usage() {
     # shellcheck disable=SC2003
+if [ "$(uname -s)" = "Darwin" ]; then
     expr "$(du -sk "$1" | cut -f1)" / 1024
+else
+    expr "$(du -sk --apparent-size "$1" | cut -f1)" / 1024
+fi
 }
 
-DISK_SIZE=$(($(disk_usage "$SERENITY_SOURCE_DIR/Base") + $(disk_usage Root) + 100))
+DISK_SIZE=$(($(disk_usage "$SERENITY_SOURCE_DIR/Base") + $(disk_usage Root) + 500))
 DISK_SIZE=${DISK_SIZE:-600}
 DISK_SIZE_BYTES=$((DISK_SIZE * 1024 * 1024))
 unset DISK_SIZE

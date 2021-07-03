@@ -11,18 +11,14 @@
 
 namespace GUI {
 
-class NotificationServerConnection : public IPC::ServerConnection<NotificationClientEndpoint, NotificationServerEndpoint>
+class NotificationServerConnection final
+    : public IPC::ServerConnection<NotificationClientEndpoint, NotificationServerEndpoint>
     , public NotificationClientEndpoint {
     C_OBJECT(NotificationServerConnection)
 
     friend class Notification;
 
 public:
-    virtual void handshake() override
-    {
-        greet();
-    }
-
     virtual void die() override
     {
         m_notification->connection_closed();
@@ -34,7 +30,6 @@ private:
         , m_notification(notification)
     {
     }
-    virtual void dummy() override { }
     Notification* m_notification;
 };
 

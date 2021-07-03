@@ -19,13 +19,14 @@ public:
     virtual ~StringConstructor() override;
 
     virtual Value call() override;
-    virtual Value construct(Function& new_target) override;
+    virtual Value construct(FunctionObject& new_target) override;
 
 private:
     virtual bool has_constructor() const override { return true; }
 
     JS_DECLARE_NATIVE_FUNCTION(raw);
     JS_DECLARE_NATIVE_FUNCTION(from_char_code);
+    JS_DECLARE_NATIVE_FUNCTION(from_code_point);
 };
 
 }

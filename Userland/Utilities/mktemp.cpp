@@ -5,7 +5,9 @@
  */
 
 #include <AK/LexicalPath.h>
+#include <AK/Random.h>
 #include <LibCore/ArgsParser.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,11 +21,11 @@ static char* generate_random_filename(const char* pattern)
     char* new_filename = strdup(pattern);
     int pattern_length = strlen(pattern);
 
-    static constexpr char random_characters[] = "abcdefghijklmnopqrstuvwxyz0123456789";
+    constexpr char random_characters[] = "abcdefghijklmnopqrstuvwxyz0123456789";
     for (auto i = pattern_length - 1; i >= 0; --i) {
         if (pattern[i] != 'X')
             break;
-        new_filename[i] = random_characters[(arc4random() % (sizeof(random_characters) - 1))];
+        new_filename[i] = random_characters[(get_random<u32>() % (sizeof(random_characters) - 1))];
     }
 
     return new_filename;
@@ -95,20 +97,15 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    LexicalPath target_path(String::formatted("{}/{}", target_directory, file_template));
-    if (!target_path.is_valid()) {
-        if (!quiet)
-            warnln("Invalid template path {}", target_path.string().characters());
-        return 1;
-    }
+    auto target_path = LexicalPath::join(target_directory, file_template).string();
 
-    char* final_path = make_temp(target_path.string().characters(), create_directory, dry_run);
+    char* final_path = make_temp(target_path.characters(), create_directory, dry_run);
     if (!final_path) {
         if (!quiet) {
             if (create_directory)
-                warnln("Failed to create directory via template {}", target_path.string().characters());
+                warnln("Failed to create directory via template {}", target_path.characters());
             else
-                warnln("Failed to create file via template {}", target_path.string().characters());
+                warnln("Failed to create file via template {}", target_path.characters());
         }
         return 1;
     }

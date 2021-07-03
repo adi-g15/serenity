@@ -36,26 +36,6 @@ TEST_CASE(test_fontdatabase_for_each_font)
     });
 }
 
-TEST_CASE(test_default_font)
-{
-    EXPECT(!Gfx::FontDatabase::default_font().name().is_null());
-}
-
-TEST_CASE(test_default_fixed_width_font)
-{
-    EXPECT(!Gfx::FontDatabase::default_fixed_width_font().name().is_null());
-}
-
-TEST_CASE(test_default_bold_fixed_width_font)
-{
-    EXPECT(!Gfx::FontDatabase::default_bold_fixed_width_font().name().is_null());
-}
-
-TEST_CASE(test_default_bold_font)
-{
-    EXPECT(!Gfx::FontDatabase::default_bold_font().name().is_null());
-}
-
 TEST_CASE(test_clone)
 {
     u8 glyph_height = 1;

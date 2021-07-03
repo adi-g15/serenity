@@ -6,10 +6,11 @@
 
 #include <AK/Assertions.h>
 #include <AK/Types.h>
-#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/IO.h>
 #include <Kernel/Interrupts/GenericInterruptHandler.h>
 #include <Kernel/Interrupts/PIC.h>
+#include <Kernel/Sections.h>
 
 namespace Kernel {
 

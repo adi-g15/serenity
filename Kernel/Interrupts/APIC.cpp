@@ -9,13 +9,14 @@
 #include <AK/Singleton.h>
 #include <AK/Types.h>
 #include <Kernel/ACPI/Parser.h>
-#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/Arch/x86/MSR.h>
 #include <Kernel/Arch/x86/ProcessorInfo.h>
 #include <Kernel/Debug.h>
 #include <Kernel/IO.h>
 #include <Kernel/Interrupts/APIC.h>
 #include <Kernel/Interrupts/SpuriousInterruptHandler.h>
 #include <Kernel/Panic.h>
+#include <Kernel/Sections.h>
 #include <Kernel/Thread.h>
 #include <Kernel/Time/APICTimer.h>
 #include <Kernel/VM/MemoryManager.h>
@@ -70,7 +71,7 @@ public:
         handler->register_interrupt_handler();
     }
 
-    virtual void handle_interrupt(const RegisterState&) override;
+    virtual bool handle_interrupt(const RegisterState&) override;
 
     virtual bool eoi() override;
 
@@ -101,7 +102,7 @@ public:
         handler->register_interrupt_handler();
     }
 
-    virtual void handle_interrupt(const RegisterState&) override;
+    virtual bool handle_interrupt(const RegisterState&) override;
 
     virtual bool eoi() override;
 
@@ -555,9 +556,10 @@ u32 APIC::get_timer_divisor()
     return 16;
 }
 
-void APICIPIInterruptHandler::handle_interrupt(const RegisterState&)
+bool APICIPIInterruptHandler::handle_interrupt(const RegisterState&)
 {
     dbgln_if(APIC_SMP_DEBUG, "APIC IPI on CPU #{}", Processor::id());
+    return true;
 }
 
 bool APICIPIInterruptHandler::eoi()
@@ -567,9 +569,10 @@ bool APICIPIInterruptHandler::eoi()
     return true;
 }
 
-void APICErrInterruptHandler::handle_interrupt(const RegisterState&)
+bool APICErrInterruptHandler::handle_interrupt(const RegisterState&)
 {
     dbgln("APIC: SMP error on CPU #{}", Processor::id());
+    return true;
 }
 
 bool APICErrInterruptHandler::eoi()

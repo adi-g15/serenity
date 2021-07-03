@@ -320,7 +320,7 @@ static FloatT internal_gamma(FloatT x) NOEXCEPT
     }
 
     // Stirling approximation
-    return sqrtl(2.0 * M_PI / static_cast<long double>(x)) * powl(static_cast<long double>(x) / M_E, static_cast<long double>(x));
+    return sqrtl(2.0 * M_PIl / static_cast<long double>(x)) * powl(static_cast<long double>(x) / M_El, static_cast<long double>(x));
 }
 
 extern "C" {
@@ -426,6 +426,10 @@ long double powl(long double x, long double y) NOEXCEPT
             result = 1.0l / result;
         return result;
     }
+    if (x < 0) {
+        return 1.l / exp2l(y * log2l(-x));
+    }
+
     return exp2l(y * log2l(x));
 }
 
@@ -1412,5 +1416,20 @@ float fminf(float x, float y) NOEXCEPT
         return x;
 
     return x < y ? x : y;
+}
+
+long double nearbyintl(long double value) NOEXCEPT
+{
+    return internal_to_integer(value, RoundingMode { fegetround() });
+}
+
+double nearbyint(double value) NOEXCEPT
+{
+    return internal_to_integer(value, RoundingMode { fegetround() });
+}
+
+float nearbyintf(float value) NOEXCEPT
+{
+    return internal_to_integer(value, RoundingMode { fegetround() });
 }
 }

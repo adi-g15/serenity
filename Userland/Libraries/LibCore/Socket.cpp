@@ -106,7 +106,7 @@ bool Socket::connect(const SocketAddress& address)
     auto dest_address = address.to_string();
     bool fits = dest_address.copy_characters_to_buffer(saddr.sun_path, sizeof(saddr.sun_path));
     if (!fits) {
-        fprintf(stderr, "Core::Socket: Failed to connect() to %s: Path is too long!\n", dest_address.characters());
+        warnln("Core::Socket: Failed to connect() to {}: Path is too long!", dest_address);
         errno = EINVAL;
         return false;
     }
@@ -139,7 +139,7 @@ bool Socket::common_connect(const struct sockaddr* addr, socklen_t addrlen)
             return true;
         }
         int saved_errno = errno;
-        fprintf(stderr, "Core::Socket: Failed to connect() to %s: %s\n", destination_address().to_string().characters(), strerror(saved_errno));
+        warnln("Core::Socket: Failed to connect() to {}: {}", destination_address().to_string(), strerror(saved_errno));
         errno = saved_errno;
         return false;
     }
@@ -158,12 +158,15 @@ ByteBuffer Socket::receive(int max_size)
 
 bool Socket::send(ReadonlyBytes data)
 {
-    ssize_t nsent = ::send(fd(), data.data(), data.size(), 0);
-    if (nsent < 0) {
-        set_error(errno);
-        return false;
+    auto remaining_bytes = data.size();
+    while (remaining_bytes > 0) {
+        ssize_t nsent = ::send(fd(), data.data() + (data.size() - remaining_bytes), remaining_bytes, 0);
+        if (nsent < 0) {
+            set_error(errno);
+            return false;
+        }
+        remaining_bytes -= nsent;
     }
-    VERIFY(static_cast<size_t>(nsent) == data.size());
     return true;
 }
 

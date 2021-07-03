@@ -11,7 +11,7 @@
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$realpath(Userspace<const Syscall::SC_realpath_params*> user_params)
+KResultOr<FlatPtr> Process::sys$realpath(Userspace<const Syscall::SC_realpath_params*> user_params)
 {
     REQUIRE_PROMISE(rpath);
 
@@ -23,7 +23,7 @@ KResultOr<int> Process::sys$realpath(Userspace<const Syscall::SC_realpath_params
     if (path.is_error())
         return path.error();
 
-    auto custody_or_error = VFS::the().resolve_path(path.value(), current_directory());
+    auto custody_or_error = VFS::the().resolve_path(path.value()->view(), current_directory());
     if (custody_or_error.is_error())
         return custody_or_error.error();
     auto& custody = custody_or_error.value();

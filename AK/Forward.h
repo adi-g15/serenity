@@ -10,8 +10,13 @@
 
 namespace AK {
 
-class Bitmap;
+namespace Detail {
+template<size_t inline_capacity>
 class ByteBuffer;
+}
+
+class Bitmap;
+using ByteBuffer = AK::Detail::ByteBuffer<32>;
 class IPv4Address;
 class JsonArray;
 class JsonObject;
@@ -58,20 +63,23 @@ class SinglyLinkedList;
 template<typename T>
 class DoublyLinkedList;
 
-template<typename T>
-class InlineLinkedList;
-
 template<typename T, size_t capacity>
 class CircularQueue;
 
 template<typename T>
 struct Traits;
 
-template<typename T, typename = Traits<T>>
+template<typename T, typename TraitsForT = Traits<T>, bool IsOrdered = false>
 class HashTable;
 
-template<typename K, typename V, typename = Traits<K>>
+template<typename T, typename TraitsForT = Traits<T>>
+using OrderedHashTable = HashTable<T, TraitsForT, true>;
+
+template<typename K, typename V, typename KeyTraits = Traits<K>, bool IsOrdered = false>
 class HashMap;
+
+template<typename K, typename V, typename KeyTraits = Traits<K>>
+using OrderedHashMap = HashMap<K, V, KeyTraits, true>;
 
 template<typename T>
 class Badge;
@@ -110,7 +118,7 @@ template<typename T>
 class WeakPtr;
 
 template<typename T, size_t inline_capacity = 0>
-class Vector;
+requires(!IsRvalueReference<T>) class Vector;
 
 }
 
@@ -128,7 +136,6 @@ using AK::FlyString;
 using AK::Function;
 using AK::HashMap;
 using AK::HashTable;
-using AK::InlineLinkedList;
 using AK::InputBitStream;
 using AK::InputMemoryStream;
 using AK::InputStream;

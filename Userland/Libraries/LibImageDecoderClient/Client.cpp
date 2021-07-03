@@ -12,22 +12,12 @@ namespace ImageDecoderClient {
 Client::Client()
     : IPC::ServerConnection<ImageDecoderClientEndpoint, ImageDecoderServerEndpoint>(*this, "/tmp/portal/image")
 {
-    handshake();
 }
 
 void Client::die()
 {
     if (on_death)
         on_death();
-}
-
-void Client::handshake()
-{
-    greet();
-}
-
-void Client::dummy()
-{
 }
 
 Optional<DecodedImage> Client::decode_image(const ByteBuffer& encoded_data)
@@ -50,6 +40,9 @@ Optional<DecodedImage> Client::decode_image(const ByteBuffer& encoded_data)
     }
 
     auto& response = response_or_error.value();
+
+    if (response.bitmaps().is_empty())
+        return {};
 
     DecodedImage image;
     image.is_animated = response.is_animated();

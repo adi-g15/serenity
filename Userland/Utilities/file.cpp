@@ -12,6 +12,7 @@
 #include <LibCore/MimeData.h>
 #include <LibGfx/ImageDecoder.h>
 #include <stdio.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static Optional<String> description_only(String description, [[maybe_unused]] const String& path)
@@ -52,18 +53,37 @@ static Optional<String> gzip_details(String description, const String& path)
     return String::formatted("{}, {}", description, gzip_details.value());
 }
 
-#define ENUMERATE_MIME_TYPE_DESCRIPTIONS                                                               \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/javascript", "JavaScript source", description_only) \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/json", "JSON data", description_only)               \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/gzip", "gzip compressed data", gzip_details)              \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/bmp", "BMP image data", image_details)                    \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/gif", "GIF image data", image_details)                    \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/jpeg", "JPEG image data", image_details)                  \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/png", "PNG image data", image_details)                    \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-bitmap", "PBM image data", image_details)      \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-graymap", "PGM image data", image_details)     \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-pixmap", "PPM image data", image_details)      \
-    __ENUMERATE_MIME_TYPE_DESCRIPTION("text/markdown", "Markdown document", description_only)          \
+#define ENUMERATE_MIME_TYPE_DESCRIPTIONS                                                                            \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/gzip", "gzip compressed data", gzip_details)                     \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/javascript", "JavaScript source", description_only)              \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/json", "JSON data", description_only)                            \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/pdf", "PDF document", description_only)                          \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/rtf", "Rich text file", description_only)                        \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/tar", "tape archive", description_only)                          \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/wasm", "WebAssembly bytecode", description_only)                 \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("application/x-7z-compressed", "7-Zip archive", description_only)             \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("audio/midi", "MIDI sound", description_only)                                 \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/blender", "Blender project file", description_only)                    \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/ext", "ext filesystem", description_only)                              \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/flac", "FLAC audio", description_only)                                 \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/iso-9660", "ISO 9660 CD/DVD image", description_only)                  \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/isz", "Compressed ISO image", description_only)                        \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/lua-bytecode", "Lua bytecode", description_only)                       \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/matroska", "Matroska container", description_only)                     \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/nes-rom", "Nintendo Entertainment System ROM", description_only)       \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/qcow", "qcow file", description_only)                                  \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/raw-zlib", "raw zlib stream", description_only)                        \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/sqlite", "sqlite database", description_only)                          \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/win-31x-compressed", "Windows 3.1X compressed file", description_only) \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("extra/win-95-compressed", "Windows 95 compressed file", description_only)    \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/bmp", "BMP image data", image_details)                                 \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/gif", "GIF image data", image_details)                                 \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/jpeg", "JPEG image data", image_details)                               \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/png", "PNG image data", image_details)                                 \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-bitmap", "PBM image data", image_details)                   \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-graymap", "PGM image data", image_details)                  \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("image/x-portable-pixmap", "PPM image data", image_details)                   \
+    __ENUMERATE_MIME_TYPE_DESCRIPTION("text/markdown", "Markdown document", description_only)                       \
     __ENUMERATE_MIME_TYPE_DESCRIPTION("text/x-shellscript", "POSIX shell script text executable", description_only)
 
 static Optional<String> get_description_from_mime_type(const String& mime, const String& path)
@@ -96,16 +116,31 @@ int main(int argc, char** argv)
 
     for (auto path : paths) {
         auto file = Core::File::construct(path);
-        if (!file->open(Core::File::ReadOnly)) {
+        if (!file->open(Core::OpenMode::ReadOnly)) {
             perror(path);
             all_ok = false;
             continue;
         }
-        auto bytes = file->read(25);
-        auto file_name_guess = Core::guess_mime_type_based_on_filename(path);
-        auto mime_type = Core::guess_mime_type_based_on_sniffed_bytes(bytes.bytes()).value_or(file_name_guess);
-        auto human_readable_description = get_description_from_mime_type(mime_type, String(path)).value_or(mime_type);
-        outln("{}: {}", path, flag_mime_only ? mime_type : human_readable_description);
+
+        struct stat file_stat;
+        if (lstat(path, &file_stat) < 0) {
+            perror("lstat");
+            return 1;
+        }
+
+        auto file_size_in_bytes = file_stat.st_size;
+        if (file->is_directory()) {
+            outln("{}: directory", path);
+        } else if (!file_size_in_bytes) {
+            outln("{}: empty", path);
+        } else {
+            // Read accounts for longest possible offset + signature we currently match against.
+            auto bytes = file->read(0x9006);
+            auto file_name_guess = Core::guess_mime_type_based_on_filename(path);
+            auto mime_type = Core::guess_mime_type_based_on_sniffed_bytes(bytes.bytes()).value_or(file_name_guess);
+            auto human_readable_description = get_description_from_mime_type(mime_type, String(path)).value_or(mime_type);
+            outln("{}: {}", path, flag_mime_only ? mime_type : human_readable_description);
+        }
     }
 
     return all_ok ? 0 : 1;

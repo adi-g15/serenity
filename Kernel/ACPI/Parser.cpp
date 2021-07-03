@@ -9,9 +9,11 @@
 #include <AK/StringView.h>
 #include <Kernel/ACPI/Parser.h>
 #include <Kernel/Arch/PC/BIOS.h>
+#include <Kernel/Arch/x86/InterruptDisabler.h>
+#include <Kernel/Bus/PCI/Access.h>
 #include <Kernel/Debug.h>
 #include <Kernel/IO.h>
-#include <Kernel/PCI/Access.h>
+#include <Kernel/Sections.h>
 #include <Kernel/StdLib.h>
 #include <Kernel/VM/TypedMapping.h>
 
@@ -23,6 +25,79 @@ static Parser* s_acpi_parser;
 Parser* Parser::the()
 {
     return s_acpi_parser;
+}
+
+UNMAP_AFTER_INIT NonnullRefPtr<ExposedComponent> ExposedComponent::create(String name, PhysicalAddress paddr, size_t table_size)
+{
+    return adopt_ref(*new (nothrow) ExposedComponent(name, paddr, table_size));
+}
+
+KResultOr<size_t> ExposedComponent::read_bytes(off_t offset, size_t count, UserOrKernelBuffer& buffer, FileDescription*) const
+{
+    auto blob = try_to_generate_buffer();
+    if (!blob)
+        return KResult(EFAULT);
+
+    if ((size_t)offset >= blob->size())
+        return KSuccess;
+
+    ssize_t nread = min(static_cast<off_t>(blob->size() - offset), static_cast<off_t>(count));
+    if (!buffer.write(blob->data() + offset, nread))
+        return KResult(EFAULT);
+    return nread;
+}
+
+OwnPtr<KBuffer> ExposedComponent::try_to_generate_buffer() const
+{
+    auto acpi_blob = map_typed<u8>((m_paddr), m_length);
+    return KBuffer::try_create_with_bytes(Span<u8> { acpi_blob.ptr(), m_length });
+}
+
+UNMAP_AFTER_INIT ExposedComponent::ExposedComponent(String name, PhysicalAddress paddr, size_t table_size)
+    : SystemExposedComponent(name)
+    , m_paddr(paddr)
+    , m_length(table_size)
+{
+}
+
+UNMAP_AFTER_INIT void ExposedFolder::initialize()
+{
+    auto acpi_folder = adopt_ref(*new (nothrow) ExposedFolder());
+    SystemRegistrar::the().register_new_component(acpi_folder);
+}
+
+UNMAP_AFTER_INIT ExposedFolder::ExposedFolder()
+    : SystemExposedFolder("acpi", SystemRegistrar::the().root_folder())
+{
+    NonnullRefPtrVector<SystemExposedComponent> components;
+    size_t ssdt_count = 0;
+    ACPI::Parser::the()->enumerate_static_tables([&](const StringView& signature, PhysicalAddress p_table, size_t length) {
+        if (signature == "SSDT") {
+            components.append(ExposedComponent::create(String::formatted("{:4s}{}", signature.characters_without_null_termination(), ssdt_count), p_table, length));
+            ssdt_count++;
+            return;
+        }
+        components.append(ExposedComponent::create(signature, p_table, length));
+    });
+    m_components = components;
+
+    auto rsdp = map_typed<Structures::RSDPDescriptor20>(ACPI::Parser::the()->rsdp());
+    m_components.append(ExposedComponent::create("RSDP", ACPI::Parser::the()->rsdp(), rsdp->base.revision == 0 ? sizeof(Structures::RSDPDescriptor) : rsdp->length));
+
+    auto main_system_description_table = map_typed<Structures::SDTHeader>(ACPI::Parser::the()->main_system_description_table());
+    if (ACPI::Parser::the()->is_xsdt_supported()) {
+        m_components.append(ExposedComponent::create("XSDT", ACPI::Parser::the()->main_system_description_table(), main_system_description_table->length));
+    } else {
+        m_components.append(ExposedComponent::create("RSDT", ACPI::Parser::the()->main_system_description_table(), main_system_description_table->length));
+    }
+}
+
+void Parser::enumerate_static_tables(Function<void(const StringView&, PhysicalAddress, size_t)> callback)
+{
+    for (auto& p_table : m_sdt_pointers) {
+        auto table = map_typed<Structures::SDTHeader>(p_table);
+        callback({ table->sig, 4 }, p_table, table->length);
+    }
 }
 
 void Parser::set_the(Parser& parser)
@@ -71,8 +146,7 @@ UNMAP_AFTER_INIT void Parser::init_fadt()
     m_fadt = find_table("FACP");
     VERIFY(!m_fadt.is_null());
 
-    // FIXME: We need at least two pages for mapping, since we can be on the "edge" of one page...
-    auto sdt = map_typed<const volatile Structures::FADT>(m_fadt, PAGE_SIZE * 2);
+    auto sdt = map_typed<const volatile Structures::FADT>(m_fadt);
 
     dbgln_if(ACPI_DEBUG, "ACPI: FADT @ V{}, {}", &sdt, m_fadt);
 
@@ -169,7 +243,8 @@ void Parser::access_generic_address(const Structures::GenericAddressStructure& s
         return;
     }
     case GenericAddressStructure::AddressSpace::PCIConfigurationSpace: {
-        // According to the ACPI specification 6.2, page 168, PCI addresses must be confined to devices on Segment group 0, bus 0.
+        // According to https://uefi.org/specs/ACPI/6.4/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html#address-space-format,
+        // PCI addresses must be confined to devices on Segment group 0, bus 0.
         auto pci_address = PCI::Address(0, 0, ((structure.address >> 24) & 0xFF), ((structure.address >> 16) & 0xFF));
         dbgln("ACPI: Sending value {:x} to {}", value, pci_address);
         u32 offset_in_pci_address = structure.address & 0xFFFF;
@@ -189,7 +264,8 @@ void Parser::access_generic_address(const Structures::GenericAddressStructure& s
 
 bool Parser::validate_reset_register()
 {
-    // According to the ACPI spec 6.2, page 152, The reset register can only be located in I/O bus, PCI bus or memory-mapped.
+    // According to https://uefi.org/specs/ACPI/6.4/04_ACPI_Hardware_Specification/ACPI_Hardware_Specification.html#reset-register,
+    // the reset register can only be located in I/O bus, PCI bus or memory-mapped.
     auto fadt = map_typed<Structures::FADT>(m_fadt);
     return (fadt->reset_reg.address_space == (u8)GenericAddressStructure::AddressSpace::PCIConfigurationSpace || fadt->reset_reg.address_space == (u8)GenericAddressStructure::AddressSpace::SystemMemory || fadt->reset_reg.address_space == (u8)GenericAddressStructure::AddressSpace::SystemIO);
 }
@@ -297,6 +373,7 @@ static bool validate_table(const Structures::SDTHeader& v_header, size_t length)
     return false;
 }
 
+// https://uefi.org/specs/ACPI/6.4/05_ACPI_Software_Programming_Model/ACPI_Software_Programming_Model.html#finding-the-rsdp-on-ia-pc-systems
 UNMAP_AFTER_INIT Optional<PhysicalAddress> StaticParsing::find_rsdp()
 {
     StringView signature("RSD PTR ");

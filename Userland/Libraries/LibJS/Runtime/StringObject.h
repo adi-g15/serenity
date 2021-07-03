@@ -14,9 +14,10 @@ class StringObject : public Object {
     JS_OBJECT(StringObject, Object);
 
 public:
-    static StringObject* create(GlobalObject&, PrimitiveString&);
+    static StringObject* create(GlobalObject&, PrimitiveString&, Object& prototype);
 
     StringObject(PrimitiveString&, Object& prototype);
+    virtual void initialize(GlobalObject&) override;
     virtual ~StringObject() override;
 
     const PrimitiveString& primitive_string() const { return m_string; }
@@ -28,6 +29,7 @@ public:
 private:
     virtual bool is_string_object() const final { return true; }
     virtual void visit_edges(Visitor&) override;
+    virtual Optional<PropertyDescriptor> get_own_property_descriptor(PropertyName const&) const override;
 
     PrimitiveString& m_string;
 };

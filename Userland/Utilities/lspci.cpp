@@ -55,8 +55,8 @@ int main(int argc, char** argv)
     }
 
     auto proc_pci = Core::File::construct("/proc/pci");
-    if (!proc_pci->open(Core::IODevice::ReadOnly)) {
-        fprintf(stderr, "Error: %s\n", proc_pci->error_string());
+    if (!proc_pci->open(Core::OpenMode::ReadOnly)) {
+        warnln("Failed to open {}: {}", proc_pci->name(), proc_pci->error_string());
         return 1;
     }
 
@@ -69,7 +69,7 @@ int main(int argc, char** argv)
     auto json = JsonValue::from_string(file_contents);
     VERIFY(json.has_value());
     json.value().as_array().for_each([db, format](auto& value) {
-        auto dev = value.as_object();
+        auto& dev = value.as_object();
         auto seg = dev.get("seg").to_u32();
         auto bus = dev.get("bus").to_u32();
         auto device = dev.get("device").to_u32();

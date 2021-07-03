@@ -18,26 +18,21 @@ namespace AK {
 
 inline void StringBuilder::will_append(size_t size)
 {
-    Checked<size_t> needed_capacity = m_length;
+    Checked<size_t> needed_capacity = m_buffer.size();
     needed_capacity += size;
     VERIFY(!needed_capacity.has_overflow());
-    if (needed_capacity < inline_capacity)
+    // Prefer to completely use the existing capacity first
+    if (needed_capacity <= m_buffer.capacity())
         return;
     Checked<size_t> expanded_capacity = needed_capacity;
     expanded_capacity *= 2;
     VERIFY(!expanded_capacity.has_overflow());
-    if (m_buffer.is_null()) {
-        m_buffer.grow(expanded_capacity.value());
-        memcpy(m_buffer.data(), m_inline_buffer, m_length);
-    } else if (needed_capacity.value() > m_buffer.size()) {
-        m_buffer.grow(expanded_capacity.value());
-    }
+    m_buffer.ensure_capacity(expanded_capacity.value());
 }
 
 StringBuilder::StringBuilder(size_t initial_capacity)
 {
-    if (initial_capacity > inline_capacity)
-        m_buffer.grow(initial_capacity);
+    m_buffer.ensure_capacity(initial_capacity);
 }
 
 void StringBuilder::append(const StringView& str)
@@ -45,8 +40,7 @@ void StringBuilder::append(const StringView& str)
     if (str.is_empty())
         return;
     will_append(str.length());
-    memcpy(data() + m_length, str.characters_without_null_termination(), str.length());
-    m_length += str.length();
+    m_buffer.append(str.characters_without_null_termination(), str.length());
 }
 
 void StringBuilder::append(const char* characters, size_t length)
@@ -57,8 +51,7 @@ void StringBuilder::append(const char* characters, size_t length)
 void StringBuilder::append(char ch)
 {
     will_append(1);
-    data()[m_length] = ch;
-    m_length += 1;
+    m_buffer.append(&ch, 1);
 }
 
 void StringBuilder::appendvf(const char* fmt, va_list ap)
@@ -88,14 +81,12 @@ String StringBuilder::build() const
 
 StringView StringBuilder::string_view() const
 {
-    return StringView { data(), m_length };
+    return StringView { data(), m_buffer.size() };
 }
 
 void StringBuilder::clear()
 {
     m_buffer.clear();
-    m_inline_buffer[0] = '\0';
-    m_length = 0;
 }
 
 void StringBuilder::append_code_point(u32 code_point)
@@ -127,6 +118,14 @@ void StringBuilder::append(const Utf32View& utf32_view)
         auto code_point = utf32_view.code_points()[i];
         append_code_point(code_point);
     }
+}
+
+void StringBuilder::append_as_lowercase(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z')
+        append(ch + 0x20);
+    else
+        append(ch);
 }
 
 void StringBuilder::append_escaped_for_json(const StringView& string)

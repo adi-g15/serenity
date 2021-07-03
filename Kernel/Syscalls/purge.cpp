@@ -5,6 +5,7 @@
  */
 
 #include <AK/NonnullRefPtrVector.h>
+#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Process.h>
 #include <Kernel/VM/AnonymousVMObject.h>
 #include <Kernel/VM/InodeVMObject.h>
@@ -12,7 +13,7 @@
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$purge(int mode)
+KResultOr<FlatPtr> Process::sys$purge(int mode)
 {
     REQUIRE_NO_PROMISES;
     if (!is_superuser())

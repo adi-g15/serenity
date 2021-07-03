@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <LibJS/Runtime/Function.h>
+#include <LibJS/Runtime/FunctionObject.h>
 #include <LibWeb/Bindings/EventWrapper.h>
 #include <LibWeb/Bindings/XMLHttpRequestWrapper.h>
 #include <LibWeb/DOM/DOMException.h>
@@ -47,7 +47,7 @@ void XMLHttpRequest::fire_progress_event(const String& event_name, u64 transmitt
 
 String XMLHttpRequest::response_text() const
 {
-    if (m_response_object.is_null())
+    if (m_response_object.is_empty())
         return {};
     return String::copy(m_response_object);
 }

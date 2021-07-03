@@ -15,7 +15,7 @@
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio cpath rpath recvfd sendfd unix fattr", nullptr) < 0) {
+    if (pledge("stdio cpath rpath recvfd sendfd unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -37,13 +37,14 @@ int main(int argc, char** argv)
     window->set_icon(app_icon.bitmap_for_size(16));
 
     auto menubar = GUI::Menubar::construct();
-    auto& file_menu = menubar->add_menu("File");
+    auto& file_menu = menubar->add_menu("&File");
     file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) {
         app->quit();
     }));
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("Mouse Settings", app_icon, window));
+
     window->set_menubar(move(menubar));
 
     window->show();

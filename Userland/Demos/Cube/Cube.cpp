@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@gmx.de>
+ * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -128,13 +128,13 @@ void Cube::timer_event(Core::TimerEvent&)
     static float angle = 0;
     angle += 0.02f;
 
-    auto matrix = FloatMatrix4x4::translate(FloatVector3(0, 0, 1.5f))
-        * FloatMatrix4x4::rotate(FloatVector3(1, 0, 0), angle * 1.17356641f)
-        * FloatMatrix4x4::rotate(FloatVector3(0, 1, 0), angle * 0.90533273f)
-        * FloatMatrix4x4::rotate(FloatVector3(0, 0, 1), angle);
+    auto matrix = Gfx::translation_matrix(FloatVector3(0, 0, 1.5f))
+        * Gfx::rotation_matrix(FloatVector3(1, 0, 0), angle * 1.17356641f)
+        * Gfx::rotation_matrix(FloatVector3(0, 1, 0), angle * 0.90533273f)
+        * Gfx::rotation_matrix(FloatVector3(0, 0, 1), angle);
 
     for (int i = 0; i < 8; i++) {
-        transformed_vertices[i] = matrix.transform_point(vertices[i]);
+        transformed_vertices[i] = transform_point(matrix, vertices[i]);
     }
 
     GUI::Painter painter(*m_bitmap);
@@ -243,7 +243,7 @@ int main(int argc, char** argv)
 
     auto menubar = GUI::Menubar::construct();
     auto& file_menu = menubar->add_menu("&File");
-    auto show_window_frame_action = GUI::Action::create_checkable("Show window frame", [&](auto& action) {
+    auto show_window_frame_action = GUI::Action::create_checkable("Show Window &Frame", [&](auto& action) {
         cube.set_show_window_frame(action.is_checked());
     });
 
@@ -252,7 +252,7 @@ int main(int argc, char** argv)
     file_menu.add_action(move(show_window_frame_action));
     file_menu.add_separator();
     file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("Cube Demo", app_icon, window));
     window->set_menubar(move(menubar));
 

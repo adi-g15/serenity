@@ -11,7 +11,7 @@
 
 namespace Kernel {
 
-KResultOr<ssize_t> Process::sys$writev(int fd, Userspace<const struct iovec*> iov, int iov_count)
+KResultOr<FlatPtr> Process::sys$writev(int fd, Userspace<const struct iovec*> iov, int iov_count)
 {
     REQUIRE_PROMISE(stdio);
     if (iov_count < 0)
@@ -33,7 +33,7 @@ KResultOr<ssize_t> Process::sys$writev(int fd, Userspace<const struct iovec*> io
             return EINVAL;
     }
 
-    auto description = file_description(fd);
+    auto description = fds().file_description(fd);
     if (!description)
         return EBADF;
 
@@ -57,13 +57,9 @@ KResultOr<ssize_t> Process::sys$writev(int fd, Userspace<const struct iovec*> io
     return nwritten;
 }
 
-KResultOr<ssize_t> Process::do_write(FileDescription& description, const UserOrKernelBuffer& data, size_t data_size)
+KResultOr<FlatPtr> Process::do_write(FileDescription& description, const UserOrKernelBuffer& data, size_t data_size)
 {
-    ssize_t total_nwritten = 0;
-    if (!description.is_blocking()) {
-        if (!description.can_write())
-            return EAGAIN;
-    }
+    size_t total_nwritten = 0;
 
     if (description.should_append() && description.file().is_seekable()) {
         auto seek_result = description.seek(0, SEEK_END);
@@ -71,12 +67,13 @@ KResultOr<ssize_t> Process::do_write(FileDescription& description, const UserOrK
             return seek_result.error();
     }
 
-    while ((size_t)total_nwritten < data_size) {
-        if (!description.can_write()) {
+    while (total_nwritten < data_size) {
+        while (!description.can_write()) {
             if (!description.is_blocking()) {
-                // Short write: We can no longer write to this non-blocking description.
-                VERIFY(total_nwritten > 0);
-                return total_nwritten;
+                if (total_nwritten > 0)
+                    return total_nwritten;
+                else
+                    return EAGAIN;
             }
             auto unblock_flags = Thread::FileBlocker::BlockFlags::None;
             if (Thread::current()->block<Thread::WriteBlocker>({}, description, unblock_flags).was_interrupted()) {
@@ -87,27 +84,28 @@ KResultOr<ssize_t> Process::do_write(FileDescription& description, const UserOrK
         }
         auto nwritten_or_error = description.write(data.offset(total_nwritten), data_size - total_nwritten);
         if (nwritten_or_error.is_error()) {
-            if (total_nwritten)
+            if (total_nwritten > 0)
                 return total_nwritten;
+            if (nwritten_or_error.error() == EAGAIN)
+                continue;
             return nwritten_or_error.error();
         }
-        if (nwritten_or_error.value() == 0)
-            break;
+        VERIFY(nwritten_or_error.value() > 0);
         total_nwritten += nwritten_or_error.value();
     }
     return total_nwritten;
 }
 
-KResultOr<ssize_t> Process::sys$write(int fd, Userspace<const u8*> data, ssize_t size)
+KResultOr<FlatPtr> Process::sys$write(int fd, Userspace<const u8*> data, size_t size)
 {
     REQUIRE_PROMISE(stdio);
-    if (size < 0)
-        return EINVAL;
     if (size == 0)
         return 0;
+    if (size > NumericLimits<ssize_t>::max())
+        return EINVAL;
 
     dbgln_if(IO_DEBUG, "sys$write({}, {}, {})", fd, data.ptr(), size);
-    auto description = file_description(fd);
+    auto description = fds().file_description(fd);
     if (!description)
         return EBADF;
     if (!description->is_writable())

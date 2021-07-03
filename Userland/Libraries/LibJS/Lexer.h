@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@gmx.de>
+ * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -29,6 +29,7 @@ private:
     bool consume_octal_number();
     bool consume_hexadecimal_number();
     bool consume_binary_number();
+    bool consume_decimal_number();
     bool is_eof() const;
     bool is_line_terminator() const;
     bool is_identifier_start() const;
@@ -40,12 +41,15 @@ private:
     bool match(char, char) const;
     bool match(char, char, char) const;
     bool match(char, char, char, char) const;
+    template<typename Callback>
+    bool match_numeric_literal_separator_followed_by(Callback) const;
     bool slash_means_division() const;
 
     StringView m_source;
     size_t m_position { 0 };
     Token m_current_token;
     char m_current_char { 0 };
+    bool m_eof { false };
 
     StringView m_filename;
     size_t m_line_number { 1 };

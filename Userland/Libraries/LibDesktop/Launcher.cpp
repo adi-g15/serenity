@@ -34,21 +34,15 @@ auto Launcher::Details::from_details_str(const String& details_str) -> NonnullRe
     return details;
 }
 
-class LaunchServerConnection : public IPC::ServerConnection<LaunchClientEndpoint, LaunchServerEndpoint>
+class LaunchServerConnection final
+    : public IPC::ServerConnection<LaunchClientEndpoint, LaunchServerEndpoint>
     , public LaunchClientEndpoint {
     C_OBJECT(LaunchServerConnection)
-public:
-    virtual void handshake() override
-    {
-        greet();
-    }
-
 private:
     LaunchServerConnection()
         : IPC::ServerConnection<LaunchClientEndpoint, LaunchServerEndpoint>(*this, "/tmp/portal/launch")
     {
     }
-    virtual void dummy() override { }
 };
 
 static LaunchServerConnection& connection()

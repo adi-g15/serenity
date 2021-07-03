@@ -13,6 +13,7 @@
 #include <Kernel/Net/IPv4.h>
 #include <Kernel/Net/IPv4Socket.h>
 #include <Kernel/Net/NetworkAdapter.h>
+#include <Kernel/Net/NetworkingManagement.h>
 #include <Kernel/Net/Routing.h>
 #include <Kernel/Net/TCP.h>
 #include <Kernel/Net/TCPSocket.h>
@@ -36,12 +37,24 @@ Lockable<HashTable<IPv4Socket*>>& IPv4Socket::all_sockets()
 
 KResultOr<NonnullRefPtr<Socket>> IPv4Socket::create(int type, int protocol)
 {
-    if (type == SOCK_STREAM)
-        return TCPSocket::create(protocol);
-    if (type == SOCK_DGRAM)
-        return UDPSocket::create(protocol);
-    if (type == SOCK_RAW)
-        return adopt_ref(*new IPv4Socket(type, protocol));
+    if (type == SOCK_STREAM) {
+        auto tcp_socket = TCPSocket::create(protocol);
+        if (tcp_socket.is_error())
+            return tcp_socket.error();
+        return tcp_socket.release_value();
+    }
+    if (type == SOCK_DGRAM) {
+        auto udp_socket = UDPSocket::create(protocol);
+        if (udp_socket.is_error())
+            return udp_socket.error();
+        return udp_socket.release_value();
+    }
+    if (type == SOCK_RAW) {
+        auto raw_socket = adopt_ref_if_nonnull(new (nothrow) IPv4Socket(type, protocol));
+        if (raw_socket)
+            return raw_socket.release_nonnull();
+        return ENOMEM;
+    }
     return EINVAL;
 }
 
@@ -109,8 +122,9 @@ KResult IPv4Socket::bind(Userspace<const sockaddr*> user_address, socklen_t addr
 KResult IPv4Socket::listen(size_t backlog)
 {
     Locker locker(lock());
-    if (auto result = allocate_local_port_if_needed(); result.is_error() && result.error() != -ENOPROTOOPT)
-        return result.error();
+    auto result = allocate_local_port_if_needed();
+    if (result.error_or_port.is_error() && result.error_or_port.error() != -ENOPROTOOPT)
+        return result.error_or_port.error();
 
     set_backlog(backlog);
     m_role = Role::Listener;
@@ -118,7 +132,7 @@ KResult IPv4Socket::listen(size_t backlog)
 
     dbgln_if(IPV4_SOCKET_DEBUG, "IPv4Socket({}) listening with backlog={}", this, backlog);
 
-    return protocol_listen();
+    return protocol_listen(result.did_allocate);
 }
 
 KResult IPv4Socket::connect(FileDescription& description, Userspace<const sockaddr*> address, socklen_t address_size, ShouldBlock should_block)
@@ -139,6 +153,8 @@ KResult IPv4Socket::connect(FileDescription& description, Userspace<const sockad
         return EFAULT;
 
     m_peer_address = IPv4Address((const u8*)&safe_address.sin_addr.s_addr);
+    if (m_peer_address == IPv4Address { 0, 0, 0, 0 })
+        m_peer_address = IPv4Address { 127, 0, 0, 1 };
     m_peer_port = ntohs(safe_address.sin_port);
 
     return protocol_connect(description, should_block);
@@ -155,19 +171,19 @@ bool IPv4Socket::can_read(const FileDescription&, size_t) const
 
 bool IPv4Socket::can_write(const FileDescription&, size_t) const
 {
-    return is_connected();
+    return true;
 }
 
-KResultOr<u16> IPv4Socket::allocate_local_port_if_needed()
+PortAllocationResult IPv4Socket::allocate_local_port_if_needed()
 {
     Locker locker(lock());
     if (m_local_port)
-        return m_local_port;
+        return { m_local_port, false };
     auto port_or_error = protocol_allocate_local_port();
     if (port_or_error.is_error())
-        return port_or_error.error();
+        return { port_or_error.error(), false };
     m_local_port = port_or_error.value();
-    return port_or_error.value();
+    return { m_local_port, true };
 }
 
 KResultOr<size_t> IPv4Socket::sendto(FileDescription&, const UserOrKernelBuffer& data, size_t data_length, [[maybe_unused]] int flags, Userspace<const sockaddr*> addr, socklen_t addr_length)
@@ -191,6 +207,9 @@ KResultOr<size_t> IPv4Socket::sendto(FileDescription&, const UserOrKernelBuffer&
         m_peer_port = ntohs(ia.sin_port);
     }
 
+    if (!is_connected() && m_peer_address.is_zero())
+        return EPIPE;
+
     auto routing_decision = route_to(m_peer_address, m_local_address, bound_interface());
     if (routing_decision.is_zero())
         return EHOSTUNREACH;
@@ -198,15 +217,25 @@ KResultOr<size_t> IPv4Socket::sendto(FileDescription&, const UserOrKernelBuffer&
     if (m_local_address.to_u32() == 0)
         m_local_address = routing_decision.adapter->ipv4_address();
 
-    if (auto result = allocate_local_port_if_needed(); result.is_error() && result.error() != -ENOPROTOOPT)
-        return result.error();
+    if (auto result = allocate_local_port_if_needed(); result.error_or_port.is_error() && result.error_or_port.error() != -ENOPROTOOPT)
+        return result.error_or_port.error();
 
     dbgln_if(IPV4_SOCKET_DEBUG, "sendto: destination={}:{}", m_peer_address, m_peer_port);
 
     if (type() == SOCK_RAW) {
-        auto result = routing_decision.adapter->send_ipv4(routing_decision.next_hop, m_peer_address, (IPv4Protocol)protocol(), data, data_length, m_ttl);
-        if (result.is_error())
-            return result;
+        auto ipv4_payload_offset = routing_decision.adapter->ipv4_payload_offset();
+        data_length = min(data_length, routing_decision.adapter->mtu() - ipv4_payload_offset);
+        auto packet = routing_decision.adapter->acquire_packet_buffer(ipv4_payload_offset + data_length);
+        if (!packet)
+            return ENOMEM;
+        routing_decision.adapter->fill_in_ipv4_header(*packet, local_address(), routing_decision.next_hop,
+            m_peer_address, (IPv4Protocol)protocol(), data_length, m_ttl);
+        if (!data.read(packet->buffer.data() + ipv4_payload_offset, data_length)) {
+            routing_decision.adapter->release_packet_buffer(*packet);
+            return EFAULT;
+        }
+        routing_decision.adapter->send_packet({ packet->buffer.data(), packet->buffer.size() });
+        routing_decision.adapter->release_packet_buffer(*packet);
         return data_length;
     }
 
@@ -241,17 +270,17 @@ KResultOr<size_t> IPv4Socket::receive_byte_buffered(FileDescription& description
 
     VERIFY(!m_receive_buffer.is_empty());
 
-    int nreceived;
+    KResultOr<size_t> nreceived_or_error { 0 };
     if (flags & MSG_PEEK)
-        nreceived = m_receive_buffer.peek(buffer, buffer_length);
+        nreceived_or_error = m_receive_buffer.peek(buffer, buffer_length);
     else
-        nreceived = m_receive_buffer.read(buffer, buffer_length);
+        nreceived_or_error = m_receive_buffer.read(buffer, buffer_length);
 
-    if (nreceived > 0 && !(flags & MSG_PEEK))
-        Thread::current()->did_ipv4_socket_read((size_t)nreceived);
+    if (!nreceived_or_error.is_error() && nreceived_or_error.value() > 0 && !(flags & MSG_PEEK))
+        Thread::current()->did_ipv4_socket_read(nreceived_or_error.value());
 
     set_can_read(!m_receive_buffer.is_empty());
-    return nreceived;
+    return nreceived_or_error;
 }
 
 KResultOr<size_t> IPv4Socket::receive_packet_buffered(FileDescription& description, UserOrKernelBuffer& buffer, size_t buffer_length, int flags, Userspace<sockaddr*> addr, Userspace<socklen_t*> addr_length, Time& packet_timestamp)
@@ -369,7 +398,7 @@ KResultOr<size_t> IPv4Socket::recvfrom(FileDescription& description, UserOrKerne
     return nreceived;
 }
 
-bool IPv4Socket::did_receive(const IPv4Address& source_address, u16 source_port, KBuffer&& packet, const Time& packet_timestamp)
+bool IPv4Socket::did_receive(const IPv4Address& source_address, u16 source_port, ReadonlyBytes packet, const Time& packet_timestamp)
 {
     Locker locker(lock());
 
@@ -389,8 +418,8 @@ bool IPv4Socket::did_receive(const IPv4Address& source_address, u16 source_port,
         auto nreceived_or_error = protocol_receive(ReadonlyBytes { packet.data(), packet.size() }, scratch_buffer, m_scratch_buffer.value().size(), 0);
         if (nreceived_or_error.is_error())
             return false;
-        ssize_t nwritten = m_receive_buffer.write(scratch_buffer, nreceived_or_error.value());
-        if (nwritten < 0)
+        auto nwritten_or_error = m_receive_buffer.write(scratch_buffer, nreceived_or_error.value());
+        if (nwritten_or_error.is_error())
             return false;
         set_can_read(!m_receive_buffer.is_empty());
     } else {
@@ -398,7 +427,7 @@ bool IPv4Socket::did_receive(const IPv4Address& source_address, u16 source_port,
             dbgln("IPv4Socket({}): did_receive refusing packet since queue is full.", this);
             return false;
         }
-        m_receive_queue.append({ source_address, source_port, packet_timestamp, move(packet) });
+        m_receive_queue.append({ source_address, source_port, packet_timestamp, KBuffer::copy(packet.data(), packet.size()) });
         set_can_read(true);
     }
     m_bytes_received += packet_size;
@@ -554,7 +583,7 @@ int IPv4Socket::ioctl(FileDescription&, unsigned request, FlatPtr arg)
         if (copied_ifname.is_null())
             return -EFAULT;
 
-        auto adapter = NetworkAdapter::lookup_by_name(copied_ifname);
+        auto adapter = NetworkingManagement::the().lookup_by_name(copied_ifname);
         if (!adapter)
             return -ENODEV;
 
@@ -587,7 +616,7 @@ int IPv4Socket::ioctl(FileDescription&, unsigned request, FlatPtr arg)
         memcpy(namebuf, ifr.ifr_name, IFNAMSIZ);
         namebuf[sizeof(namebuf) - 1] = '\0';
 
-        auto adapter = NetworkAdapter::lookup_by_name(namebuf);
+        auto adapter = NetworkingManagement::the().lookup_by_name(namebuf);
         if (!adapter)
             return -ENODEV;
 

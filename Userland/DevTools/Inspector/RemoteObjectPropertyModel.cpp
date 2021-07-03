@@ -22,7 +22,7 @@ int RemoteObjectPropertyModel::row_count(const GUI::ModelIndex& index) const
             return value.as_array().size();
         else if (value.is_object())
             return value.as_object().size();
-        return 0;
+        return (size_t)0;
     };
 
     if (index.is_valid()) {
@@ -92,7 +92,7 @@ GUI::ModelIndex RemoteObjectPropertyModel::index(int row, int column, const GUI:
 
     auto nth_child = [&](int n, const JsonValue& value) -> const JsonPath* {
         auto path = make<JsonPath>();
-        path->append(parent_path);
+        path->extend(parent_path);
         int row_index = n;
         if (value.is_object()) {
             String property_name;

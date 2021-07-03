@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,8 +8,10 @@
 
 #include <AK/HashMap.h>
 #include <AK/OwnPtr.h>
+#include <AK/WeakPtr.h>
+#include <AK/Weakable.h>
 #include <LibJS/Forward.h>
-#include <LibJS/Runtime/Cell.h>
+#include <LibJS/Heap/Cell.h>
 #include <LibJS/Runtime/PropertyAttributes.h>
 #include <LibJS/Runtime/StringOrSymbol.h>
 #include <LibJS/Runtime/Value.h>
@@ -31,7 +33,9 @@ struct TransitionKey {
     }
 };
 
-class Shape final : public Cell {
+class Shape final
+    : public Cell
+    , public Weakable<Shape> {
 public:
     virtual ~Shape() override;
 
@@ -54,6 +58,7 @@ public:
     Shape* create_prototype_transition(Object* new_prototype);
 
     void add_property_without_transition(const StringOrSymbol&, PropertyAttributes);
+    void add_property_without_transition(PropertyName const&, PropertyAttributes);
 
     bool is_unique() const { return m_unique; }
     Shape* create_unique_clone() const;
@@ -84,6 +89,7 @@ private:
     virtual const char* class_name() const override { return "Shape"; }
     virtual void visit_edges(Visitor&) override;
 
+    Shape* get_or_prune_cached_forward_transition(TransitionKey const&);
     void ensure_property_table() const;
 
     PropertyAttributes m_attributes { 0 };
@@ -94,7 +100,7 @@ private:
 
     mutable OwnPtr<HashMap<StringOrSymbol, PropertyMetadata>> m_property_table;
 
-    HashMap<TransitionKey, Shape*> m_forward_transitions;
+    HashMap<TransitionKey, WeakPtr<Shape>> m_forward_transitions;
     Shape* m_previous { nullptr };
     StringOrSymbol m_property_name;
     Object* m_prototype { nullptr };

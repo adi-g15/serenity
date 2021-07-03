@@ -130,8 +130,8 @@ private:
             return false;
 
         for (auto& it : all_processes.value()) {
-            for (auto& jt : it.value.threads) {
-                if (it.value.pid == 0)
+            for (auto& jt : it.threads) {
+                if (it.pid == 0)
                     idle += jt.ticks_user + jt.ticks_kernel;
                 else
                     busy += jt.ticks_user + jt.ticks_kernel;
@@ -144,11 +144,11 @@ private:
     {
         if (m_proc_mem) {
             // Seeking to the beginning causes a data refresh!
-            if (!m_proc_mem->seek(0, Core::File::SeekMode::SetPosition))
+            if (!m_proc_mem->seek(0, Core::SeekMode::SetPosition))
                 return false;
         } else {
             auto proc_memstat = Core::File::construct("/proc/memstat");
-            if (!proc_memstat->open(Core::IODevice::OpenMode::ReadOnly))
+            if (!proc_memstat->open(Core::OpenMode::ReadOnly))
                 return false;
             m_proc_mem = move(proc_memstat);
         }
@@ -183,14 +183,14 @@ private:
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio recvfd sendfd accept proc exec rpath unix cpath fattr", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd proc exec rpath unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio recvfd sendfd accept proc exec rpath", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd proc exec rpath", nullptr) < 0) {
         perror("pledge");
         return 1;
     }

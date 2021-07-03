@@ -8,6 +8,8 @@
 
 #include <AK/FlyString.h>
 #include <AK/String.h>
+#include <LibWeb/CSS/CSSStyleDeclaration.h>
+#include <LibWeb/CSS/StyleResolver.h>
 #include <LibWeb/DOM/Attribute.h>
 #include <LibWeb/DOM/ExceptionOr.h>
 #include <LibWeb/DOM/NonDocumentTypeChildNode.h>
@@ -30,12 +32,12 @@ public:
     virtual ~Element() override;
 
     const String& qualified_name() const { return m_qualified_name.as_string(); }
-    String html_uppercased_qualified_name() const { return m_html_uppercased_qualified_name; }
+    const String& html_uppercased_qualified_name() const { return m_html_uppercased_qualified_name; }
     virtual FlyString node_name() const final { return html_uppercased_qualified_name(); }
     const FlyString& local_name() const { return m_qualified_name.local_name(); }
 
     // NOTE: This is for the JS bindings
-    const FlyString& tag_name() const { return local_name(); }
+    const String& tag_name() const { return html_uppercased_qualified_name(); }
 
     const FlyString& prefix() const { return m_qualified_name.prefix(); }
     const FlyString& namespace_() const { return m_qualified_name.namespace_(); }
@@ -84,12 +86,23 @@ public:
     bool is_focused() const;
     virtual bool is_focusable() const { return false; }
 
+    bool is_active() const;
+
     NonnullRefPtr<HTMLCollection> get_elements_by_tag_name(FlyString const&);
     NonnullRefPtr<HTMLCollection> get_elements_by_class_name(FlyString const&);
 
     ShadowRoot* shadow_root() { return m_shadow_root; }
     const ShadowRoot* shadow_root() const { return m_shadow_root; }
     void set_shadow_root(RefPtr<ShadowRoot>);
+
+    Optional<CSS::StyleResolver::CustomPropertyResolutionTuple> resolve_custom_property(const String& custom_property_name)
+    {
+        return m_custom_properties.get(custom_property_name);
+    }
+    void add_custom_property(const String& custom_property_name, CSS::StyleResolver::CustomPropertyResolutionTuple style_property)
+    {
+        m_custom_properties.set(custom_property_name, style_property);
+    }
 
 protected:
     RefPtr<Layout::Node> create_layout_node() override;
@@ -107,6 +120,7 @@ private:
     RefPtr<CSS::CSSStyleDeclaration> m_inline_style;
 
     RefPtr<CSS::StyleProperties> m_specified_css_values;
+    HashMap<String, CSS::StyleResolver::CustomPropertyResolutionTuple> m_custom_properties;
 
     Vector<FlyString> m_classes;
 

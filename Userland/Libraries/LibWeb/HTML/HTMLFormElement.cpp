@@ -10,7 +10,7 @@
 #include <LibWeb/HTML/HTMLInputElement.h>
 #include <LibWeb/HTML/SubmitEvent.h>
 #include <LibWeb/InProcessWebView.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 #include <LibWeb/URLEncoder.h>
 
 namespace Web::HTML {
@@ -98,21 +98,21 @@ void HTMLFormElement::submit_form(RefPtr<HTMLElement> submitter, bool from_submi
     Vector<URLQueryParam> parameters;
 
     for_each_in_inclusive_subtree_of_type<HTMLInputElement>([&](auto& node) {
-        auto& input = downcast<HTMLInputElement>(node);
+        auto& input = verify_cast<HTMLInputElement>(node);
         if (!input.name().is_null() && (input.type() != "submit" || &input == submitter))
             parameters.append({ input.name(), input.value() });
         return IterationDecision::Continue;
     });
 
     if (effective_method == "get") {
-        url.set_query(urlencode(parameters));
+        url.set_query(urlencode(parameters, URL::PercentEncodeSet::ApplicationXWWWFormUrlencoded));
     }
 
     LoadRequest request;
     request.set_url(url);
 
     if (effective_method == "post") {
-        auto body = urlencode(parameters).to_byte_buffer();
+        auto body = urlencode(parameters, URL::PercentEncodeSet::ApplicationXWWWFormUrlencoded).to_byte_buffer();
         request.set_method("POST");
         request.set_header("Content-Type", "application/x-www-form-urlencoded");
         request.set_header("Content-Length", String::number(body.size()));

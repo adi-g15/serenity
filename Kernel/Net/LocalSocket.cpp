@@ -17,9 +17,9 @@
 
 namespace Kernel {
 
-static AK::Singleton<Lockable<InlineLinkedList<LocalSocket>>> s_list;
+static AK::Singleton<Lockable<LocalSocket::List>> s_list;
 
-Lockable<InlineLinkedList<LocalSocket>>& LocalSocket::all_sockets()
+static Lockable<LocalSocket::List>& all_sockets()
 {
     return *s_list;
 }
@@ -33,12 +33,17 @@ void LocalSocket::for_each(Function<void(const LocalSocket&)> callback)
 
 KResultOr<NonnullRefPtr<Socket>> LocalSocket::create(int type)
 {
-    return adopt_ref(*new LocalSocket(type));
+    auto socket = adopt_ref_if_nonnull(new (nothrow) LocalSocket(type));
+    if (socket)
+        return socket.release_nonnull();
+    return ENOMEM;
 }
 
 KResultOr<SocketPair> LocalSocket::create_connected_pair(int type)
 {
-    auto socket = adopt_ref(*new LocalSocket(type));
+    auto socket = adopt_ref_if_nonnull(new (nothrow) LocalSocket(type));
+    if (!socket)
+        return ENOMEM;
 
     auto description1_result = FileDescription::create(*socket);
     if (description1_result.is_error())
@@ -64,8 +69,10 @@ KResultOr<SocketPair> LocalSocket::create_connected_pair(int type)
 LocalSocket::LocalSocket(int type)
     : Socket(AF_LOCAL, type, 0)
 {
-    Locker locker(all_sockets().lock());
-    all_sockets().resource().append(this);
+    {
+        Locker locker(all_sockets().lock());
+        all_sockets().resource().append(*this);
+    }
 
     auto current_process = Process::current();
     m_prebind_uid = current_process->euid();
@@ -85,7 +92,7 @@ LocalSocket::LocalSocket(int type)
 LocalSocket::~LocalSocket()
 {
     Locker locker(all_sockets().lock());
-    all_sockets().resource().remove(this);
+    all_sockets().resource().remove(*this);
 }
 
 void LocalSocket::get_local_address(sockaddr* address, socklen_t* address_size)
@@ -286,10 +293,10 @@ KResultOr<size_t> LocalSocket::sendto(FileDescription& description, const UserOr
     auto* socket_buffer = send_buffer_for(description);
     if (!socket_buffer)
         return EINVAL;
-    ssize_t nwritten = socket_buffer->write(data, data_size);
-    if (nwritten > 0)
-        Thread::current()->did_unix_socket_write(nwritten);
-    return nwritten;
+    auto nwritten_or_error = socket_buffer->write(data, data_size);
+    if (!nwritten_or_error.is_error() && nwritten_or_error.value() > 0)
+        Thread::current()->did_unix_socket_write(nwritten_or_error.value());
+    return nwritten_or_error;
 }
 
 DoubleBuffer* LocalSocket::receive_buffer_for(FileDescription& description)
@@ -331,10 +338,10 @@ KResultOr<size_t> LocalSocket::recvfrom(FileDescription& description, UserOrKern
     if (!has_attached_peer(description) && socket_buffer->is_empty())
         return 0;
     VERIFY(!socket_buffer->is_empty());
-    auto nread = socket_buffer->read(buffer, buffer_size);
-    if (nread > 0)
-        Thread::current()->did_unix_socket_read(nread);
-    return nread;
+    auto nread_or_error = socket_buffer->read(buffer, buffer_size);
+    if (!nread_or_error.is_error() && nread_or_error.value() > 0)
+        Thread::current()->did_unix_socket_read(nread_or_error.value());
+    return nread_or_error;
 }
 
 StringView LocalSocket::socket_path() const

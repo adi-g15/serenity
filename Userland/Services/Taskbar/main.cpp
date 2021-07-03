@@ -31,7 +31,7 @@ static NonnullRefPtr<GUI::Menu> build_system_menu();
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio recvfd sendfd accept proc exec rpath unix cpath fattr sigaction", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd proc exec rpath unix sigaction", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -46,7 +46,7 @@ int main(int argc, char** argv)
     // We need to obtain the WM connection here as well before the pledge shortening.
     GUI::WindowManagerServerConnection::the();
 
-    if (pledge("stdio recvfd sendfd accept proc exec rpath", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd proc exec rpath", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -60,7 +60,8 @@ int main(int argc, char** argv)
     window->make_window_manager(
         WindowServer::WMEventMask::WindowStateChanges
         | WindowServer::WMEventMask::WindowRemovals
-        | WindowServer::WMEventMask::WindowIconChanges);
+        | WindowServer::WMEventMask::WindowIconChanges
+        | WindowServer::WMEventMask::VirtualDesktopChanges);
 
     return app->exec();
 }
@@ -87,8 +88,10 @@ Vector<String> discover_apps_and_categories()
 {
     HashTable<String> seen_app_categories;
     Desktop::AppFile::for_each([&](auto af) {
-        g_apps.append({ af->executable(), af->name(), af->category() });
-        seen_app_categories.set(af->category());
+        if (access(af->executable().characters(), X_OK) == 0) {
+            g_apps.append({ af->executable(), af->name(), af->category() });
+            seen_app_categories.set(af->category());
+        }
     });
     quick_sort(g_apps, [](auto& a, auto& b) { return a.name < b.name; });
 
@@ -120,19 +123,42 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
     system_menu->add_separator();
 
     // First we construct all the necessary app category submenus.
-    HashMap<String, NonnullRefPtr<GUI::Menu>> app_category_menus;
     auto category_icons = Core::ConfigFile::open("/res/icons/SystemMenu.ini");
-    for (const auto& category : sorted_app_categories) {
+    HashMap<String, NonnullRefPtr<GUI::Menu>> app_category_menus;
+
+    Function<void(String const&)> create_category_menu;
+    create_category_menu = [&](String const& category) {
         if (app_category_menus.contains(category))
-            continue;
-        auto& category_menu = system_menu->add_submenu(category);
+            return;
+        String parent_category, child_category = category;
+        for (ssize_t i = category.length() - 1; i >= 0; i--) {
+            if (category[i] == '/') {
+                parent_category = category.substring(0, i);
+                child_category = category.substring(i + 1);
+            }
+        }
+        GUI::Menu* parent_menu;
+        if (parent_category.is_empty()) {
+            parent_menu = system_menu;
+        } else {
+            parent_menu = app_category_menus.get(parent_category).value();
+            if (!parent_menu) {
+                create_category_menu(parent_category);
+                parent_menu = app_category_menus.get(parent_category).value();
+                VERIFY(parent_menu);
+            }
+        }
+        auto& category_menu = parent_menu->add_submenu(child_category);
         auto category_icon_path = category_icons->read_entry("16x16", category);
         if (!category_icon_path.is_empty()) {
             auto icon = Gfx::Bitmap::load_from_file(category_icon_path);
             category_menu.set_icon(icon);
         }
         app_category_menus.set(category, category_menu);
-    }
+    };
+
+    for (const auto& category : sorted_app_categories)
+        create_category_menu(category);
 
     // Then we create and insert all the app menu items into the right place.
     int app_identifier = 0;
@@ -173,7 +199,7 @@ NonnullRefPtr<GUI::Menu> build_system_menu()
         while (dt.has_next()) {
             auto theme_name = dt.next_path();
             auto theme_path = String::formatted("/res/themes/{}", theme_name);
-            g_themes.append({ LexicalPath(theme_name).title(), theme_path });
+            g_themes.append({ LexicalPath::title(theme_name), theme_path });
         }
         quick_sort(g_themes, [](auto& a, auto& b) { return a.name < b.name; });
     }

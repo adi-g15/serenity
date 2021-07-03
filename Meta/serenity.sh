@@ -95,6 +95,10 @@ is_valid_target() {
         CMAKE_ARGS+=("-DBUILD_LAGOM=ON")
         return 0
     fi
+    if [ "$TARGET" = "x86_64" ]; then
+        CMAKE_ARGS+=("-DSERENITY_ARCH=x86_64")
+        return 0
+    fi
     [[ "$TARGET" =~ ^(i686|x86_64|lagom)$ ]] || return 1
 }
 
@@ -118,7 +122,7 @@ cmd_with_target() {
 }
 
 ensure_target() {
-    [ -d "$BUILD_DIR" ] || create_build_dir
+    [ -f "$BUILD_DIR/build.ninja" ] || create_build_dir
 }
 
 run_tests() {
@@ -209,11 +213,8 @@ run_gdb() {
 if [[ "$CMD" =~ ^(build|install|image|run|gdb|test|rebuild|recreate|kaddr2line|addr2line|setup-and-run)$ ]]; then
     cmd_with_target
     [[ "$CMD" != "recreate" && "$CMD" != "rebuild" ]] || delete_target
-    # FIXME: We should probably call ensure_toolchain first, but this somehow causes
-    # this error after the toolchain finished building:
-    # ninja: error: loading 'build.ninja': No such file or directory
-    ensure_target
     [ "$TARGET" = "lagom" ] || ensure_toolchain
+    ensure_target
     case "$CMD" in
         build)
             build_target "$@"

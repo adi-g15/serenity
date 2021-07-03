@@ -28,11 +28,18 @@ public:
         return page_directory;
     }
     static NonnullRefPtr<PageDirectory> create_kernel_page_directory() { return adopt_ref(*new PageDirectory); }
-    static RefPtr<PageDirectory> find_by_cr3(u32);
+    static RefPtr<PageDirectory> find_by_cr3(FlatPtr);
 
     ~PageDirectory();
 
-    u32 cr3() const { return m_directory_table->paddr().get(); }
+    FlatPtr cr3() const
+    {
+#if ARCH(X86_64)
+        return m_pml4t->paddr().get();
+#else
+        return m_directory_table->paddr().get();
+#endif
+    }
 
     RangeAllocator& range_allocator() { return m_range_allocator; }
     const RangeAllocator& range_allocator() const { return m_range_allocator; }
@@ -55,6 +62,9 @@ private:
     Space* m_space { nullptr };
     RangeAllocator m_range_allocator;
     RangeAllocator m_identity_range_allocator;
+#if ARCH(X86_64)
+    RefPtr<PhysicalPage> m_pml4t;
+#endif
     RefPtr<PhysicalPage> m_directory_table;
     RefPtr<PhysicalPage> m_directory_pages[4];
     HashMap<u32, RefPtr<PhysicalPage>> m_page_tables;

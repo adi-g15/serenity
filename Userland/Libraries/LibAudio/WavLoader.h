@@ -11,11 +11,14 @@
 #include <AK/MemoryStream.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefPtr.h>
+#include <AK/Stream.h>
 #include <AK/String.h>
 #include <AK/StringView.h>
+#include <AK/WeakPtr.h>
 #include <LibAudio/Buffer.h>
 #include <LibAudio/Loader.h>
 #include <LibCore/File.h>
+#include <LibCore/FileStream.h>
 
 namespace Audio {
 class Buffer;
@@ -33,15 +36,20 @@ public:
     WavLoaderPlugin(const StringView& path);
     WavLoaderPlugin(const ByteBuffer& buffer);
 
-    virtual bool sniff() override;
+    virtual bool sniff() override { return valid; }
 
     virtual bool has_error() override { return !m_error_string.is_null(); }
-    virtual const char* error_string() override { return m_error_string.characters(); }
+    virtual const String& error_string() override { return m_error_string; }
 
+    // The Buffer returned contains input data resampled at the
+    // destination audio device sample rate.
     virtual RefPtr<Buffer> get_more_samples(size_t max_bytes_to_read_from_input = 128 * KiB) override;
 
-    virtual void reset() override;
-    virtual void seek(const int position) override;
+    virtual void reset() override { return seek(0); }
+
+    // sample_index 0 is the start of the raw audio sample data
+    // within the file/stream.
+    virtual void seek(const int sample_index) override;
 
     virtual int loaded_samples() override { return m_loaded_samples; }
     virtual int total_samples() override { return m_total_samples; }
@@ -55,14 +63,23 @@ private:
 
     bool valid { false };
     RefPtr<Core::File> m_file;
-    OwnPtr<InputMemoryStream> m_stream;
+    OwnPtr<AK::InputStream> m_stream;
+    AK::InputMemoryStream* m_memory_stream;
     String m_error_string;
-    OwnPtr<ResampleHelper> m_resampler;
+
+    // TODO: We should probably move resampling into the audio server.
+    //
+    // It would avoid duplicate resampling code and would allow clients
+    // to be agnostic of the destination audio device's sample rate.
+    OwnPtr<ResampleHelper<double>> m_resampler;
 
     u32 m_sample_rate { 0 };
     u16 m_num_channels { 0 };
     PcmSampleFormat m_sample_format;
+    size_t m_byte_offset_of_data_samples { 0 };
 
+    // FIXME: Get this value from the audio server
+    int m_device_sample_rate { 44100 };
     int m_loaded_samples { 0 };
     int m_total_samples { 0 };
 };

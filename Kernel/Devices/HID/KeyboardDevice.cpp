@@ -10,17 +10,15 @@
 #include <AK/Singleton.h>
 #include <AK/StringView.h>
 #include <AK/Types.h>
-#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Devices/HID/KeyboardDevice.h>
 #include <Kernel/IO.h>
+#include <Kernel/Sections.h>
 #include <Kernel/TTY/VirtualConsole.h>
 
 namespace Kernel {
 
-#define IRQ_KEYBOARD 1
-
-static const KeyCode unshifted_key_map[0x80] = {
+static constexpr KeyCode unshifted_key_map[0x80] = {
     Key_Invalid,
     Key_Escape,
     Key_1,
@@ -36,7 +34,7 @@ static const KeyCode unshifted_key_map[0x80] = {
     Key_Minus,
     Key_Equal,
     Key_Backspace,
-    Key_Tab, //15
+    Key_Tab, // 15
     Key_Q,
     Key_W,
     Key_E,
@@ -117,7 +115,7 @@ static const KeyCode unshifted_key_map[0x80] = {
     Key_Menu,
 };
 
-static const KeyCode shifted_key_map[0x100] = {
+static constexpr KeyCode shifted_key_map[0x100] = {
     Key_Invalid,
     Key_Escape,
     Key_ExclamationPoint,
@@ -214,8 +212,6 @@ static const KeyCode shifted_key_map[0x100] = {
     Key_Menu,
 };
 
-static const KeyCode numpad_key_map[13] = { Key_7, Key_8, Key_9, Key_Invalid, Key_4, Key_5, Key_6, Key_Invalid, Key_1, Key_2, Key_3, Key_0, Key_Comma };
-
 void KeyboardDevice::key_state_changed(u8 scan_code, bool pressed)
 {
     KeyCode key = (m_modifiers & Mod_Shift) ? shifted_key_map[scan_code] : unshifted_key_map[scan_code];
@@ -226,6 +222,7 @@ void KeyboardDevice::key_state_changed(u8 scan_code, bool pressed)
     if (m_num_lock_on && !m_has_e0_prefix) {
         if (scan_code >= 0x47 && scan_code <= 0x53) {
             u8 index = scan_code - 0x47;
+            constexpr KeyCode numpad_key_map[13] = { Key_7, Key_8, Key_9, Key_Invalid, Key_4, Key_5, Key_6, Key_Invalid, Key_1, Key_2, Key_3, Key_0, Key_Comma };
             KeyCode newKey = numpad_key_map[index];
 
             if (newKey != Key_Invalid) {
@@ -292,19 +289,19 @@ KResultOr<size_t> KeyboardDevice::read(FileDescription&, u64, UserOrKernelBuffer
         if (m_queue.is_empty())
             break;
         // Don't return partial data frames.
-        if ((size - nread) < (ssize_t)sizeof(Event))
+        if (size - nread < sizeof(Event))
             break;
         auto event = m_queue.dequeue();
 
         lock.unlock();
 
-        ssize_t n = buffer.write_buffered<sizeof(Event)>(sizeof(Event), [&](u8* data, size_t data_bytes) {
+        auto result = buffer.write_buffered<sizeof(Event)>(sizeof(Event), [&](u8* data, size_t data_bytes) {
             memcpy(data, &event, sizeof(Event));
-            return (ssize_t)data_bytes;
+            return data_bytes;
         });
-        if (n < 0)
-            return KResult((ErrnoCode)-n);
-        VERIFY((size_t)n == sizeof(Event));
+        if (result.is_error())
+            return result.error();
+        VERIFY(result.value() == sizeof(Event));
         nread += sizeof(Event);
 
         lock.lock();

@@ -15,18 +15,12 @@ WebContentClient::WebContentClient(OutOfProcessWebView& view)
     : IPC::ServerConnection<WebContentClientEndpoint, WebContentServerEndpoint>(*this, "/tmp/portal/webcontent")
     , m_view(view)
 {
-    handshake();
 }
 
 void WebContentClient::die()
 {
     VERIFY(on_web_content_process_crash);
     on_web_content_process_crash();
-}
-
-void WebContentClient::handshake()
-{
-    greet();
 }
 
 void WebContentClient::did_paint(const Gfx::IntRect&, i32 bitmap_id)
@@ -140,6 +134,11 @@ void WebContentClient::did_request_image_context_menu(Gfx::IntPoint const& conte
 void WebContentClient::did_get_source(URL const& url, String const& source)
 {
     m_view.notify_server_did_get_source(url, source);
+}
+
+void WebContentClient::did_get_dom_tree(const String& dom_tree)
+{
+    m_view.notify_server_did_get_dom_tree(dom_tree);
 }
 
 void WebContentClient::did_js_console_output(String const& method, String const& line)

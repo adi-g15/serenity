@@ -10,6 +10,7 @@ set(AK_TEST_SOURCES
     TestBitCast.cpp
     TestBitmap.cpp
     TestByteBuffer.cpp
+    TestCharacterTypes.cpp
     TestChecked.cpp
     TestCircularDeque.cpp
     TestCircularDuplexStream.cpp
@@ -31,6 +32,7 @@ set(AK_TEST_SOURCES
     TestIntrusiveList.cpp
     TestIntrusiveRedBlackTree.cpp
     TestJSON.cpp
+    TestLEB128.cpp
     TestLexicalPath.cpp
     TestMACAddress.cpp
     TestMemMem.cpp
@@ -47,13 +49,16 @@ set(AK_TEST_SOURCES
     TestSourceGenerator.cpp
     TestSourceLocation.cpp
     TestSpan.cpp
+    TestStack.cpp
     TestString.cpp
     TestStringUtils.cpp
     TestStringView.cpp
     TestTime.cpp
     TestTrie.cpp
+    TestTuple.cpp
     TestTypeTraits.cpp
     TestTypedTransfer.cpp
+    TestUFixedBigInt.cpp
     TestURL.cpp
     TestUtf8.cpp
     TestVariant.cpp

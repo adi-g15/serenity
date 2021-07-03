@@ -8,6 +8,7 @@
 
 #include <AK/Forward.h>
 #include <AK/HashMap.h>
+#include <AK/OwnPtr.h>
 #include <AK/Types.h>
 
 namespace AK {
@@ -177,6 +178,9 @@ public:
         auto it = begin;
         return insert(it, end);
     }
+
+    HashMap<ValueType, NonnullOwnPtr<Trie>, ValueTraits>& children() { return m_children; }
+    HashMap<ValueType, NonnullOwnPtr<Trie>, ValueTraits> const& children() const { return m_children; }
 
     ConstIterator begin() const { return ConstIterator(*this); }
     ConstIterator end() const { return ConstIterator::end(); }

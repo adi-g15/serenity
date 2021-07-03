@@ -12,11 +12,15 @@ if ("${SERENITY_ARCH}" STREQUAL "i686")
     file(GLOB LIBC_SOURCES3 "../Libraries/LibC/arch/i386/*.S")
     set(ELF_SOURCES ${ELF_SOURCES} ../Libraries/LibELF/Arch/i386/plt_trampoline.S)
 elseif ("${SERENITY_ARCH}" STREQUAL "x86_64")
-    file(GLOB LIBC_SOURCES3 "../Libraries/LibC/arch/x86_64/*.S") # FIXME: this does not exist at this point!
+    file(GLOB LIBC_SOURCES3 "../Libraries/LibC/arch/x86_64/*.S")
     set(ELF_SOURCES ${ELF_SOURCES} ../Libraries/LibELF/Arch/x86_64/plt_trampoline.S)
 endif()
 
 file(GLOB LIBSYSTEM_SOURCES "../Libraries/LibSystem/*.cpp")
+
+if (ENABLE_UNDEFINED_SANITIZER)
+    set(LOADER_SOURCES ${LOADER_SOURCES} ../Libraries/LibSanitizer/UBSanitizer.cpp)
+endif()
 
 add_definitions(-D_DYNAMIC_LOADER)
 

@@ -78,6 +78,7 @@ constexpr static CellTypeDialog::VerticalAlignment vertical_alignment_from(Gfx::
     case Gfx::TextAlignment::TopLeft:
         return CellTypeDialog::VerticalAlignment::Top;
 
+    case Gfx::TextAlignment::BottomLeft:
     case Gfx::TextAlignment::BottomRight:
         return CellTypeDialog::VerticalAlignment::Bottom;
     }
@@ -91,13 +92,14 @@ constexpr static CellTypeDialog::HorizontalAlignment horizontal_alignment_from(G
     case Gfx::TextAlignment::Center:
         return CellTypeDialog::HorizontalAlignment::Center;
 
-    case Gfx::TextAlignment::CenterRight:
     case Gfx::TextAlignment::TopRight:
+    case Gfx::TextAlignment::CenterRight:
     case Gfx::TextAlignment::BottomRight:
         return CellTypeDialog::HorizontalAlignment::Right;
 
     case Gfx::TextAlignment::TopLeft:
     case Gfx::TextAlignment::CenterLeft:
+    case Gfx::TextAlignment::BottomLeft:
         return CellTypeDialog::HorizontalAlignment::Left;
     }
 
@@ -110,14 +112,14 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, const Vector<Position>& po
     for (auto& type_name : CellType::names())
         g_types.append(type_name);
 
-    Vector<Cell*> cells;
+    Vector<Cell&> cells;
     for (auto& position : positions) {
         if (auto cell = sheet.at(position))
-            cells.append(cell);
+            cells.append(*cell);
     }
 
     if (cells.size() == 1) {
-        auto& cell = *cells.first();
+        auto& cell = cells.first();
         m_format = cell.type_metadata().format;
         m_length = cell.type_metadata().length;
         m_type = &cell.type();
@@ -139,7 +141,8 @@ void CellTypeDialog::setup_tabs(GUI::TabWidget& tabs, const Vector<Position>& po
         auto& type_list = left_side.add<GUI::ListView>();
         type_list.set_model(*GUI::ItemListModel<String>::create(g_types));
         type_list.set_should_hide_unnecessary_scrollbars(true);
-        type_list.on_selection = [&](auto& index) {
+        type_list.on_selection_change = [&] {
+            const auto& index = type_list.selection().first();
             if (!index.is_valid()) {
                 m_type = nullptr;
                 return;

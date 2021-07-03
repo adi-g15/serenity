@@ -15,7 +15,7 @@
 #include <LibWeb/Layout/InitialContainingBlockBox.h>
 #include <LibWeb/Layout/Node.h>
 #include <LibWeb/Layout/TextNode.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 
 namespace Web::Layout {
 
@@ -104,16 +104,16 @@ HitTestResult Node::hit_test(const Gfx::IntPoint& position, HitTestType type) co
     return result;
 }
 
-const Frame& Node::frame() const
+const BrowsingContext& Node::browsing_context() const
 {
-    VERIFY(document().frame());
-    return *document().frame();
+    VERIFY(document().browsing_context());
+    return *document().browsing_context();
 }
 
-Frame& Node::frame()
+BrowsingContext& Node::browsing_context()
 {
-    VERIFY(document().frame());
-    return *document().frame();
+    VERIFY(document().browsing_context());
+    return *document().browsing_context();
 }
 
 const InitialContainingBlockBox& Node::root() const
@@ -140,7 +140,7 @@ void Node::set_needs_display()
     if (auto* block = containing_block()) {
         block->for_each_fragment([&](auto& fragment) {
             if (&fragment.layout_node() == this || is_ancestor_of(fragment.layout_node())) {
-                frame().set_needs_display(enclosing_int_rect(fragment.absolute_rect()));
+                browsing_context().set_needs_display(enclosing_int_rect(fragment.absolute_rect()));
             }
             return IterationDecision::Continue;
         });
@@ -150,7 +150,7 @@ void Node::set_needs_display()
 Gfx::FloatPoint Node::box_type_agnostic_position() const
 {
     if (is<Box>(*this))
-        return downcast<Box>(*this).absolute_position();
+        return verify_cast<Box>(*this).absolute_position();
     VERIFY(is_inline());
     Gfx::FloatPoint position;
     if (auto* block = containing_block()) {
@@ -168,6 +168,9 @@ Gfx::FloatPoint Node::box_type_agnostic_position() const
 bool Node::is_floating() const
 {
     if (!has_style())
+        return false;
+    // flex-items don't float.
+    if (is_flex_item())
         return false;
     return computed_values().float_() != CSS::Float::None;
 }
@@ -226,6 +229,22 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& specified_style)
         m_background_image = static_ptr_cast<CSS::ImageStyleValue>(bgimage.value());
     }
 
+    auto border_bottom_left_radius = specified_style.property(CSS::PropertyID::BorderBottomLeftRadius);
+    if (border_bottom_left_radius.has_value())
+        computed_values.set_border_bottom_left_radius(border_bottom_left_radius.value()->to_length());
+
+    auto border_bottom_right_radius = specified_style.property(CSS::PropertyID::BorderBottomRightRadius);
+    if (border_bottom_right_radius.has_value())
+        computed_values.set_border_bottom_right_radius(border_bottom_right_radius.value()->to_length());
+
+    auto border_top_left_radius = specified_style.property(CSS::PropertyID::BorderTopLeftRadius);
+    if (border_top_left_radius.has_value())
+        computed_values.set_border_top_left_radius(border_top_left_radius.value()->to_length());
+
+    auto border_top_right_radius = specified_style.property(CSS::PropertyID::BorderTopRightRadius);
+    if (border_top_right_radius.has_value())
+        computed_values.set_border_top_right_radius(border_top_right_radius.value()->to_length());
+
     auto background_repeat_x = specified_style.background_repeat_x();
     if (background_repeat_x.has_value())
         computed_values.set_background_repeat_x(background_repeat_x.value());
@@ -240,9 +259,25 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& specified_style)
     if (flex_direction.has_value())
         computed_values.set_flex_direction(flex_direction.value());
 
+    auto flex_wrap = specified_style.flex_wrap();
+    if (flex_wrap.has_value())
+        computed_values.set_flex_wrap(flex_wrap.value());
+
+    auto flex_basis = specified_style.flex_basis();
+    if (flex_basis.has_value())
+        computed_values.set_flex_basis(flex_basis.value());
+
+    computed_values.set_flex_grow_factor(specified_style.flex_grow_factor());
+    computed_values.set_flex_shrink_factor(specified_style.flex_shrink_factor());
+
     auto position = specified_style.position();
-    if (position.has_value())
+    if (position.has_value()) {
         computed_values.set_position(position.value());
+        if (position.value() == CSS::Position::Absolute) {
+            m_has_definite_width = true;
+            m_has_definite_height = true;
+        }
+    }
 
     auto text_align = specified_style.text_align();
     if (text_align.has_value())
@@ -287,9 +322,15 @@ void NodeWithStyle::apply_style(const CSS::StyleProperties& specified_style)
     computed_values.set_background_color(specified_style.color_or_fallback(CSS::PropertyID::BackgroundColor, document(), Color::Transparent));
 
     computed_values.set_z_index(specified_style.z_index());
+
+    if (auto width = specified_style.property(CSS::PropertyID::Width); width.has_value())
+        m_has_definite_width = true;
     computed_values.set_width(specified_style.length_or_fallback(CSS::PropertyID::Width, {}));
     computed_values.set_min_width(specified_style.length_or_fallback(CSS::PropertyID::MinWidth, {}));
     computed_values.set_max_width(specified_style.length_or_fallback(CSS::PropertyID::MaxWidth, {}));
+
+    if (auto height = specified_style.property(CSS::PropertyID::Height); height.has_value())
+        m_has_definite_height = true;
     computed_values.set_height(specified_style.length_or_fallback(CSS::PropertyID::Height, {}));
     computed_values.set_min_height(specified_style.length_or_fallback(CSS::PropertyID::MinHeight, {}));
     computed_values.set_max_height(specified_style.length_or_fallback(CSS::PropertyID::MaxHeight, {}));

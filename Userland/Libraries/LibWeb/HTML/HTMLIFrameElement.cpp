@@ -8,12 +8,12 @@
 #include <LibWeb/HTML/HTMLIFrameElement.h>
 #include <LibWeb/Layout/FrameBox.h>
 #include <LibWeb/Origin.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 
 namespace Web::HTML {
 
 HTMLIFrameElement::HTMLIFrameElement(DOM::Document& document, QualifiedName qualified_name)
-    : FrameHostElement(document, move(qualified_name))
+    : BrowsingContextContainer(document, move(qualified_name))
 {
 }
 
@@ -36,14 +36,14 @@ void HTMLIFrameElement::parse_attribute(const FlyString& name, const String& val
 
 void HTMLIFrameElement::inserted()
 {
-    FrameHostElement::inserted();
+    BrowsingContextContainer::inserted();
     if (is_connected())
         load_src(attribute(HTML::AttributeNames::src));
 }
 
 void HTMLIFrameElement::load_src(const String& value)
 {
-    if (!m_content_frame)
+    if (!m_nested_browsing_context)
         return;
 
     if (value.is_null())
@@ -60,7 +60,7 @@ void HTMLIFrameElement::load_src(const String& value)
     }
 
     dbgln("Loading iframe document from {}", value);
-    m_content_frame->loader().load(url, FrameLoader::Type::IFrame);
+    m_nested_browsing_context->loader().load(url, FrameLoader::Type::IFrame);
 }
 
 }

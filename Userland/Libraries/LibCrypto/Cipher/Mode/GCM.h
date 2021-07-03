@@ -37,7 +37,7 @@ public:
         this->cipher().encrypt_block(key_block, key_block);
         key_block.bytes().copy_to(m_auth_key);
 
-        m_ghash = make<Authentication::GHash>(m_auth_key);
+        m_ghash = Authentication::GHash(m_auth_key);
     }
 
     virtual String class_name() const override
@@ -84,7 +84,7 @@ public:
             CTR<T>::encrypt(in, out, iv);
 
         auto auth_tag = m_ghash->process(aad, out);
-        block0.apply_initialization_vector(auth_tag.data);
+        block0.apply_initialization_vector({ auth_tag.data, array_size(auth_tag.data) });
         block0.bytes().copy_to(tag);
     }
 
@@ -103,7 +103,7 @@ public:
         CTR<T>::increment(iv);
 
         auto auth_tag = m_ghash->process(aad, in);
-        block0.apply_initialization_vector(auth_tag.data);
+        block0.apply_initialization_vector({ auth_tag.data, array_size(auth_tag.data) });
 
         auto test_consistency = [&] {
             if (block0.block_size() != tag.size() || __builtin_memcmp(block0.bytes().data(), tag.data(), tag.size()) != 0)
@@ -126,7 +126,7 @@ private:
     static constexpr auto block_size = T::BlockType::BlockSizeInBits / 8;
     u8 m_auth_key_storage[block_size];
     Bytes m_auth_key { m_auth_key_storage, block_size };
-    OwnPtr<Authentication::GHash> m_ghash;
+    Optional<Authentication::GHash> m_ghash;
 };
 
 }

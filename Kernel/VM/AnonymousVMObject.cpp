@@ -23,31 +23,36 @@ RefPtr<VMObject> AnonymousVMObject::clone()
     // so that the parent is still guaranteed to be able to have all
     // non-volatile memory available.
     size_t need_cow_pages = 0;
-    {
-        // We definitely need to commit non-volatile areas
-        for_each_nonvolatile_range([&](const VolatilePageRange& nonvolatile_range) {
-            need_cow_pages += nonvolatile_range.count;
-            return IterationDecision::Continue;
-        });
-    }
+
+    // We definitely need to commit non-volatile areas
+    for_each_nonvolatile_range([&](const VolatilePageRange& nonvolatile_range) {
+        need_cow_pages += nonvolatile_range.count;
+    });
 
     dbgln_if(COMMIT_DEBUG, "Cloning {:p}, need {} committed cow pages", this, need_cow_pages);
 
     if (!MM.commit_user_physical_pages(need_cow_pages))
         return {};
+
     // Create or replace the committed cow pages. When cloning a previously
     // cloned vmobject, we want to essentially "fork", leaving us and the
     // new clone with one set of shared committed cow pages, and the original
     // one would keep the one it still has. This ensures that the original
     // one and this one, as well as the clone have sufficient resources
     // to cow all pages as needed
-    m_shared_committed_cow_pages = adopt_ref(*new CommittedCowPages(need_cow_pages));
+    m_shared_committed_cow_pages = try_create<CommittedCowPages>(need_cow_pages);
+
+    if (!m_shared_committed_cow_pages) {
+        MM.uncommit_user_physical_pages(need_cow_pages);
+        return {};
+    }
 
     // Both original and clone become COW. So create a COW map for ourselves
     // or reset all pages to be copied again if we were previously cloned
     ensure_or_reset_cow_map();
 
-    return adopt_ref(*new AnonymousVMObject(*this));
+    // FIXME: If this allocation fails, we need to rollback all changes.
+    return adopt_ref_if_nonnull(new (nothrow) AnonymousVMObject(*this));
 }
 
 RefPtr<AnonymousVMObject> AnonymousVMObject::create_with_size(size_t size, AllocationStrategy commit)
@@ -57,17 +62,17 @@ RefPtr<AnonymousVMObject> AnonymousVMObject::create_with_size(size_t size, Alloc
         if (!MM.commit_user_physical_pages(ceil_div(size, static_cast<size_t>(PAGE_SIZE))))
             return {};
     }
-    return adopt_ref(*new AnonymousVMObject(size, commit));
+    return adopt_ref_if_nonnull(new (nothrow) AnonymousVMObject(size, commit));
 }
 
-NonnullRefPtr<AnonymousVMObject> AnonymousVMObject::create_with_physical_pages(NonnullRefPtrVector<PhysicalPage> physical_pages)
+RefPtr<AnonymousVMObject> AnonymousVMObject::create_with_physical_pages(NonnullRefPtrVector<PhysicalPage> physical_pages)
 {
-    return adopt_ref(*new AnonymousVMObject(physical_pages));
+    return adopt_ref_if_nonnull(new (nothrow) AnonymousVMObject(physical_pages));
 }
 
-NonnullRefPtr<AnonymousVMObject> AnonymousVMObject::create_with_physical_page(PhysicalPage& page)
+RefPtr<AnonymousVMObject> AnonymousVMObject::create_with_physical_page(PhysicalPage& page)
 {
-    return adopt_ref(*new AnonymousVMObject(page));
+    return adopt_ref_if_nonnull(new (nothrow) AnonymousVMObject(page));
 }
 
 RefPtr<AnonymousVMObject> AnonymousVMObject::create_for_physical_range(PhysicalAddress paddr, size_t size)
@@ -76,7 +81,7 @@ RefPtr<AnonymousVMObject> AnonymousVMObject::create_for_physical_range(PhysicalA
         dbgln("Shenanigans! create_for_physical_range({}, {}) would wrap around", paddr, size);
         return nullptr;
     }
-    return adopt_ref(*new AnonymousVMObject(paddr, size));
+    return adopt_ref_if_nonnull(new (nothrow) AnonymousVMObject(paddr, size));
 }
 
 AnonymousVMObject::AnonymousVMObject(size_t size, AllocationStrategy strategy)
@@ -220,7 +225,6 @@ int AnonymousVMObject::purge_impl()
                 }
             });
         }
-        return IterationDecision::Continue;
     });
     return purged_page_count;
 }
@@ -284,7 +288,6 @@ void AnonymousVMObject::update_volatile_cache()
     m_volatile_ranges_cache.clear();
     for_each_nonvolatile_range([&](const VolatilePageRange& range) {
         m_volatile_ranges_cache.add_unchecked(range);
-        return IterationDecision::Continue;
     });
 
     m_volatile_ranges_cache_dirty = false;

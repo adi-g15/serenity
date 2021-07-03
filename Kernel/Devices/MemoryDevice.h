@@ -16,7 +16,7 @@ namespace Kernel {
 class MemoryDevice final : public CharacterDevice {
     AK_MAKE_ETERNAL
 public:
-    MemoryDevice();
+    static NonnullRefPtr<MemoryDevice> must_create();
     ~MemoryDevice();
 
     virtual KResultOr<Region*> mmap(Process&, FileDescription&, const Range&, u64 offset, int prot, bool shared) override;
@@ -26,10 +26,11 @@ public:
     virtual String device_name() const override { return "mem"; };
 
 private:
+    MemoryDevice();
     virtual const char* class_name() const override { return "MemoryDevice"; }
     virtual bool can_read(const FileDescription&, size_t) const override { return true; }
     virtual bool can_write(const FileDescription&, size_t) const override { return false; }
-    virtual bool is_seekable() const { return true; }
+    virtual bool is_seekable() const override { return true; }
     virtual KResultOr<size_t> read(FileDescription&, u64, UserOrKernelBuffer&, size_t) override;
     virtual KResultOr<size_t> write(FileDescription&, u64, const UserOrKernelBuffer&, size_t) override { return -EINVAL; }
 

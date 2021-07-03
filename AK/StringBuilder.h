@@ -28,6 +28,7 @@ public:
     void append(const char*, size_t);
     void appendvf(const char*, va_list);
 
+    void append_as_lowercase(char);
     void append_escaped_for_json(const StringView&);
 
     template<typename... Parameters>
@@ -43,9 +44,9 @@ public:
     [[nodiscard]] StringView string_view() const;
     void clear();
 
-    [[nodiscard]] size_t length() const { return m_length; }
-    [[nodiscard]] bool is_empty() const { return m_length == 0; }
-    void trim(size_t count) { m_length -= count; }
+    [[nodiscard]] size_t length() const { return m_buffer.size(); }
+    [[nodiscard]] bool is_empty() const { return m_buffer.is_empty(); }
+    void trim(size_t count) { m_buffer.resize(m_buffer.size() - count); }
 
     template<class SeparatorType, class CollectionType>
     void join(const SeparatorType& separator, const CollectionType& collection)
@@ -62,14 +63,11 @@ public:
 
 private:
     void will_append(size_t);
-    u8* data() { return m_buffer.is_null() ? m_inline_buffer : m_buffer.data(); }
-    const u8* data() const { return m_buffer.is_null() ? m_inline_buffer : m_buffer.data(); }
-    bool using_inline_buffer() const { return m_buffer.is_null(); }
+    u8* data() { return m_buffer.data(); }
+    const u8* data() const { return m_buffer.data(); }
 
     static constexpr size_t inline_capacity = 128;
-    u8 m_inline_buffer[inline_capacity];
-    ByteBuffer m_buffer;
-    size_t m_length { 0 };
+    AK::Detail::ByteBuffer<inline_capacity> m_buffer;
 };
 
 }

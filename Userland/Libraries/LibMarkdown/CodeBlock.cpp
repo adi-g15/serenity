@@ -31,6 +31,8 @@ String CodeBlock::render_to_html() const
     String style_language = this->style_language();
     Text::Style style = this->style();
 
+    builder.append("<pre>");
+
     if (style.strong)
         builder.append("<b>");
     if (style.emph)
@@ -39,7 +41,7 @@ String CodeBlock::render_to_html() const
     if (style_language.is_empty())
         builder.append("<code>");
     else
-        builder.appendff("<code class=\"{}\">", style_language);
+        builder.appendff("<code class=\"{}\">", escape_html_entities(style_language));
 
     if (style_language == "js")
         builder.append(JS::MarkupGenerator::html_from_source(m_code));
@@ -53,7 +55,7 @@ String CodeBlock::render_to_html() const
     if (style.strong)
         builder.append("</b>");
 
-    builder.append('\n');
+    builder.append("</pre>\n");
 
     return builder.build();
 }

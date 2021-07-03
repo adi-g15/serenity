@@ -85,6 +85,7 @@ void StackingContext::paint(PaintContext& context)
     // Draw the non-positioned floats (step 5)
     paint_descendants(context, m_box, StackingContextPaintPhase::Floats);
     // Draw inline content, replaced content, etc. (steps 6, 7)
+    m_box.paint(context, PaintPhase::Foreground);
     paint_descendants(context, m_box, StackingContextPaintPhase::Foreground);
     // Draw other positioned descendants (steps 8, 9)
     for (auto* child : m_children) {
@@ -106,7 +107,7 @@ HitTestResult StackingContext::hit_test(const Gfx::IntPoint& position, HitTestTy
     } else {
         // NOTE: InitialContainingBlockBox::hit_test() merely calls StackingContext::hit_test()
         //       so we call its base class instead.
-        result = downcast<InitialContainingBlockBox>(m_box).BlockBox::hit_test(position, type);
+        result = verify_cast<InitialContainingBlockBox>(m_box).BlockBox::hit_test(position, type);
     }
 
     int z_index = m_box.computed_values().z_index().value_or(0);

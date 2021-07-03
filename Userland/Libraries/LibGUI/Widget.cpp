@@ -21,6 +21,7 @@
 #include <LibGfx/Font.h>
 #include <LibGfx/FontDatabase.h>
 #include <LibGfx/Palette.h>
+#include <LibGfx/SystemTheme.h>
 #include <unistd.h>
 
 REGISTER_CORE_OBJECT(GUI, Widget)
@@ -136,6 +137,50 @@ Widget::Widget()
             }
             return false;
         });
+
+    register_property(
+        "foreground_role", [this]() -> JsonValue { return Gfx::to_string(foreground_role()); },
+        [this](auto& value) {
+            if (!value.is_string())
+                return false;
+            auto str = value.as_string();
+            if (str == "NoRole") {
+                set_foreground_role(Gfx::ColorRole::NoRole);
+                return true;
+            }
+#undef __ENUMERATE_COLOR_ROLE
+#define __ENUMERATE_COLOR_ROLE(role)               \
+    else if (str == #role)                         \
+    {                                              \
+        set_foreground_role(Gfx::ColorRole::role); \
+        return true;                               \
+    }
+            ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE)
+#undef __ENUMERATE_COLOR_ROLE
+            return false;
+        });
+
+    register_property(
+        "background_role", [this]() -> JsonValue { return Gfx::to_string(background_role()); },
+        [this](auto& value) {
+            if (!value.is_string())
+                return false;
+            auto str = value.as_string();
+            if (str == "NoRole") {
+                set_background_role(Gfx::ColorRole::NoRole);
+                return true;
+            }
+#undef __ENUMERATE_COLOR_ROLE
+#define __ENUMERATE_COLOR_ROLE(role)               \
+    else if (str == #role)                         \
+    {                                              \
+        set_background_role(Gfx::ColorRole::role); \
+        return true;                               \
+    }
+            ENUMERATE_COLOR_ROLES(__ENUMERATE_COLOR_ROLE)
+#undef __ENUMERATE_COLOR_ROLE
+            return false;
+        });
 }
 
 Widget::~Widget()
@@ -147,22 +192,22 @@ void Widget::child_event(Core::ChildEvent& event)
     if (event.type() == Event::ChildAdded) {
         if (event.child() && is<Widget>(*event.child()) && layout()) {
             if (event.insertion_before_child() && is<Widget>(event.insertion_before_child()))
-                layout()->insert_widget_before(downcast<Widget>(*event.child()), downcast<Widget>(*event.insertion_before_child()));
+                layout()->insert_widget_before(verify_cast<Widget>(*event.child()), verify_cast<Widget>(*event.insertion_before_child()));
             else
-                layout()->add_widget(downcast<Widget>(*event.child()));
+                layout()->add_widget(verify_cast<Widget>(*event.child()));
         }
         if (window() && event.child() && is<Widget>(*event.child()))
-            window()->did_add_widget({}, downcast<Widget>(*event.child()));
+            window()->did_add_widget({}, verify_cast<Widget>(*event.child()));
     }
     if (event.type() == Event::ChildRemoved) {
         if (layout()) {
             if (event.child() && is<Widget>(*event.child()))
-                layout()->remove_widget(downcast<Widget>(*event.child()));
+                layout()->remove_widget(verify_cast<Widget>(*event.child()));
             else
                 invalidate_layout();
         }
         if (window() && event.child() && is<Widget>(*event.child()))
-            window()->did_remove_widget({}, downcast<Widget>(*event.child()));
+            window()->did_remove_widget({}, verify_cast<Widget>(*event.child()));
         update();
     }
     return Core::Object::child_event(event);
@@ -506,7 +551,7 @@ void Widget::theme_change_event(ThemeChangeEvent&)
 {
 }
 
-void Widget::screen_rect_change_event(ScreenRectChangeEvent&)
+void Widget::screen_rects_change_event(ScreenRectsChangeEvent&)
 {
 }
 
@@ -563,7 +608,7 @@ Widget* Widget::child_at(const Gfx::IntPoint& point) const
     for (int i = children().size() - 1; i >= 0; --i) {
         if (!is<Widget>(children()[i]))
             continue;
-        auto& child = downcast<Widget>(children()[i]);
+        auto& child = verify_cast<Widget>(children()[i]);
         if (!child.is_visible())
             continue;
         if (child.content_rect().contains(point))
@@ -726,6 +771,8 @@ void Widget::set_visible(bool visible)
         parent->invalidate_layout();
     if (m_visible)
         update();
+    if (!m_visible && is_focused())
+        set_focus(false);
 
     if (m_visible) {
         ShowEvent e;
@@ -827,7 +874,7 @@ Action* Widget::action_for_key_event(const KeyEvent& event)
 
     Action* found_action = nullptr;
     for_each_child_of_type<Action>([&](auto& action) {
-        if (action.shortcut() == shortcut) {
+        if (action.shortcut() == shortcut || action.alternate_shortcut() == shortcut) {
             found_action = &action;
             return IterationDecision::Break;
         }
@@ -849,14 +896,14 @@ void Widget::focus_previous_widget(FocusSource source, bool siblings_only)
 {
     auto focusable_widgets = window()->focusable_widgets(source);
     if (siblings_only)
-        focusable_widgets.remove_all_matching([this](auto& entry) { return entry->parent() != parent(); });
+        focusable_widgets.remove_all_matching([this](auto& entry) { return entry.parent() != parent(); });
     for (int i = focusable_widgets.size() - 1; i >= 0; --i) {
-        if (focusable_widgets[i] != this)
+        if (&focusable_widgets[i] != this)
             continue;
         if (i > 0)
-            focusable_widgets[i - 1]->set_focus(true, source);
+            focusable_widgets[i - 1].set_focus(true, source);
         else
-            focusable_widgets.last()->set_focus(true, source);
+            focusable_widgets.last().set_focus(true, source);
     }
 }
 
@@ -864,24 +911,24 @@ void Widget::focus_next_widget(FocusSource source, bool siblings_only)
 {
     auto focusable_widgets = window()->focusable_widgets(source);
     if (siblings_only)
-        focusable_widgets.remove_all_matching([this](auto& entry) { return entry->parent() != parent(); });
+        focusable_widgets.remove_all_matching([this](auto& entry) { return entry.parent() != parent(); });
     for (size_t i = 0; i < focusable_widgets.size(); ++i) {
-        if (focusable_widgets[i] != this)
+        if (&focusable_widgets[i] != this)
             continue;
         if (i < focusable_widgets.size() - 1)
-            focusable_widgets[i + 1]->set_focus(true, source);
+            focusable_widgets[i + 1].set_focus(true, source);
         else
-            focusable_widgets.first()->set_focus(true, source);
+            focusable_widgets.first().set_focus(true, source);
     }
 }
 
-Vector<Widget*> Widget::child_widgets() const
+Vector<Widget&> Widget::child_widgets() const
 {
-    Vector<Widget*> widgets;
+    Vector<Widget&> widgets;
     widgets.ensure_capacity(children().size());
     for (auto& child : const_cast<Widget*>(this)->children()) {
         if (is<Widget>(child))
-            widgets.append(static_cast<Widget*>(&child));
+            widgets.append(static_cast<Widget&>(child));
     }
     return widgets;
 }
@@ -889,16 +936,19 @@ Vector<Widget*> Widget::child_widgets() const
 void Widget::set_palette(const Palette& palette)
 {
     m_palette = palette.impl();
+    update();
 }
 
 void Widget::set_background_role(ColorRole role)
 {
     m_background_role = role;
+    update();
 }
 
 void Widget::set_foreground_role(ColorRole role)
 {
     m_foreground_role = role;
+    update();
 }
 
 Gfx::Palette Widget::palette() const

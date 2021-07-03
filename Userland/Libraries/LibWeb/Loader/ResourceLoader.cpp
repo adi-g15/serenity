@@ -133,7 +133,7 @@ void ResourceLoader::load(const LoadRequest& request, Function<void(ReadonlyByte
     if (url.protocol() == "file") {
         auto f = Core::File::construct();
         f->set_filename(url.path());
-        if (!f->open(Core::IODevice::OpenMode::ReadOnly)) {
+        if (!f->open(Core::OpenMode::ReadOnly)) {
             dbgln("ResourceLoader::load: Error: {}", f->error_string());
             if (error_callback)
                 error_callback(f->error_string(), {});
@@ -156,7 +156,7 @@ void ResourceLoader::load(const LoadRequest& request, Function<void(ReadonlyByte
             headers.set(it.key, it.value);
         }
 
-        auto protocol_request = protocol_client().start_request(request.method(), url.to_string_encoded(), headers, request.body());
+        auto protocol_request = protocol_client().start_request(request.method(), url, headers, request.body());
         if (!protocol_request) {
             if (error_callback)
                 error_callback("Failed to initiate load", {});

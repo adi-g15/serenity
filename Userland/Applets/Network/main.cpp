@@ -108,8 +108,8 @@ private:
         StringBuilder adapter_info;
 
         auto file = Core::File::construct("/proc/net/adapters");
-        if (!file->open(Core::IODevice::ReadOnly)) {
-            fprintf(stderr, "Error: %s\n", file->error_string());
+        if (!file->open(Core::OpenMode::ReadOnly)) {
+            dbgln("Error: Could not open {}: {}", file->name(), file->error_string());
             return adapter_info.to_string();
         }
 
@@ -126,7 +126,7 @@ private:
             auto ifname = if_object.get("name").to_string();
 
             if (!include_loopback)
-                if (ifname == "loop0")
+                if (ifname == "loop")
                     return;
             if (ip_address != "null")
                 connected_adapters++;
@@ -149,17 +149,12 @@ private:
 
 int main(int argc, char* argv[])
 {
-    if (pledge("stdio recvfd sendfd accept rpath unix cpath fattr unix proc exec", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd rpath unix proc exec", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     auto app = GUI::Application::construct(argc, argv);
-
-    if (pledge("stdio recvfd sendfd accept rpath unix proc exec", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
 
     if (unveil("/res", "r") < 0) {
         perror("unveil");

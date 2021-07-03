@@ -8,24 +8,27 @@
 #include <Kernel/ACPI/DynamicParser.h>
 #include <Kernel/ACPI/Initialize.h>
 #include <Kernel/ACPI/MultiProcessorParser.h>
-#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/Arch/PC/BIOS.h>
+#include <Kernel/Arch/x86/Processor.h>
+#include <Kernel/Bus/PCI/Access.h>
+#include <Kernel/Bus/PCI/Initializer.h>
+#include <Kernel/Bus/USB/UHCIController.h>
 #include <Kernel/CMOS.h>
 #include <Kernel/CommandLine.h>
-#include <Kernel/DMI.h>
-#include <Kernel/Devices/BXVGADevice.h>
 #include <Kernel/Devices/FullDevice.h>
 #include <Kernel/Devices/HID/HIDManagement.h>
-#include <Kernel/Devices/MBVGADevice.h>
 #include <Kernel/Devices/MemoryDevice.h>
 #include <Kernel/Devices/NullDevice.h>
+#include <Kernel/Devices/PCISerialDevice.h>
 #include <Kernel/Devices/RandomDevice.h>
 #include <Kernel/Devices/SB16.h>
 #include <Kernel/Devices/SerialDevice.h>
-#include <Kernel/Devices/USB/UHCIController.h>
 #include <Kernel/Devices/VMWareBackdoor.h>
 #include <Kernel/Devices/ZeroDevice.h>
 #include <Kernel/FileSystem/Ext2FileSystem.h>
+#include <Kernel/FileSystem/SysFS.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
+#include <Kernel/Graphics/GraphicsManagement.h>
 #include <Kernel/Heap/SlabAllocator.h>
 #include <Kernel/Heap/kmalloc.h>
 #include <Kernel/Interrupts/APIC.h>
@@ -33,19 +36,17 @@
 #include <Kernel/Interrupts/PIC.h>
 #include <Kernel/KSyms.h>
 #include <Kernel/Multiboot.h>
-#include <Kernel/Net/E1000NetworkAdapter.h>
-#include <Kernel/Net/LoopbackAdapter.h>
-#include <Kernel/Net/NE2000NetworkAdapter.h>
 #include <Kernel/Net/NetworkTask.h>
-#include <Kernel/Net/RTL8139NetworkAdapter.h>
-#include <Kernel/PCI/Access.h>
-#include <Kernel/PCI/Initializer.h>
+#include <Kernel/Net/NetworkingManagement.h>
 #include <Kernel/Panic.h>
 #include <Kernel/Process.h>
+#include <Kernel/ProcessExposed.h>
 #include <Kernel/RTC.h>
 #include <Kernel/Random.h>
 #include <Kernel/Scheduler.h>
+#include <Kernel/Sections.h>
 #include <Kernel/Storage/StorageManagement.h>
+#include <Kernel/TTY/ConsoleManagement.h>
 #include <Kernel/TTY/PTYMultiplexer.h>
 #include <Kernel/TTY/VirtualConsole.h>
 #include <Kernel/Tasks/FinalizerTask.h>
@@ -77,6 +78,7 @@ multiboot_module_entry_t multiboot_copy_boot_modules_array[16];
 size_t multiboot_copy_boot_modules_count;
 
 extern "C" const char kernel_cmdline[4096];
+READONLY_AFTER_INIT bool g_in_early_boot;
 
 namespace Kernel {
 
@@ -86,7 +88,7 @@ static void setup_serial_debug();
 // boot.S expects these functions to exactly have the following signatures.
 // We declare them here to ensure their signatures don't accidentally change.
 extern "C" void init_finished(u32 cpu) __attribute__((used));
-extern "C" [[noreturn]] void init_ap(u32 cpu, Processor* processor_info);
+extern "C" [[noreturn]] void init_ap(FlatPtr cpu, Processor* processor_info);
 extern "C" [[noreturn]] void init();
 
 READONLY_AFTER_INIT VirtualConsole* tty0;
@@ -103,13 +105,14 @@ static Processor s_bsp_processor; // global but let's keep it "private"
 // Once multi-tasking is ready, we spawn a new thread that starts in the
 // init_stage2() function. Initialization continues there.
 
-extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
+extern "C" [[noreturn]] UNMAP_AFTER_INIT void init()
 {
-    if ((FlatPtr)&end_of_kernel_image >= 0xc1000000u) {
+    if ((FlatPtr)&end_of_kernel_image >= 0xc2000000u) {
         // The kernel has grown too large again!
         asm volatile("cli;hlt");
     }
 
+    g_in_early_boot = true;
     setup_serial_debug();
 
     // We need to copy the command line before kmalloc is initialized,
@@ -125,6 +128,7 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
     kmalloc_init();
     slab_alloc_init();
 
+    ConsoleDevice::initialize();
     s_bsp_processor.initialize(0);
 
     CommandLine::initialize();
@@ -143,8 +147,13 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
     InterruptManagement::initialize();
     ACPI::initialize();
 
+    // Initialize the PCI Bus as early as possible, for early boot (PCI based) serial logging
+    SystemRegistrar::initialize();
+    ProcFSComponentsRegistrar::initialize();
+    PCI::initialize();
+    PCISerialDevice::detect();
+
     VFS::initialize();
-    Console::initialize();
 
     dmesgln("Starting SerenityOS...");
 
@@ -154,19 +163,13 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
 
     NullDevice::initialize();
     if (!get_serial_debug())
-        new SerialDevice(SERIAL_COM1_ADDR, 64);
-    new SerialDevice(SERIAL_COM2_ADDR, 65);
-    new SerialDevice(SERIAL_COM3_ADDR, 66);
-    new SerialDevice(SERIAL_COM4_ADDR, 67);
+        (void)SerialDevice::must_create(0).leak_ref();
+    (void)SerialDevice::must_create(1).leak_ref();
+    (void)SerialDevice::must_create(2).leak_ref();
+    (void)SerialDevice::must_create(3).leak_ref();
 
     VMWareBackdoor::the(); // don't wait until first mouse packet
     HIDManagement::initialize();
-    VirtualConsole::initialize();
-    tty0 = new VirtualConsole(0);
-    for (unsigned i = 1; i < s_max_virtual_consoles; i++) {
-        new VirtualConsole(i);
-    }
-    VirtualConsole::switch_to(0);
 
     Thread::initialize();
     Process::initialize();
@@ -191,7 +194,7 @@ extern "C" UNMAP_AFTER_INIT [[noreturn]] void init()
 //
 // The purpose of init_ap() is to initialize APs for multi-tasking.
 //
-extern "C" UNMAP_AFTER_INIT [[noreturn]] void init_ap(u32 cpu, Processor* processor_info)
+extern "C" [[noreturn]] UNMAP_AFTER_INIT void init_ap(FlatPtr cpu, Processor* processor_info)
 {
     processor_info->early_initialize(cpu);
 
@@ -228,54 +231,28 @@ void init_stage2(void*)
         APIC::the().boot_aps();
     }
 
+    GraphicsManagement::the().initialize();
+    ConsoleManagement::the().initialize();
+
     SyncTask::spawn();
     FinalizerTask::spawn();
 
-    PCI::initialize();
     auto boot_profiling = kernel_command_line().is_boot_profiling_enabled();
-    auto is_text_mode = kernel_command_line().is_text_mode();
-    if (is_text_mode) {
-        dbgln("Text mode enabled");
-    } else {
-        bool bxvga_found = false;
-        PCI::enumerate([&](const PCI::Address&, PCI::ID id) {
-            if ((id.vendor_id == 0x1234 && id.device_id == 0x1111) || (id.vendor_id == 0x80ee && id.device_id == 0xbeef))
-                bxvga_found = true;
-        });
-
-        if (bxvga_found) {
-            BXVGADevice::initialize();
-        } else {
-            if (multiboot_info_ptr->framebuffer_type == MULTIBOOT_FRAMEBUFFER_TYPE_RGB || multiboot_info_ptr->framebuffer_type == MULTIBOOT_FRAMEBUFFER_TYPE_EGA_TEXT) {
-                new MBVGADevice(
-                    PhysicalAddress((u32)(multiboot_info_ptr->framebuffer_addr)),
-                    multiboot_info_ptr->framebuffer_pitch,
-                    multiboot_info_ptr->framebuffer_width,
-                    multiboot_info_ptr->framebuffer_height);
-            } else {
-                BXVGADevice::initialize();
-            }
-        }
-    }
 
     USB::UHCIController::detect();
 
-    DMIExpose::initialize();
+    BIOSExposedFolder::initialize();
+    ACPI::ExposedFolder::initialize();
 
     VirtIO::detect();
 
-    E1000NetworkAdapter::detect();
-    NE2000NetworkAdapter::detect();
-    RTL8139NetworkAdapter::detect();
-
-    LoopbackAdapter::the();
-
+    NetworkingManagement::the().initialize();
     Syscall::initialize();
 
-    new MemoryDevice;
-    new ZeroDevice;
-    new FullDevice;
-    new RandomDevice;
+    (void)MemoryDevice::must_create().leak_ref();
+    (void)ZeroDevice::must_create().leak_ref();
+    (void)FullDevice::must_create().leak_ref();
+    (void)RandomDevice::must_create().leak_ref();
     PTYMultiplexer::initialize();
     SB16::detect();
 
@@ -288,6 +265,9 @@ void init_stage2(void*)
 
     load_kernel_symbol_table();
 
+    // Switch out of early boot mode.
+    g_in_early_boot = false;
+
     // NOTE: Everything marked READONLY_AFTER_INIT becomes non-writable after this point.
     MM.protect_readonly_after_init_memory();
 
@@ -297,7 +277,8 @@ void init_stage2(void*)
     int error;
 
     // FIXME: It would be nicer to set the mode from userspace.
-    tty0->set_graphical(!is_text_mode);
+    // FIXME: It would be smarter to not hardcode that the first tty is the only graphical one
+    ConsoleManagement::the().first_tty()->set_graphical(GraphicsManagement::the().framebuffer_devices_exist());
     RefPtr<Thread> thread;
     auto userspace_init = kernel_command_line().userspace_init();
     auto init_args = kernel_command_line().userspace_init_args();
@@ -309,7 +290,7 @@ void init_stage2(void*)
 
     if (boot_profiling) {
         dbgln("Starting full system boot profiling");
-        auto result = Process::current()->sys$profiling_enable(-1);
+        auto result = Process::current()->sys$profiling_enable(-1, ~0ull);
         VERIFY(!result.is_error());
     }
 

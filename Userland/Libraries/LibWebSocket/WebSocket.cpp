@@ -114,19 +114,27 @@ void WebSocket::drain_read()
         return;
     }
 
-    while (m_impl->can_read()) {
-        if (m_state == WebSocket::InternalState::WaitingForServerHandshake) {
-            read_server_handshake();
-            return;
-        }
-        if (m_state == WebSocket::InternalState::Open) {
-            read_frame();
-            return;
-        }
-        if (m_state == WebSocket::InternalState::Closing) {
-            read_frame();
-            return;
-        }
+    switch (m_state) {
+    case InternalState::NotStarted:
+    case InternalState::EstablishingProtocolConnection:
+    case InternalState::SendingClientHandshake: {
+        auto initializing_bytes = m_impl->read(1024);
+        dbgln("drain_read() was called on a websocket that isn't opened yet. Read {} bytes from the socket.", initializing_bytes.size());
+    } break;
+    case InternalState::WaitingForServerHandshake: {
+        read_server_handshake();
+    } break;
+    case InternalState::Open:
+    case InternalState::Closing: {
+        read_frame();
+    } break;
+    case InternalState::Closed:
+    case InternalState::Errored: {
+        auto closed_bytes = m_impl->read(1024);
+        dbgln("drain_read() was called on a closed websocket. Read {} bytes from the socket.", closed_bytes.size());
+    } break;
+    default:
+        VERIFY_NOT_REACHED();
     }
 }
 
@@ -219,7 +227,7 @@ void WebSocket::read_server_handshake()
         }
         if (parts[1] != "101") {
             // 1. If the status code is not 101, handle as per HTTP procedures.
-            // FIXME : This could be a redirect or a 401 authentification request, which we do not handle.
+            // FIXME : This could be a redirect or a 401 authentication request, which we do not handle.
             dbgln("WebSocket: Server HTTP Handshake return status {} which isn't supported", parts[1]);
             fatal_error(WebSocket::Error::ConnectionUpgradeFailed);
             return;

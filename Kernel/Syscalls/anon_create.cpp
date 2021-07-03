@@ -11,7 +11,7 @@
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$anon_create(size_t size, int options)
+KResultOr<FlatPtr> Process::sys$anon_create(size_t size, int options)
 {
     REQUIRE_PROMISE(stdio);
 
@@ -21,7 +21,10 @@ KResultOr<int> Process::sys$anon_create(size_t size, int options)
     if (size % PAGE_SIZE)
         return EINVAL;
 
-    int new_fd = alloc_fd();
+    if (size > NumericLimits<ssize_t>::max())
+        return EINVAL;
+
+    int new_fd = m_fds.allocate();
     if (new_fd < 0)
         return new_fd;
 
@@ -30,6 +33,8 @@ KResultOr<int> Process::sys$anon_create(size_t size, int options)
         return ENOMEM;
 
     auto anon_file = AnonymousFile::create(vmobject.release_nonnull());
+    if (!anon_file)
+        return ENOMEM;
     auto description_or_error = FileDescription::create(*anon_file);
     if (description_or_error.is_error())
         return description_or_error.error();

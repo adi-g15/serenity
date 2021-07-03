@@ -5,15 +5,16 @@
  */
 
 #include <AK/Format.h>
+#include <AK/Random.h>
 #include <AK/String.h>
 #include <AK/StringBuilder.h>
 #include <AK/Vector.h>
 #include <errno.h>
-#include <mman.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <syscall.h>
 
 static bool is_deadly_syscall(int fn)
@@ -80,13 +81,13 @@ static void do_systematic_tests()
 static void randomize_from(size_t* buffer, size_t len, const Vector<size_t>& values)
 {
     for (size_t i = 0; i < len; ++i) {
-        buffer[i] = values[arc4random_uniform(values.size())];
+        buffer[i] = values[get_random_uniform(values.size())];
     }
 }
 
 // The largest SC_*_params struct is SC_mmap_params with 36 bytes.
 static_assert(sizeof(size_t) == 4, "Cannot handle size_t != 4 bytes");
-static const size_t fake_params_count = 36 / sizeof(size_t);
+static constexpr size_t fake_params_count = 36 / sizeof(size_t);
 
 static void do_weird_call(size_t attempt, int syscall_fn, size_t arg1, size_t arg2, size_t arg3, size_t* fake_params)
 {
@@ -139,7 +140,7 @@ static void do_random_tests()
     }
     for (size_t i = 0; i < fuzz_syscall_count; ++i) {
         // Construct a nice syscall:
-        int syscall_fn = arc4random_uniform(Syscall::Function::__Count);
+        int syscall_fn = get_random_uniform(Syscall::Function::__Count);
         randomize_from(direct_sc_args, array_size(direct_sc_args), interesting_values);
         randomize_from(fake_sc_params, fake_params_count, interesting_values);
 

@@ -2,10 +2,16 @@ cmake_minimum_required(VERSION 3.16)
 project(SerenityOS C CXX ASM)
 
 if(NOT "${CMAKE_BUILD_TYPE}" STREQUAL "")
-  message(FATAL
+  message(FATAL_ERROR
     ": Don't use CMAKE_BUILD_TYPE when building serenity.\n"
     "The default build type is optimized with debug info and asserts enabled,\n"
     "and that's all there is.")
+endif()
+
+if (CMAKE_COMPILER_IS_GNUCXX AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10.2)
+  message(FATAL_ERROR
+      "A GCC version less than 10.2 was detected (${CMAKE_CXX_COMPILER_VERSION}), this is unsupported.\n"
+      "Please re-read the build instructions documentation, and upgrade your host compiler.\n")
 endif()
 
 set(CMAKE_INSTALL_MESSAGE NEVER)
@@ -22,15 +28,19 @@ option(ENABLE_KERNEL_ADDRESS_SANITIZER "Enable kernel address sanitizer testing 
 option(ENABLE_MEMORY_SANITIZER "Enable memory sanitizer testing in gcc/clang" OFF)
 option(ENABLE_UNDEFINED_SANITIZER "Enable undefined behavior sanitizer testing in gcc/clang" OFF)
 option(ENABLE_FUZZER_SANITIZER "Enable fuzzer sanitizer testing in clang" OFF)
+option(ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS "Enable -Og and -ggdb3 options for Kernel code for easier debugging" OFF)
 option(ENABLE_ALL_THE_DEBUG_MACROS "Enable all debug macros to validate they still compile" OFF)
+option(ENABLE_ALL_DEBUG_FACILITIES "Enable all noisy debug symbols and options. Not recommended for normal developer use" OFF)
 option(ENABLE_COMPILETIME_FORMAT_CHECK "Enable compiletime format string checks" ON)
 option(ENABLE_PCI_IDS_DOWNLOAD "Enable download of the pci.ids database at build time" ON)
+option(ENABLE_USB_IDS_DOWNLOAD "Enable download of the usb.ids database at build time" ON)
 option(BUILD_LAGOM "Build parts of the system targeting the host OS for fuzzing/testing" OFF)
-option(PRECOMPILE_COMMON_HEADERS "Precompile some common headers to speedup compilation" OFF)
 option(ENABLE_KERNEL_LTO "Build the kernel with link-time optimization" OFF)
 
+include(Meta/CMake/wasm_spec_tests.cmake)
+
 add_custom_target(run
-    COMMAND ${CMAKE_SOURCE_DIR}/Meta/run.sh
+    COMMAND ${CMAKE_COMMAND} -E env "SERENITY_ARCH=${SERENITY_ARCH}" ${CMAKE_SOURCE_DIR}/Meta/run.sh
     USES_TERMINAL
 )
 
@@ -59,6 +69,11 @@ add_custom_target(grub-image
     BYPRODUCTS ${CMAKE_BINARY_DIR}/grub_disk_image
     USES_TERMINAL
 )
+add_custom_target(extlinux-image
+    COMMAND ${CMAKE_COMMAND} -E env "SERENITY_SOURCE_DIR=${CMAKE_SOURCE_DIR}" "SERENITY_ARCH=${SERENITY_ARCH}" ${CMAKE_SOURCE_DIR}/Meta/build-image-extlinux.sh
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/extlinux_disk_image
+    USES_TERMINAL
+)
 
 add_custom_target(lint-shell-scripts
     COMMAND ${CMAKE_SOURCE_DIR}/Meta/lint-shell-scripts.sh
@@ -78,11 +93,27 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+if("${SERENITY_ARCH}" STREQUAL "x86_64")
+    # FIXME: Implement TLS support and get rid of this
+    add_compile_definitions(NO_TLS X86_64_NO_TLS)
+endif()
+
 add_compile_options(-Wno-literal-suffix)
 if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     add_compile_options(-fconcepts)
 elseif ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang$")
     add_compile_options(-Wno-overloaded-virtual -Wno-user-defined-literals)
+endif()
+
+if (ENABLE_ALL_DEBUG_FACILITIES)
+    set(ENABLE_ALL_THE_DEBUG_MACROS ON)
+    set(ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS ON)
+
+    # Immediately finds violations during boot, shouldn't be discoverable
+    # by people who aren't working on fixing issues. Use this check to make
+    # sure this code continues to build instead of all_debug_macros to avoid
+    # people filing bugs.
+    set(KMALLOC_VERIFY_NO_SPINLOCK_HELD ON)
 endif()
 
 if (ENABLE_ALL_THE_DEBUG_MACROS)
@@ -97,7 +128,13 @@ include_directories(.)
 include_directories(${CMAKE_BINARY_DIR})
 
 add_subdirectory(Meta/Lagom)
+
+if (ENABLE_UNDEFINED_SANITIZER)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=undefined")
+endif()
+
 add_subdirectory(Userland/DevTools/IPCCompiler)
+add_subdirectory(Userland/DevTools/StateMachineGenerator)
 add_subdirectory(Userland/Libraries/LibWeb/CodeGenerators)
 
 set(write_if_different ${CMAKE_SOURCE_DIR}/Meta/write-only-on-difference.sh)
@@ -150,7 +187,7 @@ endforeach()
 set(CMAKE_INSTALL_NAME_TOOL "")
 set(CMAKE_SHARED_LIBRARY_SUFFIX ".so")
 set(CMAKE_SHARED_LIBRARY_CREATE_CXX_FLAGS "-shared -Wl,--hash-style=gnu,-z,relro,-z,now,-z,noexecstack")
-set(CMAKE_CXX_LINK_FLAGS "-Wl,--hash-style=gnu,-z,relro,-z,now,-z,noexecstack")
+set(CMAKE_CXX_LINK_FLAGS "-Wl,--hash-style=gnu,-z,relro,-z,now,-z,noexecstack,-z,max-page-size=0x1000")
 
 # We disable it completely because it makes cmake very spammy.
 # This will need to be revisited when the Loader supports RPATH/RUN_PATH.
@@ -187,6 +224,7 @@ add_compile_options(-Wno-unknown-warning-option)
 add_compile_options(-Wundef)
 add_compile_options(-Wunused)
 add_compile_options(-Wwrite-strings)
+add_compile_options(-Wno-maybe-uninitialized)
 
 add_compile_options(-ffile-prefix-map=${CMAKE_SOURCE_DIR}=.)
 add_compile_options(-fno-exceptions)
@@ -219,10 +257,31 @@ include_directories(${CMAKE_CURRENT_BINARY_DIR}/Userland/Services)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/Userland/Libraries)
 include_directories(${CMAKE_CURRENT_BINARY_DIR}/Userland)
 
+# FIXME: vptr sanitizing requires.. intense ABI wrangling of std::type_info
+#     And would be better served by porting ubsan_type_hash_itanium.cpp from compiler-rt
+# We don't set this along with the original fsanitize=undefined because for host tools, we can rely on
+# the host's libubsan to provide the ABI-specific vptr type cache.
+# This is not a problem for the Kernel, because it does not have RTTI enabled :^)
+if (ENABLE_UNDEFINED_SANITIZER)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-sanitize=vptr")
+endif()
+
+add_custom_target(components ALL)
+option(BUILD_EVERYTHING "Build all optional components" ON)
+
+include(${CMAKE_SOURCE_DIR}/Meta/CMake/utils.cmake)
+
+serenity_component(
+    Tests
+    RECOMMENDED
+)
+
 add_subdirectory(AK)
 add_subdirectory(Kernel)
 add_subdirectory(Userland)
 add_subdirectory(Tests)
+
+export_components("${CMAKE_BINARY_DIR}/components.ini")
 
 set(PCI_IDS_GZ_URL https://pci-ids.ucw.cz/v2.2/pci.ids.gz)
 set(PCI_IDS_GZ_PATH ${CMAKE_BINARY_DIR}/pci.ids.gz)
@@ -239,4 +298,21 @@ if(EXISTS ${PCI_IDS_GZ_PATH} AND NOT EXISTS ${PCI_IDS_INSTALL_PATH})
     execute_process(COMMAND gzip -k -d ${PCI_IDS_GZ_PATH})
     file(MAKE_DIRECTORY ${CMAKE_INSTALL_DATAROOTDIR})
     file(RENAME ${PCI_IDS_PATH} ${PCI_IDS_INSTALL_PATH})
+endif()
+
+set(USB_IDS_GZ_URL http://www.linux-usb.org/usb.ids.gz)
+set(USB_IDS_GZ_PATH ${CMAKE_BINARY_DIR}/usb.ids.gz)
+set(USB_IDS_PATH ${CMAKE_BINARY_DIR}/usb.ids)
+set(USB_IDS_INSTALL_PATH ${CMAKE_INSTALL_DATAROOTDIR}/usb.ids)
+
+if(ENABLE_USB_IDS_DOWNLOAD AND NOT EXISTS ${USB_IDS_GZ_PATH})
+    message(STATUS "Downloading USB ID database from ${USB_IDS_GZ_URL}...")
+    file(DOWNLOAD ${USB_IDS_GZ_URL} ${USB_IDS_GZ_PATH} INACTIVITY_TIMEOUT 10)
+endif()
+
+if(EXISTS ${USB_IDS_GZ_PATH} AND NOT EXISTS ${USB_IDS_INSTALL_PATH})
+    message(STATUS "Extracting USB ID database from ${USB_IDS_GZ_PATH}...")
+    execute_process(COMMAND gzip -k -d ${USB_IDS_GZ_PATH})
+    file(MAKE_DIRECTORY ${CMAKE_INSTALL_DATAROOTDIR})
+    file(RENAME ${USB_IDS_PATH} ${USB_IDS_INSTALL_PATH})
 endif()

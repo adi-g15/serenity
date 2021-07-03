@@ -5,10 +5,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/Function.h>
 #include <AK/String.h>
 #include <Kernel/IO.h>
 #include <LibCore/ArgsParser.h>
+#include <LibCore/Object.h>
 #include <LibTest/CrashTest.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +44,7 @@ int main(int argc, char** argv)
     bool do_read_cpu_counter = false;
     bool do_pledge_violation = false;
     bool do_failing_assertion = false;
+    bool do_deref_null_refptr = false;
 
     auto args_parser = Core::ArgsParser();
     args_parser.set_general_help(
@@ -66,6 +69,7 @@ int main(int argc, char** argv)
     args_parser.add_option(do_read_cpu_counter, "Read the x86 TSC (Time Stamp Counter) directly", nullptr, 'c');
     args_parser.add_option(do_pledge_violation, "Violate pledge()'d promises", nullptr, 'p');
     args_parser.add_option(do_failing_assertion, "Perform a failing assertion", nullptr, 'n');
+    args_parser.add_option(do_deref_null_refptr, "Dereference a null RefPtr", nullptr, 'R');
 
     if (argc != 2) {
         args_parser.print_usage(stderr, argv[0]);
@@ -114,10 +118,7 @@ int main(int argc, char** argv)
             if (!uninitialized_memory)
                 return Crash::Failure::UnexpectedError;
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
             [[maybe_unused]] volatile auto x = uninitialized_memory[0][0];
-#pragma GCC diagnostic pop
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
@@ -140,10 +141,7 @@ int main(int argc, char** argv)
             if (!uninitialized_memory)
                 return Crash::Failure::UnexpectedError;
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
             uninitialized_memory[4][0] = 1;
-#pragma GCC diagnostic pop
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
@@ -248,7 +246,7 @@ int main(int argc, char** argv)
     if (do_use_io_instruction || do_all_crash_types) {
         Crash("Attempt to use an I/O instruction", [] {
             u8 keyboard_status = IO::in8(0x64);
-            printf("Keyboard status: %#02x\n", keyboard_status);
+            outln("Keyboard status: {:#02x}", keyboard_status);
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
@@ -266,7 +264,7 @@ int main(int argc, char** argv)
                 perror("pledge");
                 return Crash::Failure::DidNotCrash;
             }
-            printf("Didn't pledge 'stdio', this should fail!\n");
+            outln("Didn't pledge 'stdio', this should fail!");
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }
@@ -274,6 +272,14 @@ int main(int argc, char** argv)
     if (do_failing_assertion || do_all_crash_types) {
         Crash("Perform a failing assertion", [] {
             VERIFY(1 == 2);
+            return Crash::Failure::DidNotCrash;
+        }).run(run_type);
+    }
+
+    if (do_deref_null_refptr || do_all_crash_types) {
+        Crash("Dereference a null RefPtr", [] {
+            RefPtr<Core::Object> p;
+            *p;
             return Crash::Failure::DidNotCrash;
         }).run(run_type);
     }

@@ -47,6 +47,7 @@ __BEGIN_DECLS
 #define MSG_TRUNC 0x1
 #define MSG_CTRUNC 0x2
 #define MSG_PEEK 0x4
+#define MSG_OOB 0x8
 #define MSG_DONTWAIT 0x40
 
 typedef uint16_t sa_family_t;
@@ -127,6 +128,7 @@ int socket(int domain, int type, int protocol);
 int bind(int sockfd, const struct sockaddr* addr, socklen_t);
 int listen(int sockfd, int backlog);
 int accept(int sockfd, struct sockaddr*, socklen_t*);
+int accept4(int sockfd, struct sockaddr*, socklen_t*, int);
 int connect(int sockfd, const struct sockaddr*, socklen_t);
 int shutdown(int sockfd, int how);
 ssize_t send(int sockfd, const void*, size_t, int flags);

@@ -178,9 +178,11 @@ void Painter::fill_rect_with_checkerboard(const IntRect& a_rect, const IntSize& 
     const size_t dst_skip = m_target->pitch() / sizeof(RGBA32);
 
     for (int i = 0; i < rect.height(); ++i) {
+        int y = rect.y() + i;
+        int cell_row = y / cell_size.height();
         for (int j = 0; j < rect.width(); ++j) {
-            int cell_row = i / cell_size.height();
-            int cell_col = j / cell_size.width();
+            int x = rect.x() + j;
+            int cell_col = x / cell_size.width();
             dst[j] = ((cell_row % 2) ^ (cell_col % 2)) ? color_light.value() : color_dark.value();
         }
         dst += dst_skip;
@@ -243,6 +245,195 @@ void Painter::fill_rect_with_gradient(Orientation orientation, const IntRect& a_
 void Painter::fill_rect_with_gradient(const IntRect& a_rect, Color gradient_start, Color gradient_end)
 {
     return fill_rect_with_gradient(Orientation::Horizontal, a_rect, gradient_start, gradient_end);
+}
+
+void Painter::fill_rect_with_rounded_corners(const IntRect& a_rect, Color color, int radius)
+{
+    return fill_rect_with_rounded_corners(a_rect, color, radius, radius, radius, radius);
+}
+
+void Painter::fill_rect_with_rounded_corners(const IntRect& a_rect, Color color, int top_left_radius, int top_right_radius, int bottom_right_radius, int bottom_left_radius)
+{
+    // Fasttrack for rects without any border radii
+    if (!top_left_radius && !top_right_radius && !bottom_right_radius && !bottom_left_radius)
+        return fill_rect(a_rect, color);
+
+    // Fully transparent, dont care.
+    if (color.alpha() == 0)
+        return;
+
+    // FIXME: Allow for elliptically rounded corners
+    IntRect top_left_corner = {
+        a_rect.x(),
+        a_rect.y(),
+        top_left_radius,
+        top_left_radius
+    };
+    IntRect top_right_corner = {
+        a_rect.x() + a_rect.width() - top_right_radius,
+        a_rect.y(),
+        top_right_radius,
+        top_right_radius
+    };
+    IntRect bottom_right_corner = {
+        a_rect.x() + a_rect.width() - bottom_right_radius,
+        a_rect.y() + a_rect.height() - bottom_right_radius,
+        bottom_right_radius,
+        bottom_right_radius
+    };
+    IntRect bottom_left_corner = {
+        a_rect.x(),
+        a_rect.y() + a_rect.height() - bottom_left_radius,
+        bottom_left_radius,
+        bottom_left_radius
+    };
+
+    IntRect top_rect = {
+        a_rect.x() + top_left_radius,
+        a_rect.y(),
+        a_rect.width() - top_left_radius - top_right_radius, top_left_radius
+    };
+    IntRect right_rect = {
+        a_rect.x() + a_rect.width() - top_right_radius,
+        a_rect.y() + top_right_radius,
+        top_right_radius,
+        a_rect.height() - top_right_radius - bottom_right_radius
+    };
+    IntRect bottom_rect = {
+        a_rect.x() + bottom_left_radius,
+        a_rect.y() + a_rect.height() - bottom_right_radius,
+        a_rect.width() - bottom_left_radius - bottom_right_radius,
+        bottom_right_radius
+    };
+    IntRect left_rect = {
+        a_rect.x(),
+        a_rect.y() + top_left_radius,
+        bottom_left_radius,
+        a_rect.height() - top_left_radius - bottom_left_radius
+    };
+
+    IntRect inner = {
+        left_rect.x() + left_rect.width(),
+        left_rect.y(),
+        a_rect.width() - left_rect.width() - right_rect.width(),
+        a_rect.height() - top_rect.height() - bottom_rect.height()
+    };
+
+    fill_rect(top_rect, color);
+    fill_rect(right_rect, color);
+    fill_rect(bottom_rect, color);
+    fill_rect(left_rect, color);
+
+    fill_rect(inner, color);
+
+    if (top_left_radius)
+        fill_rounded_corner(top_left_corner, top_left_radius, color, CornerOrientation::TopLeft);
+    if (top_right_radius)
+        fill_rounded_corner(top_right_corner, top_right_radius, color, CornerOrientation::TopRight);
+    if (bottom_left_radius)
+        fill_rounded_corner(bottom_left_corner, bottom_left_radius, color, CornerOrientation::BottomLeft);
+    if (bottom_right_radius)
+        fill_rounded_corner(bottom_right_corner, bottom_right_radius, color, CornerOrientation::BottomRight);
+}
+
+void Painter::fill_rounded_corner(const IntRect& a_rect, int radius, Color color, CornerOrientation orientation)
+{
+    // Care about clipping
+    auto translated_a_rect = a_rect.translated(translation());
+    auto rect = translated_a_rect.intersected(clip_rect());
+
+    if (rect.is_empty())
+        return;
+    VERIFY(m_target->rect().contains(rect));
+
+    // We got cut on the top!
+    // FIXME: Also account for clipping on the x-axis
+    int clip_offset = 0;
+    if (translated_a_rect.y() < rect.y())
+        clip_offset = rect.y() - translated_a_rect.y();
+
+    radius *= scale();
+    rect *= scale();
+    clip_offset *= scale();
+
+    RGBA32* dst = m_target->scanline(rect.top()) + rect.left();
+    const size_t dst_skip = m_target->pitch() / sizeof(RGBA32);
+
+    IntPoint circle_center;
+    switch (orientation) {
+    case CornerOrientation::TopLeft:
+        circle_center = { radius, radius + 1 };
+        break;
+    case CornerOrientation::TopRight:
+        circle_center = { -1, radius + 1 };
+        break;
+    case CornerOrientation::BottomRight:
+        circle_center = { -1, 0 };
+        break;
+    case CornerOrientation::BottomLeft:
+        circle_center = { radius, 0 };
+        break;
+    default:
+        VERIFY_NOT_REACHED();
+    }
+
+    int radius2 = radius * radius;
+    auto is_in_circle = [&](int x, int y) {
+        int distance2 = (circle_center.x() - x) * (circle_center.x() - x) + (circle_center.y() - y) * (circle_center.y() - y);
+        // To reflect the grid and be compatible with the draw_circle_arc_intersecting algorithm
+        // add 1/2 to the radius
+        return distance2 <= (radius2 + radius + 0.25);
+    };
+
+    for (int i = rect.height() - 1; i >= 0; --i) {
+        for (int j = 0; j < rect.width(); ++j)
+            if (is_in_circle(j, rect.height() - i + clip_offset))
+                dst[j] = Color::from_rgba(dst[j]).blend(color).value();
+        dst += dst_skip;
+    }
+}
+
+void Painter::draw_circle_arc_intersecting(const IntRect& a_rect, const IntPoint& center, int radius, Color color, int thickness)
+{
+    if (thickness <= 0)
+        return;
+
+    // Care about clipping
+    auto translated_a_rect = a_rect.translated(translation());
+    auto rect = translated_a_rect.intersected(clip_rect());
+
+    if (rect.is_empty())
+        return;
+    VERIFY(m_target->rect().contains(rect));
+
+    // We got cut on the top!
+    // FIXME: Also account for clipping on the x-axis
+    int clip_offset = 0;
+    if (translated_a_rect.y() < rect.y())
+        clip_offset = rect.y() - translated_a_rect.y();
+
+    if (thickness > radius)
+        thickness = radius;
+
+    int radius2 = radius * radius;
+    auto is_on_arc = [&](int x, int y) {
+        int distance2 = (center.x() - x) * (center.x() - x) + (center.y() - y) * (center.y() - y);
+        // Is within a circle of radius 1/2 around (x,y), so basically within the current pixel.
+        // Technically this is angle-dependent and should be between 1/2 and sqrt(2)/2, but this works.
+        return distance2 <= (radius2 + radius + 0.25) && distance2 >= (radius2 - radius + 0.25);
+    };
+
+    RGBA32* dst = m_target->scanline(rect.top()) + rect.left();
+    const size_t dst_skip = m_target->pitch() / sizeof(RGBA32);
+
+    for (int i = rect.height() - 1; i >= 0; --i) {
+        for (int j = 0; j < rect.width(); ++j)
+            if (is_on_arc(j, rect.height() - i + clip_offset))
+                dst[j] = Color::from_rgba(dst[j]).blend(color).value();
+        dst += dst_skip;
+    }
+
+    return draw_circle_arc_intersecting(a_rect, center, radius - 1, color, thickness - 1);
 }
 
 void Painter::fill_ellipse(const IntRect& a_rect, Color color)
@@ -1047,6 +1238,7 @@ void draw_text_line(const IntRect& a_rect, const TextType& text, const Font& fon
     switch (alignment) {
     case TextAlignment::TopLeft:
     case TextAlignment::CenterLeft:
+    case TextAlignment::BottomLeft:
         break;
     case TextAlignment::TopRight:
     case TextAlignment::CenterRight:
@@ -1318,6 +1510,9 @@ void do_draw_text(const IntRect& rect, const TextType& text, const Font& font, T
         break;
     case TextAlignment::Center:
         bounding_rect.center_within(rect);
+        break;
+    case TextAlignment::BottomLeft:
+        bounding_rect.set_location({ rect.x(), (rect.bottom() + 1) - bounding_rect.height() });
         break;
     case TextAlignment::BottomRight:
         bounding_rect.set_location({ (rect.right() + 1) - bounding_rect.width(), (rect.bottom() + 1) - bounding_rect.height() });
@@ -1655,27 +1850,6 @@ void Painter::for_each_line_segment_on_bezier_curve(const FloatPoint& control_po
     for_each_line_segment_on_bezier_curve(control_point, p1, p2, callback);
 }
 
-static bool can_approximate_elliptical_arc(const FloatPoint& p1, const FloatPoint& p2, const FloatPoint& center, const FloatPoint radii, float x_axis_rotation, float theta_1, float theta_delta)
-{
-    constexpr static float tolerance = 0.3f;
-
-    auto half_theta_delta = theta_delta / 2.0f;
-
-    auto xc = cosf(x_axis_rotation);
-    auto xs = sinf(x_axis_rotation);
-    auto tc = cosf(theta_1 + half_theta_delta);
-    auto ts = sinf(theta_1 + half_theta_delta);
-
-    auto x2 = xc * radii.x() * tc - xs * radii.y() * ts + center.x();
-    auto y2 = xs * radii.x() * tc + xc * radii.y() * ts + center.y();
-
-    auto ellipse_mid_point = FloatPoint { x2, y2 };
-    auto line_mid_point = p1 + (p2 - p1) / 2.0f;
-
-    auto v = ellipse_mid_point.distance_from(line_mid_point);
-    return v < tolerance;
-}
-
 void Painter::draw_quadratic_bezier_curve(const IntPoint& control_point, const IntPoint& p1, const IntPoint& p2, Color color, int thickness, LineStyle style)
 {
     VERIFY(scale() == 1); // FIXME: Add scaling support.
@@ -1688,40 +1862,51 @@ void Painter::draw_quadratic_bezier_curve(const IntPoint& control_point, const I
 // static
 void Painter::for_each_line_segment_on_elliptical_arc(const FloatPoint& p1, const FloatPoint& p2, const FloatPoint& center, const FloatPoint radii, float x_axis_rotation, float theta_1, float theta_delta, Function<void(const FloatPoint&, const FloatPoint&)>& callback)
 {
-    struct SegmentDescriptor {
-        FloatPoint p1;
-        FloatPoint p2;
-        float theta;
-        float theta_delta;
-    };
+    if (radii.x() <= 0 || radii.y() <= 0)
+        return;
 
-    static constexpr auto split_elliptical_arc = [](const FloatPoint& p1, const FloatPoint& p2, const FloatPoint& center, const FloatPoint radii, float x_axis_rotation, float theta_1, float theta_delta, auto& segments) {
-        auto half_theta_delta = theta_delta / 2;
-        auto theta_mid = theta_1 + half_theta_delta;
+    auto start = p1;
+    auto end = p2;
 
-        auto xc = cosf(x_axis_rotation);
-        auto xs = sinf(x_axis_rotation);
-        auto tc = cosf(theta_1 + half_theta_delta);
-        auto ts = sinf(theta_1 + half_theta_delta);
-
-        auto x2 = xc * radii.x() * tc - xs * radii.y() * ts + center.x();
-        auto y2 = xs * radii.x() * tc + xc * radii.y() * ts + center.y();
-
-        FloatPoint mid_point = { x2, y2 };
-
-        segments.enqueue({ p1, mid_point, theta_1, half_theta_delta });
-        segments.enqueue({ mid_point, p2, theta_mid, half_theta_delta });
-    };
-
-    Queue<SegmentDescriptor> segments;
-    segments.enqueue({ p1, p2, theta_1, theta_delta });
-    while (!segments.is_empty()) {
-        auto segment = segments.dequeue();
-        if (can_approximate_elliptical_arc(segment.p1, segment.p2, center, radii, x_axis_rotation, segment.theta, segment.theta_delta))
-            callback(segment.p1, segment.p2);
-        else
-            split_elliptical_arc(segment.p1, segment.p2, center, radii, x_axis_rotation, segment.theta, segment.theta_delta, segments);
+    if (theta_delta < 0) {
+        swap(start, end);
+        theta_1 = theta_1 + theta_delta;
+        theta_delta = fabs(theta_delta);
     }
+
+    auto relative_start = start - center;
+
+    auto a = radii.x();
+    auto b = radii.y();
+
+    // The segments are at most 1 long
+    auto largest_radius = max(a, b);
+    double theta_step = atan(1 / (double)largest_radius);
+
+    FloatPoint current_point = relative_start;
+    FloatPoint next_point = { 0, 0 };
+
+    auto sin_x_axis = sinf(x_axis_rotation);
+    auto cos_x_axis = cosf(x_axis_rotation);
+    auto rotate_point = [sin_x_axis, cos_x_axis](FloatPoint& p) {
+        auto original_x = p.x();
+        auto original_y = p.y();
+
+        p.set_x(original_x * cos_x_axis - original_y * sin_x_axis);
+        p.set_y(original_x * sin_x_axis + original_y * cos_x_axis);
+    };
+
+    for (double theta = theta_1; theta <= ((double)theta_1 + (double)theta_delta); theta += theta_step) {
+        next_point.set_x(a * cosf(theta));
+        next_point.set_y(b * sinf(theta));
+        rotate_point(next_point);
+
+        callback(current_point + center, next_point + center);
+
+        current_point = next_point;
+    }
+
+    callback(current_point + center, end);
 }
 
 // static
@@ -2038,5 +2223,4 @@ void Gfx::Painter::draw_ui_text(const Gfx::IntRect& rect, const StringView& text
         }
     }
 }
-
 }

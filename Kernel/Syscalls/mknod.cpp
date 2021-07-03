@@ -10,7 +10,7 @@
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$mknod(Userspace<const Syscall::SC_mknod_params*> user_params)
+KResultOr<FlatPtr> Process::sys$mknod(Userspace<const Syscall::SC_mknod_params*> user_params)
 {
     REQUIRE_PROMISE(dpath);
     Syscall::SC_mknod_params params;
@@ -21,7 +21,7 @@ KResultOr<int> Process::sys$mknod(Userspace<const Syscall::SC_mknod_params*> use
     auto path = get_syscall_path_argument(params.path);
     if (path.is_error())
         return path.error();
-    return VFS::the().mknod(path.value(), params.mode & ~umask(), params.dev, current_directory());
+    return VFS::the().mknod(path.value()->view(), params.mode & ~umask(), params.dev, current_directory());
 }
 
 }

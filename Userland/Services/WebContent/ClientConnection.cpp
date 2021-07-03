@@ -6,7 +6,9 @@
 
 #include <AK/Badge.h>
 #include <AK/Debug.h>
+#include <AK/JsonObject.h>
 #include <LibGfx/Bitmap.h>
+#include <LibGfx/FontDatabase.h>
 #include <LibGfx/SystemTheme.h>
 #include <LibJS/Console.h>
 #include <LibJS/Heap/Heap.h>
@@ -19,7 +21,7 @@
 #include <LibWeb/Dump.h>
 #include <LibWeb/Layout/InitialContainingBlockBox.h>
 #include <LibWeb/Loader/ResourceLoader.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 #include <WebContent/ClientConnection.h>
 #include <WebContent/PageHost.h>
 #include <WebContent/WebContentClientEndpoint.h>
@@ -58,10 +60,6 @@ const Web::Page& ClientConnection::page() const
     return m_page_host->page();
 }
 
-void ClientConnection::greet()
-{
-}
-
 void ClientConnection::update_system_theme(const Core::AnonymousBuffer& theme_buffer)
 {
     Gfx::set_system_theme(theme_buffer);
@@ -69,9 +67,15 @@ void ClientConnection::update_system_theme(const Core::AnonymousBuffer& theme_bu
     m_page_host->set_palette_impl(*impl);
 }
 
-void ClientConnection::update_screen_rect(const Gfx::IntRect& rect)
+void ClientConnection::update_system_fonts(String const& default_font_query, String const& fixed_width_font_query)
 {
-    m_page_host->set_screen_rect(rect);
+    Gfx::FontDatabase::set_default_font_query(default_font_query);
+    Gfx::FontDatabase::set_fixed_width_font_query(fixed_width_font_query);
+}
+
+void ClientConnection::update_screen_rects(const Vector<Gfx::IntRect>& rects, u32 main_screen)
+{
+    m_page_host->set_screen_rects(rects, main_screen);
 }
 
 void ClientConnection::load_url(const URL& url)
@@ -168,19 +172,19 @@ void ClientConnection::key_down(i32 key, unsigned int modifiers, u32 code_point)
 void ClientConnection::debug_request(const String& request, const String& argument)
 {
     if (request == "dump-dom-tree") {
-        if (auto* doc = page().main_frame().document())
+        if (auto* doc = page().top_level_browsing_context().document())
             Web::dump_tree(*doc);
     }
 
     if (request == "dump-layout-tree") {
-        if (auto* doc = page().main_frame().document()) {
+        if (auto* doc = page().top_level_browsing_context().document()) {
             if (auto* icb = doc->layout_node())
                 Web::dump_tree(*icb);
         }
     }
 
     if (request == "dump-style-sheets") {
-        if (auto* doc = page().main_frame().document()) {
+        if (auto* doc = page().top_level_browsing_context().document()) {
             for (auto& sheet : doc->style_sheets().sheets()) {
                 Web::dump_sheet(sheet);
             }
@@ -194,7 +198,7 @@ void ClientConnection::debug_request(const String& request, const String& argume
     if (request == "set-line-box-borders") {
         bool state = argument == "on";
         m_page_host->set_should_show_line_box_borders(state);
-        page().main_frame().set_needs_display(page().main_frame().viewport_rect());
+        page().top_level_browsing_context().set_needs_display(page().top_level_browsing_context().viewport_rect());
     }
 
     if (request == "clear-cache") {
@@ -208,14 +212,21 @@ void ClientConnection::debug_request(const String& request, const String& argume
 
 void ClientConnection::get_source()
 {
-    if (auto* doc = page().main_frame().document()) {
+    if (auto* doc = page().top_level_browsing_context().document()) {
         async_did_get_source(doc->url(), doc->source());
+    }
+}
+
+void ClientConnection::inspect_dom_tree()
+{
+    if (auto* doc = page().top_level_browsing_context().document()) {
+        async_did_get_dom_tree(doc->dump_dom_tree_as_json());
     }
 }
 
 void ClientConnection::js_console_initialize()
 {
-    if (auto* document = page().main_frame().document()) {
+    if (auto* document = page().top_level_browsing_context().document()) {
         auto interpreter = document->interpreter().make_weak_ptr();
         if (m_interpreter.ptr() == interpreter.ptr())
             return;

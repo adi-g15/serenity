@@ -1,11 +1,12 @@
+#include <LibCore/AnonymousBuffer.h>
+#include <LibGfx/ShareableBitmap.h>
+
 endpoint WindowServer
 {
-    greet() => (Gfx::IntRect screen_rect, Core::AnonymousBuffer theme_buffer)
-
-    create_menubar() => (i32 menubar_id)
+    create_menubar(i32 menubar_id) =|
     destroy_menubar(i32 menubar_id) =|
 
-    create_menu([UTF8] String menu_title) => (i32 menu_id)
+    create_menu(i32 menu_id, [UTF8] String menu_title) =|
     destroy_menu(i32 menu_id) =|
 
     add_menu_to_menubar(i32 menubar_id, i32 menu_id) =|
@@ -28,6 +29,7 @@ endpoint WindowServer
     update_menu_item(i32 menu_id, i32 identifier, i32 submenu_id, [UTF8] String text, bool enabled, bool checkable, bool checked, bool is_default, [UTF8] String shortcut) =|
 
     create_window(
+        i32 window_id,
         Gfx::IntRect rect,
         bool auto_position,
         bool has_alpha_channel,
@@ -45,7 +47,8 @@ endpoint WindowServer
         Optional<Gfx::IntSize> resize_aspect_ratio,
         i32 type,
         [UTF8] String title,
-        i32 parent_window_id) => (i32 window_id)
+        i32 parent_window_id,
+        Gfx::IntRect launch_origin_rect) =|
 
     destroy_window(i32 window_id) => (Vector<i32> destroyed_window_ids)
 
@@ -70,6 +73,7 @@ endpoint WindowServer
     start_window_resize(i32 window_id) =|
 
     is_maximized(i32 window_id) => (bool maximized)
+    set_maximized(i32 window_id, bool maximized) =|
 
     invalidate_rect(i32 window_id, Vector<Gfx::IntRect> rects, bool ignore_occlusion) =|
     did_finish_painting(i32 window_id, Vector<Gfx::IntRect> rects) =|
@@ -93,7 +97,14 @@ endpoint WindowServer
     set_background_color(String background_color) =|
     set_wallpaper_mode(String mode) =|
 
-    set_resolution(Gfx::IntSize resolution, int scale_factor) => (bool success, Gfx::IntSize resolution, int scale_factor)
+    set_screen_layout(::WindowServer::ScreenLayout screen_layout, bool save) => (bool success, String error_msg)
+    get_screen_layout() => (::WindowServer::ScreenLayout screen_layout)
+    save_screen_layout() => (bool success, String error_msg)
+    show_screen_numbers(bool show) =|
+
+    apply_virtual_desktop_settings(u32 rows, u32 columns, bool save) => (bool success)
+    get_virtual_desktop_settings() => (u32 rows, u32 columns, u32 max_rows, u32 max_columns)
+
     set_window_icon_bitmap(i32 window_id, Gfx::ShareableBitmap icon) =|
 
     get_wallpaper() => (String path)
@@ -105,6 +116,8 @@ endpoint WindowServer
     set_system_theme(String theme_path, [UTF8] String theme_name) => (bool success)
     get_system_theme() => ([UTF8] String theme_name)
     refresh_system_theme() =|
+
+    set_system_fonts(String default_font_query, String fixed_width_font_query) => (bool success)
 
     set_window_base_size_and_size_increment(i32 window_id, Gfx::IntSize base_size, Gfx::IntSize size_increment) =|
     set_window_resize_aspect_ratio(i32 window_id, Optional<Gfx::IntSize> resize_aspect_ratio) =|
@@ -120,10 +133,13 @@ endpoint WindowServer
     set_scroll_step_size(u32 step_size) => ()
     get_scroll_step_size() => (u32 step_size)
 
-    get_screen_bitmap() => (Gfx::ShareableBitmap bitmap)
+    get_screen_bitmap(Optional<Gfx::IntRect> rect, Optional<u32> screen_index) => (Gfx::ShareableBitmap bitmap)
+    get_screen_bitmap_around_cursor(Gfx::IntSize size) => (Gfx::ShareableBitmap bitmap)
 
     pong() =|
 
     set_double_click_speed(int speed) => ()
     get_double_click_speed() => (int speed)
+
+    get_desktop_display_scale(u32 screen_index) => (int desktop_display_scale)
 }

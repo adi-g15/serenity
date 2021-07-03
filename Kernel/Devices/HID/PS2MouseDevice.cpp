@@ -10,6 +10,7 @@
 #include <Kernel/Devices/HID/PS2MouseDevice.h>
 #include <Kernel/Devices/VMWareBackdoor.h>
 #include <Kernel/IO.h>
+#include <Kernel/Sections.h>
 
 namespace Kernel {
 
@@ -40,11 +41,11 @@ UNMAP_AFTER_INIT PS2MouseDevice::~PS2MouseDevice()
 {
 }
 
-void PS2MouseDevice::handle_irq(const RegisterState&)
+bool PS2MouseDevice::handle_irq(const RegisterState&)
 {
     // The controller will read the data and call irq_handle_byte_read
     // for the appropriate device
-    m_i8042_controller->irq_process_input_buffer(instrument_type());
+    return m_i8042_controller->irq_process_input_buffer(instrument_type());
 }
 
 void PS2MouseDevice::irq_handle_byte_read(u8 byte)

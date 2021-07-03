@@ -7,9 +7,11 @@
 #include <AK/Memory.h>
 #include <AK/Singleton.h>
 #include <AK/StringView.h>
+#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Devices/SB16.h>
 #include <Kernel/IO.h>
+#include <Kernel/Sections.h>
 #include <Kernel/Thread.h>
 #include <Kernel/VM/AnonymousVMObject.h>
 #include <Kernel/VM/MemoryManager.h>
@@ -200,13 +202,18 @@ void SB16::dma_start(uint32_t length)
 
     // Write the buffer
     IO::out8(0x8b, addr >> 16);
+    auto page_number = addr >> 16;
+    VERIFY(page_number <= NumericLimits<u8>::max());
+    IO::out8(0x8b, page_number);
 
     // Enable the DMA channel
     IO::out8(0xd4, (channel % 4));
 }
 
-void SB16::handle_irq(const RegisterState&)
+bool SB16::handle_irq(const RegisterState&)
 {
+    // FIXME: Check if the interrupt was actually for us or not... (shared IRQs)
+
     // Stop sound output ready for the next block.
     dsp_write(0xd5);
 
@@ -215,6 +222,7 @@ void SB16::handle_irq(const RegisterState&)
         IO::in8(DSP_R_ACK); // 16 bit interrupt
 
     m_irq_queue.wake_all();
+    return true;
 }
 
 void SB16::wait_for_irq()
@@ -230,6 +238,8 @@ KResultOr<size_t> SB16::write(FileDescription&, u64, const UserOrKernelBuffer& d
         if (!page)
             return ENOMEM;
         auto vmobject = AnonymousVMObject::create_with_physical_page(*page);
+        if (!vmobject)
+            return ENOMEM;
         m_dma_region = MM.allocate_kernel_region_with_vmobject(*vmobject, PAGE_SIZE, "SB16 DMA buffer", Region::Access::Write);
         if (!m_dma_region)
             return ENOMEM;

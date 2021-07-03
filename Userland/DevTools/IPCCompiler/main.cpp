@@ -58,19 +58,18 @@ struct Message {
 };
 
 struct Endpoint {
+    Vector<String> includes;
     String name;
     u32 magic;
     Vector<Message> messages;
 };
 
-bool is_primitive_type(String const& type)
+static bool is_primitive_type(String const& type)
 {
-    return (type == "u8" || type == "i8" || type == "u16" || type == "i16"
-        || type == "u32" || type == "i32" || type == "bool" || type == "double"
-        || type == "float" || type == "int" || type == "unsigned" || type == "unsigned int");
+    return type.is_one_of("u8", "i8", "u16", "i16", "u32", "i32", "u64", "i64", "bool", "double", "float", "int", "unsigned", "unsigned int");
 }
 
-String message_name(String const& endpoint, String& message, bool is_response)
+static String message_name(String const& endpoint, String& message, bool is_response)
 {
     StringBuilder builder;
     builder.append("Messages::");
@@ -90,7 +89,7 @@ int main(int argc, char** argv)
     }
 
     auto file = Core::File::construct(argv[1]);
-    if (!file->open(Core::IODevice::ReadOnly)) {
+    if (!file->open(Core::OpenMode::ReadOnly)) {
         warnln("Error: Cannot open {}: {}", argv[1], file->error_string());
         return 1;
     }
@@ -192,15 +191,36 @@ int main(int argc, char** argv)
     auto parse_messages = [&] {
         for (;;) {
             consume_whitespace();
-            parse_message();
-            consume_whitespace();
             if (lexer.peek() == '}')
                 break;
+            parse_message();
+            consume_whitespace();
+        }
+    };
+
+    auto parse_include = [&] {
+        String include;
+        consume_whitespace();
+        include = lexer.consume_while([](char ch) { return ch != '\n'; });
+        consume_whitespace();
+
+        endpoints.last().includes.append(move(include));
+    };
+
+    auto parse_includes = [&] {
+        for (;;) {
+            consume_whitespace();
+            if (lexer.peek() != '#')
+                break;
+            parse_include();
+            consume_whitespace();
         }
     };
 
     auto parse_endpoint = [&] {
         endpoints.empend();
+        consume_whitespace();
+        parse_includes();
         consume_whitespace();
         lexer.consume_specific("endpoint");
         consume_whitespace();
@@ -243,17 +263,20 @@ int main(int argc, char** argv)
     StringBuilder builder;
     SourceGenerator generator { builder };
 
-    generator.append(R"~~~(
-#pragma once
-#include <AK/MemoryStream.h>
+    generator.append("#pragma once\n");
+
+    // This must occur before LibIPC/Decoder.h
+    for (auto& endpoint : endpoints) {
+        for (auto& include : endpoint.includes) {
+            generator.append(include);
+            generator.append("\n");
+        }
+    }
+
+    generator.append(R"~~~(#include <AK/MemoryStream.h>
 #include <AK/OwnPtr.h>
 #include <AK/Result.h>
-#include <AK/URL.h>
 #include <AK/Utf8View.h>
-#include <LibCore/AnonymousBuffer.h>
-#include <LibGfx/Color.h>
-#include <LibGfx/Rect.h>
-#include <LibGfx/ShareableBitmap.h>
 #include <LibIPC/Connection.h>
 #include <LibIPC/Decoder.h>
 #include <LibIPC/Dictionary.h>
@@ -368,7 +391,7 @@ public:
     static i32 static_message_id() { return (int)MessageID::@message.pascal_name@; }
     virtual const char* message_name() const override { return "@endpoint.name@::@message.pascal_name@"; }
 
-    static OwnPtr<@message.pascal_name@> decode(InputMemoryStream& stream, int sockfd)
+    static OwnPtr<@message.pascal_name@> decode(InputMemoryStream& stream, [[maybe_unused]] int sockfd)
     {
         IPC::Decoder decoder { stream, sockfd };
 )~~~");
@@ -448,6 +471,7 @@ public:
                 parameter_generator.set("parameter.name", parameter.name);
                 parameter_generator.append(R"~~~(
     const @parameter.type@& @parameter.name@() const { return m_@parameter.name@; }
+    @parameter.type@ take_@parameter.name@() { return move(m_@parameter.name@); }
 )~~~");
             }
 
@@ -573,7 +597,7 @@ public:
                     }
 
                     if (message.outputs.size() == 1) {
-                        message_generator.append("->");
+                        message_generator.append("->take_");
                         message_generator.append(message.outputs[0].name);
                         message_generator.append("()");
                     } else
@@ -630,7 +654,7 @@ public:
 
     static u32 static_magic() { return @endpoint.magic@; }
 
-    static OwnPtr<IPC::Message> decode_message(ReadonlyBytes buffer, int sockfd)
+    static OwnPtr<IPC::Message> decode_message(ReadonlyBytes buffer, [[maybe_unused]] int sockfd)
     {
         InputMemoryStream stream { buffer };
         u32 message_endpoint_magic = 0;

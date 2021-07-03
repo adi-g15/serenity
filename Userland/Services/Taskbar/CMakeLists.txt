@@ -1,3 +1,9 @@
+serenity_component(
+    Taskbar
+    REQUIRED
+    TARGETS Taskbar
+)
+
 set(SOURCES
     main.cpp
     ClockWidget.cpp
@@ -9,3 +15,4 @@ set(SOURCES
 
 serenity_bin(Taskbar)
 target_link_libraries(Taskbar LibGUI LibDesktop)
+serenity_install_headers(Services/Taskbar)

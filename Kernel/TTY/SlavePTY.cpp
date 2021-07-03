@@ -31,7 +31,7 @@ SlavePTY::~SlavePTY()
     DevPtsFS::unregister_slave_pty(*this);
 }
 
-String SlavePTY::tty_name() const
+String const& SlavePTY::tty_name() const
 {
     return m_tty_name;
 }
@@ -40,22 +40,22 @@ void SlavePTY::echo(u8 ch)
 {
     if (should_echo_input()) {
         auto buffer = UserOrKernelBuffer::for_kernel_buffer(&ch);
-        m_master->on_slave_write(buffer, 1);
+        [[maybe_unused]] auto result = m_master->on_slave_write(buffer, 1);
     }
 }
 
-void SlavePTY::on_master_write(const UserOrKernelBuffer& buffer, ssize_t size)
+void SlavePTY::on_master_write(const UserOrKernelBuffer& buffer, size_t size)
 {
-    ssize_t nread = buffer.read_buffered<128>(size, [&](const u8* data, size_t data_size) {
+    auto result = buffer.read_buffered<128>(size, [&](u8 const* data, size_t data_size) {
         for (size_t i = 0; i < data_size; ++i)
             emit(data[i], false);
-        return (ssize_t)data_size;
+        return data_size;
     });
-    if (nread > 0)
+    if (!result.is_error())
         evaluate_block_conditions();
 }
 
-ssize_t SlavePTY::on_tty_write(const UserOrKernelBuffer& data, ssize_t size)
+KResultOr<size_t> SlavePTY::on_tty_write(const UserOrKernelBuffer& data, size_t size)
 {
     m_time_of_last_write = kgettimeofday().to_truncated_seconds();
     return m_master->on_slave_write(data, size);

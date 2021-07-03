@@ -21,7 +21,7 @@
 #include <LibCore/LocalSocket.h>
 #include <LibCore/Notifier.h>
 #include <LibCore/Object.h>
-#include <LibThread/Lock.h>
+#include <LibThreading/Lock.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -37,7 +37,9 @@
 
 namespace Core {
 
-class RPCClient;
+class InspectorServerConnection;
+
+[[maybe_unused]] static bool connect_to_inspector_server();
 
 struct EventLoopTimer {
     int timer_id { 0 };
@@ -52,17 +54,16 @@ struct EventLoopTimer {
 };
 
 struct EventLoop::Private {
-    LibThread::Lock lock;
+    Threading::Lock lock;
 };
 
 static EventLoop* s_main_event_loop;
-static Vector<EventLoop*>* s_event_loop_stack;
+static Vector<EventLoop&>* s_event_loop_stack;
 static NeverDestroyed<IDAllocator> s_id_allocator;
 static HashMap<int, NonnullOwnPtr<EventLoopTimer>>* s_timers;
 static HashTable<Notifier*>* s_notifiers;
 int EventLoop::s_wake_pipe_fds[2];
-static RefPtr<LocalServer> s_rpc_server;
-HashMap<int, RefPtr<RPCClient>> s_rpc_clients;
+static RefPtr<InspectorServerConnection> s_inspector_server_connection;
 
 class SignalHandlers : public RefCounted<SignalHandlers> {
     AK_MAKE_NONCOPYABLE(SignalHandlers);
@@ -111,24 +112,23 @@ struct SignalHandlersInfo {
     int next_signal_id { 0 };
 };
 
+static AK::Singleton<SignalHandlersInfo> s_signals;
 template<bool create_if_null = true>
 inline SignalHandlersInfo* signals_info()
 {
-    static SignalHandlersInfo* s_signals;
-    return AK::Singleton<SignalHandlersInfo>::get(s_signals);
+    return s_signals.ptr();
 }
 
 pid_t EventLoop::s_pid;
 
-class RPCClient : public Object {
-    C_OBJECT(RPCClient)
+class InspectorServerConnection : public Object {
+    C_OBJECT(InspectorServerConnection)
 public:
-    explicit RPCClient(RefPtr<LocalSocket> socket)
+    explicit InspectorServerConnection(RefPtr<LocalSocket> socket)
         : m_socket(move(socket))
         , m_client_id(s_id_allocator->allocate())
     {
 #ifdef __serenity__
-        s_rpc_clients.set(m_client_id, this);
         add_child(*m_socket);
         m_socket->on_ready_to_read = [this] {
             u32 length;
@@ -154,7 +154,7 @@ public:
         warnln("RPC Client constructed outside serenity, this is very likely a bug!");
 #endif
     }
-    virtual ~RPCClient() override
+    virtual ~InspectorServerConnection() override
     {
         if (auto inspected_object = m_inspected_object.strong_ref())
             inspected_object->decrement_inspector_count({});
@@ -244,7 +244,6 @@ public:
 
     void shutdown()
     {
-        s_rpc_clients.remove(m_client_id);
         s_id_allocator->deallocate(m_client_id);
     }
 
@@ -254,11 +253,11 @@ private:
     int m_client_id { -1 };
 };
 
-EventLoop::EventLoop()
+EventLoop::EventLoop([[maybe_unused]] MakeInspectable make_inspectable)
     : m_private(make<Private>())
 {
     if (!s_event_loop_stack) {
-        s_event_loop_stack = new Vector<EventLoop*>;
+        s_event_loop_stack = new Vector<EventLoop&>;
         s_timers = new HashMap<int, NonnullOwnPtr<EventLoopTimer>>;
         s_notifiers = new HashTable<Notifier*>;
     }
@@ -275,12 +274,14 @@ EventLoop::EventLoop()
 
 #endif
         VERIFY(rc == 0);
-        s_event_loop_stack->append(this);
+        s_event_loop_stack->append(*this);
 
 #ifdef __serenity__
-        if (!s_rpc_server) {
-            if (!start_rpc_server())
-                dbgln("Core::EventLoop: Failed to start an RPC server");
+        if (getuid() != 0
+            && make_inspectable == MakeInspectable::Yes
+            && !s_inspector_server_connection) {
+            if (!connect_to_inspector_server())
+                dbgln("Core::EventLoop: Failed to connect to InspectorServer");
         }
 #endif
     }
@@ -292,15 +293,14 @@ EventLoop::~EventLoop()
 {
 }
 
-bool EventLoop::start_rpc_server()
+bool connect_to_inspector_server()
 {
 #ifdef __serenity__
-    s_rpc_server = LocalServer::construct();
-    s_rpc_server->set_name("Core::EventLoop_RPC_server");
-    s_rpc_server->on_ready_to_accept = [&] {
-        RPCClient::construct(s_rpc_server->accept());
-    };
-    return s_rpc_server->listen(String::formatted("/tmp/rpc/{}", getpid()));
+    auto socket = Core::LocalSocket::construct();
+    if (!socket->connect(SocketAddress::local("/tmp/portal/inspectables")))
+        return false;
+    s_inspector_server_connection = InspectorServerConnection::construct(move(socket));
+    return true;
 #else
     VERIFY_NOT_REACHED();
 #endif
@@ -314,9 +314,7 @@ EventLoop& EventLoop::main()
 
 EventLoop& EventLoop::current()
 {
-    EventLoop* event_loop = s_event_loop_stack->last();
-    VERIFY(event_loop != nullptr);
-    return *event_loop;
+    return s_event_loop_stack->last();
 }
 
 void EventLoop::quit(int code)
@@ -340,7 +338,7 @@ public:
     {
         if (&m_event_loop != s_main_event_loop) {
             m_event_loop.take_pending_events_from(EventLoop::current());
-            s_event_loop_stack->append(&event_loop);
+            s_event_loop_stack->append(event_loop);
         }
     }
     ~EventLoopPusher()
@@ -372,7 +370,7 @@ void EventLoop::pump(WaitMode mode)
 
     decltype(m_queued_events) events;
     {
-        LibThread::Locker locker(m_private->lock);
+        Threading::Locker locker(m_private->lock);
         events = move(m_queued_events);
     }
 
@@ -401,13 +399,13 @@ void EventLoop::pump(WaitMode mode)
         }
 
         if (m_exit_requested) {
-            LibThread::Locker locker(m_private->lock);
+            Threading::Locker locker(m_private->lock);
             dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop: Exit requested. Rejigging {} events.", events.size() - i);
             decltype(m_queued_events) new_event_queue;
             new_event_queue.ensure_capacity(m_queued_events.size() + events.size());
             for (++i; i < events.size(); ++i)
                 new_event_queue.unchecked_append(move(events[i]));
-            new_event_queue.append(move(m_queued_events));
+            new_event_queue.extend(move(m_queued_events));
             m_queued_events = move(new_event_queue);
             return;
         }
@@ -416,7 +414,7 @@ void EventLoop::pump(WaitMode mode)
 
 void EventLoop::post_event(Object& receiver, NonnullOwnPtr<Event>&& event)
 {
-    LibThread::Locker lock(m_private->lock);
+    Threading::Locker lock(m_private->lock);
     dbgln_if(EVENTLOOP_DEBUG, "Core::EventLoop::post_event: ({}) << receivier={}, event={}", m_queued_events.size(), receiver, event);
     m_queued_events.empend(receiver, move(event));
 }
@@ -563,8 +561,7 @@ void EventLoop::notify_forked(ForkEvent event)
         }
         s_pid = 0;
 #ifdef __serenity__
-        s_rpc_server = nullptr;
-        s_rpc_clients.clear();
+        s_inspector_server_connection = nullptr;
 #endif
         return;
     }
@@ -601,7 +598,7 @@ retry:
 
     bool queued_events_is_empty;
     {
-        LibThread::Locker locker(m_private->lock);
+        Threading::Locker locker(m_private->lock);
         queued_events_is_empty = m_queued_events.is_empty();
     }
 

@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Optional.h>
 #include <LibCore/ConfigFile.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/MessageBox.h>
@@ -75,16 +76,18 @@ private:
         }
     };
 
+    constexpr static int score_margin = 5;
+
     Gfx::IntRect player_1_score_rect() const
     {
         int score_width = font().width(String::formatted("{}", m_player_1_score));
-        return { (game_width / 2) + score_width + 2, 2, score_width, font().glyph_height() };
+        return { (game_width / 2) + score_margin, score_margin, score_width, font().glyph_height() };
     }
 
     Gfx::IntRect player_2_score_rect() const
     {
         int score_width = font().width(String::formatted("{}", m_player_2_score));
-        return { (game_width / 2) - score_width - 2, 2, score_width, font().glyph_height() };
+        return { (game_width / 2) - score_width - score_margin, score_margin, score_width, font().glyph_height() };
     }
 
     Net m_net;
@@ -95,6 +98,10 @@ private:
     int m_score_to_win = 21;
     int m_player_1_score = 0;
     int m_player_2_score = 0;
+
+    Optional<int> m_cursor_paddle_target_y;
+    bool m_up_key_held = false;
+    bool m_down_key_held = false;
 };
 
 }

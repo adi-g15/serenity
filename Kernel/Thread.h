@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Concepts.h>
 #include <AK/EnumBits.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
@@ -18,9 +19,10 @@
 #include <AK/Vector.h>
 #include <AK/WeakPtr.h>
 #include <AK/Weakable.h>
-#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/Arch/x86/RegisterState.h>
 #include <Kernel/Arch/x86/SafeMem.h>
 #include <Kernel/Debug.h>
+#include <Kernel/FileSystem/InodeIdentifier.h>
 #include <Kernel/Forward.h>
 #include <Kernel/KResult.h>
 #include <Kernel/LockMode.h>
@@ -28,6 +30,7 @@
 #include <Kernel/ThreadTracer.h>
 #include <Kernel/TimerQueue.h>
 #include <Kernel/UnixTypes.h>
+#include <Kernel/VM/Range.h>
 #include <LibC/fd_set.h>
 #include <LibC/signal_numbers.h>
 
@@ -59,6 +62,53 @@ struct ThreadSpecificData {
 #define THREAD_PRIORITY_MAX 99
 
 #define THREAD_AFFINITY_DEFAULT 0xffffffff
+
+struct ThreadRegisters {
+#if ARCH(I386)
+    FlatPtr ss;
+    FlatPtr gs;
+    FlatPtr fs;
+    FlatPtr es;
+    FlatPtr ds;
+    FlatPtr edi;
+    FlatPtr esi;
+    FlatPtr ebp;
+    FlatPtr esp;
+    FlatPtr ebx;
+    FlatPtr edx;
+    FlatPtr ecx;
+    FlatPtr eax;
+    FlatPtr eip;
+    FlatPtr esp0;
+    FlatPtr ss0;
+#else
+    FlatPtr rdi;
+    FlatPtr rsi;
+    FlatPtr rbp;
+    FlatPtr rsp;
+    FlatPtr rbx;
+    FlatPtr rdx;
+    FlatPtr rcx;
+    FlatPtr rax;
+    FlatPtr r8;
+    FlatPtr r9;
+    FlatPtr r10;
+    FlatPtr r11;
+    FlatPtr r12;
+    FlatPtr r13;
+    FlatPtr r14;
+    FlatPtr r15;
+    FlatPtr rip;
+    FlatPtr rsp0;
+#endif
+    FlatPtr cs;
+#if ARCH(I386)
+    FlatPtr eflags;
+#else
+    FlatPtr rflags;
+#endif
+    FlatPtr cr3;
+};
 
 class Thread
     : public RefCounted<Thread>
@@ -746,8 +796,9 @@ public:
     DebugRegisterState& debug_register_state() { return m_debug_register_state; }
     const DebugRegisterState& debug_register_state() const { return m_debug_register_state; }
 
-    TSS& tss() { return m_tss; }
-    const TSS& tss() const { return m_tss; }
+    ThreadRegisters& regs() { return m_regs; }
+    ThreadRegisters const& regs() const { return m_regs; }
+
     State state() const { return m_state; }
     const char* state_string() const;
 
@@ -790,7 +841,7 @@ public:
         // Relaxed semantics are fine for timeout_unblocked because we
         // synchronize on the spin locks already.
         Atomic<bool, AK::MemoryOrder::memory_order_relaxed> timeout_unblocked(false);
-        RefPtr<Timer> timer;
+        bool timer_was_added = false;
         {
             switch (state()) {
             case Thread::Stopped:
@@ -816,7 +867,7 @@ public:
             if (!block_timeout.is_infinite()) {
                 // Process::kill_all_threads may be called at any time, which will mark all
                 // threads to die. In that case
-                timer = TimerQueue::the().add_timer_without_id(block_timeout.clock_id(), block_timeout.absolute_time(), [&]() {
+                timer_was_added = TimerQueue::the().add_timer_without_id(*m_block_timer, block_timeout.clock_id(), block_timeout.absolute_time(), [&]() {
                     VERIFY(!Processor::current().in_irq());
                     VERIFY(!g_scheduler_lock.own_lock());
                     VERIFY(!m_block_lock.own_lock());
@@ -826,7 +877,7 @@ public:
                     if (m_blocker && timeout_unblocked.exchange(true) == false)
                         unblock();
                 });
-                if (!timer) {
+                if (!timer_was_added) {
                     // Timeout is already in the past
                     blocker.not_blocking(true);
                     m_blocker = nullptr;
@@ -889,11 +940,11 @@ public:
         // to clean up now while we're still holding m_lock
         auto result = blocker.end_blocking({}, did_timeout); // calls was_unblocked internally
 
-        if (timer && !did_timeout) {
+        if (timer_was_added && !did_timeout) {
             // Cancel the timer while not holding any locks. This allows
             // the timer function to complete before we remove it
             // (e.g. if it's on another processor)
-            TimerQueue::the().cancel_timer(timer.release_nonnull());
+            TimerQueue::the().cancel_timer(*m_block_timer);
         }
         if (previous_locked != LockMode::Unlocked) {
             // NOTE: this may trigger another call to Thread::block(), so
@@ -1044,9 +1095,14 @@ public:
 
     RefPtr<Thread> clone(Process&);
 
-    template<typename Callback>
+    template<IteratorFunction<Thread&> Callback>
     static IterationDecision for_each_in_state(State, Callback);
-    template<typename Callback>
+    template<IteratorFunction<Thread&> Callback>
+    static IterationDecision for_each(Callback);
+
+    template<VoidFunction<Thread&> Callback>
+    static IterationDecision for_each_in_state(State, Callback);
+    template<VoidFunction<Thread&> Callback>
     static IterationDecision for_each(Callback);
 
     static constexpr u32 default_kernel_stack_size = 65536;
@@ -1114,8 +1170,25 @@ public:
     void set_idle_thread() { m_is_idle_thread = true; }
     bool is_idle_thread() const { return m_is_idle_thread; }
 
+    ALWAYS_INLINE u32 enter_profiler()
+    {
+        return m_nested_profiler_calls.fetch_add(1, AK::MemoryOrder::memory_order_acq_rel);
+    }
+
+    ALWAYS_INLINE u32 leave_profiler()
+    {
+        return m_nested_profiler_calls.fetch_sub(1, AK::MemoryOrder::memory_order_acquire);
+    }
+
+    bool is_profiling_suppressed() const { return m_is_profiling_suppressed; }
+    void set_profiling_suppressed() { m_is_profiling_suppressed = true; }
+
+    bool may_die_immediately() const { return m_may_die_immediately; }
+    void set_may_die_immediately(bool flag) { m_may_die_immediately = flag; }
+    InodeIndex global_procfs_inode_index() const { return m_global_procfs_inode_index; }
+
 private:
-    Thread(NonnullRefPtr<Process>, NonnullOwnPtr<Region> kernel_stack_region);
+    Thread(NonnullRefPtr<Process>, NonnullOwnPtr<Region>, NonnullRefPtr<Timer>, FPUState*);
 
     IntrusiveListNode<Thread> m_process_thread_list_node;
     int m_runnable_priority { -1 };
@@ -1187,7 +1260,7 @@ private:
     mutable RecursiveSpinLock m_block_lock;
     NonnullRefPtr<Process> m_process;
     ThreadID m_tid { -1 };
-    TSS m_tss {};
+    ThreadRegisters m_regs;
     DebugRegisterState m_debug_register_state {};
     TrapFrame* m_current_trap { nullptr };
     u32 m_saved_critical { 1 };
@@ -1204,8 +1277,10 @@ private:
     u32 m_kernel_stack_top { 0 };
     OwnPtr<Region> m_kernel_stack_region;
     VirtualAddress m_thread_specific_data;
+    Optional<Range> m_thread_specific_range;
     Array<SignalActionData, NSIG> m_signal_action_data;
     Blocker* m_blocker { nullptr };
+    bool m_may_die_immediately { true };
 
 #if LOCK_DEBUG
     struct HoldingLockInfo {
@@ -1251,6 +1326,15 @@ private:
     bool m_in_block { false };
     bool m_is_idle_thread { false };
     Atomic<bool> m_have_any_unmasked_pending_signals { false };
+    Atomic<u32> m_nested_profiler_calls { 0 };
+
+    RefPtr<Timer> m_block_timer;
+
+    // Note: This is needed so when we generate thread stack inodes for ProcFS, we know that
+    // we assigned a global Inode index to it so we can use it later
+    InodeIndex m_global_procfs_inode_index;
+
+    bool m_is_profiling_suppressed { false };
 
     void yield_without_holding_big_lock();
     void donate_without_holding_big_lock(RefPtr<Thread>&, const char*);
@@ -1260,7 +1344,7 @@ private:
 
 AK_ENUM_BITWISE_OPERATORS(Thread::FileBlocker::BlockFlags);
 
-template<typename Callback>
+template<IteratorFunction<Thread&> Callback>
 inline IterationDecision Thread::for_each(Callback callback)
 {
     ScopedSpinLock lock(g_tid_map_lock);
@@ -1272,7 +1356,7 @@ inline IterationDecision Thread::for_each(Callback callback)
     return IterationDecision::Continue;
 }
 
-template<typename Callback>
+template<IteratorFunction<Thread&> Callback>
 inline IterationDecision Thread::for_each_in_state(State state, Callback callback)
 {
     ScopedSpinLock lock(g_tid_map_lock);
@@ -1285,6 +1369,24 @@ inline IterationDecision Thread::for_each_in_state(State state, Callback callbac
             return decision;
     }
     return IterationDecision::Continue;
+}
+
+template<VoidFunction<Thread&> Callback>
+inline IterationDecision Thread::for_each(Callback callback)
+{
+    ScopedSpinLock lock(g_tid_map_lock);
+    for (auto& it : *g_tid_map)
+        callback(*it.value);
+    return IterationDecision::Continue;
+}
+
+template<VoidFunction<Thread&> Callback>
+inline IterationDecision Thread::for_each_in_state(State state, Callback callback)
+{
+    return for_each_in_state(state, [&](auto& thread) {
+        callback(thread);
+        return IterationDecision::Continue;
+    });
 }
 
 }

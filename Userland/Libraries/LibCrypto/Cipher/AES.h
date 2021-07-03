@@ -29,7 +29,7 @@ public:
         CipherBlock::overwrite(data, length);
     }
 
-    static size_t block_size() { return BlockSizeInBits / 8; };
+    constexpr static size_t block_size() { return BlockSizeInBits / 8; };
 
     virtual ReadonlyBytes bytes() const override { return ReadonlyBytes { m_data, sizeof(m_data) }; }
     virtual Bytes bytes() override { return Bytes { m_data, sizeof(m_data) }; }
@@ -37,16 +37,16 @@ public:
     virtual void overwrite(ReadonlyBytes) override;
     virtual void overwrite(const u8* data, size_t size) override { overwrite({ data, size }); }
 
-    virtual void apply_initialization_vector(const u8* ivec) override
+    virtual void apply_initialization_vector(ReadonlyBytes ivec) override
     {
-        for (size_t i = 0; i < block_size(); ++i)
+        for (size_t i = 0; i < min(block_size(), ivec.size()); ++i)
             m_data[i] ^= ivec[i];
     }
 
     String to_string() const;
 
 private:
-    size_t data_size() const { return sizeof(m_data); }
+    constexpr static size_t data_size() { return sizeof(m_data); }
 
     u8 m_data[BlockSizeInBits / 8] {};
 };

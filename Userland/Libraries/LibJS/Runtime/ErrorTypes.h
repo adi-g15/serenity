@@ -15,34 +15,42 @@
     M(BigIntBadOperatorOtherType, "Cannot use {} operator with BigInt and other type")                                                  \
     M(BigIntIntArgument, "BigInt argument must be an integer")                                                                          \
     M(BigIntInvalidValue, "Invalid value for BigInt: {}")                                                                               \
+    M(BindingNotInitialized, "Binding {} is not initialized")                                                                           \
     M(ClassConstructorWithoutNew, "Class constructor {} must be called with 'new'")                                                     \
     M(ClassExtendsValueNotAConstructorOrNull, "Class extends value {} is not a constructor or null")                                    \
     M(ClassExtendsValueInvalidPrototype, "Class extends value has an invalid prototype {}")                                             \
     M(ClassIsAbstract, "Abstract class {} cannot be constructed directly")                                                              \
     M(ConstructorWithoutNew, "{} constructor must be called with 'new'")                                                                \
     M(Convert, "Cannot convert {} to {}")                                                                                               \
-    M(ConvertUndefinedToObject, "Cannot convert undefined to object")                                                                   \
+    M(DataViewOutOfRangeByteOffset, "Data view byte offset {} is out of range for buffer with length {}")                               \
     M(DescChangeNonConfigurable, "Cannot change attributes of non-configurable property '{}'")                                          \
+    M(DescWriteNonWritable, "Cannot write to non-writable property '{}'")                                                               \
+    M(DetachedArrayBuffer, "ArrayBuffer is detached")                                                                                   \
     M(DivisionByZero, "Division by zero")                                                                                               \
-    M(FunctionArgsNotObject, "Argument array must be an object")                                                                        \
+    M(FinalizationRegistrySameTargetAndValue, "Target and held value must not be the same")                                             \
     M(GetCapabilitiesExecutorCalledMultipleTimes, "GetCapabilitiesExecutor was called multiple times")                                  \
     M(InOperatorWithObject, "'in' operator must be used on an object")                                                                  \
     M(InstanceOfOperatorBadPrototype, "'prototype' property of {} is not an object")                                                    \
     M(InvalidAssignToConst, "Invalid assignment to const variable")                                                                     \
+    M(InvalidCodePoint, "Invalid code point {}, must be an integer no less than 0 and no greater than 0x10FFFF")                        \
+    M(InvalidFractionDigits, "Fraction Digits must be an integer no less than 0, and no greater than 100")                              \
+    M(InvalidHint, "Invalid hint: \"{}\"")                                                                                              \
     M(InvalidIndex, "Index must be a positive integer")                                                                                 \
     M(InvalidLeftHandAssignment, "Invalid left-hand side in assignment")                                                                \
     M(InvalidLength, "Invalid {} length")                                                                                               \
     M(InvalidTimeValue, "Invalid time value")                                                                                           \
     M(InvalidRadix, "Radix must be an integer no less than 2, and no greater than 36")                                                  \
     M(IsNotA, "{} is not a {}")                                                                                                         \
+    M(IsNotAn, "{} is not an {}")                                                                                                       \
     M(IsNotAEvaluatedFrom, "{} is not a {} (evaluated from '{}')")                                                                      \
     M(IterableNextBadReturn, "iterator.next() returned a non-object value")                                                             \
-    M(IterableNextNotAFunction, "'next' property on returned object from Symbol.iterator method is "                                    \
-                                "not a function")                                                                                       \
+    M(IterableNextNotAFunction, "'next' property on returned object from Symbol.iterator method is not a function")                     \
+    M(IterableReturnBadReturn, "iterator.return() returned a non-object value")                                                         \
     M(JsonBigInt, "Cannot serialize BigInt value to JSON")                                                                              \
     M(JsonCircular, "Cannot stringify circular object")                                                                                 \
     M(JsonMalformed, "Malformed JSON string")                                                                                           \
     M(NegativeExponent, "Exponent must be positive")                                                                                    \
+    M(NonExtensibleDefine, "Cannot define property {} on non-extensible object")                                                        \
     M(NotA, "Not a {} object")                                                                                                          \
     M(NotAConstructor, "{} is not a constructor")                                                                                       \
     M(NotAFunction, "{} is not a function")                                                                                             \
@@ -51,13 +59,11 @@
     M(NotAnObject, "{} is not an object")                                                                                               \
     M(NotASymbol, "{} is not a symbol")                                                                                                 \
     M(NotIterable, "{} is not iterable")                                                                                                \
-    M(NonExtensibleDefine, "Cannot define property {} on non-extensible object")                                                        \
-    M(NumberIncompatibleThis, "Number.prototype.{} method called with incompatible this target")                                        \
+    M(NotObjectCoercible, "{} cannot be converted to an object")                                                                        \
     M(ObjectDefinePropertyReturnedFalse, "Object's [[DefineProperty]] method returned false")                                           \
     M(ObjectFreezeFailed, "Could not freeze object")                                                                                    \
     M(ObjectSealFailed, "Could not seal object")                                                                                        \
     M(ObjectSetPrototypeOfReturnedFalse, "Object's [[SetPrototypeOf]] method returned false")                                           \
-    M(ObjectSetPrototypeOfTwoArgs, "Object.setPrototypeOf requires at least two arguments")                                             \
     M(ObjectPreventExtensionsReturnedFalse, "Object's [[PreventExtensions]] method returned false")                                     \
     M(ObjectPrototypeNullOrUndefinedOnSuperPropertyAccess,                                                                              \
         "Object prototype must not be {} on a super property access")                                                                   \
@@ -126,35 +132,45 @@
     M(ProxySetPrototypeOfNonExtensible, "Proxy handler's setPrototypeOf trap violates "                                                 \
                                         "invariant: the argument must match the prototype of the target if the "                        \
                                         "target is non-extensible")                                                                     \
-    M(ProxyTwoArguments, "Proxy constructor requires at least two arguments")                                                           \
     M(ReduceNoInitial, "Reduce of empty array with no initial value")                                                                   \
+    M(ReferenceNullishDeleteProperty, "Cannot delete property '{}' of {}")                                                              \
     M(ReferenceNullishGetProperty, "Cannot get property '{}' of {}")                                                                    \
     M(ReferenceNullishSetProperty, "Cannot set property '{}' of {}")                                                                    \
     M(ReferencePrimitiveSetProperty, "Cannot set property '{}' of {} '{}'")                                                             \
     M(ReferenceUnresolvable, "Unresolvable reference")                                                                                  \
+    M(ReflectArgumentMustBeAConstructor, "First argument of Reflect.{}() must be a constructor")                                        \
     M(ReflectArgumentMustBeAFunction, "First argument of Reflect.{}() must be a function")                                              \
     M(ReflectArgumentMustBeAnObject, "First argument of Reflect.{}() must be an object")                                                \
-    M(ReflectBadArgumentsList, "Arguments list must be an object")                                                                      \
     M(ReflectBadNewTarget, "Optional third argument of Reflect.construct() must be a constructor")                                      \
     M(ReflectBadDescriptorArgument, "Descriptor argument is not an object")                                                             \
     M(RegExpCompileError, "RegExp compile error: {}")                                                                                   \
-    M(StringRawCannotConvert, "Cannot convert property 'raw' to object from {}")                                                        \
+    M(RegExpObjectBadFlag, "Invalid RegExp flag '{}'")                                                                                  \
+    M(RegExpObjectRepeatedFlag, "Repeated RegExp flag '{}'")                                                                            \
+    M(RestrictedFunctionPropertiesAccess, "Restricted function properties like 'callee', 'caller' and 'arguments' may "                 \
+                                          "not be accessed in strict mode")                                                             \
+    M(SpeciesConstructorDidNotCreate, "Species constructor did not create {}")                                                          \
+    M(SpeciesConstructorReturned, "Species constructor returned {}")                                                                    \
+    M(StringMatchAllNonGlobalRegExp, "RegExp argument is non-global")                                                                   \
     M(StringRepeatCountMustBe, "repeat count must be a {} number")                                                                      \
     M(ThisHasNotBeenInitialized, "|this| has not been initialized")                                                                     \
     M(ThisIsAlreadyInitialized, "|this| is already initialized")                                                                        \
     M(ToObjectNullOrUndefined, "ToObject on null or undefined")                                                                         \
     M(ToPrimitiveReturnedObject, "Can't convert {} to primitive with hint \"{}\", its @@toPrimitive method returned an object")         \
+    M(TypedArrayContentTypeMismatch, "Can't create {} from {}")                                                                         \
     M(TypedArrayInvalidBufferLength, "Invalid buffer length for {}: must be a multiple of {}, got {}")                                  \
     M(TypedArrayInvalidByteOffset, "Invalid byte offset for {}: must be a multiple of {}, got {}")                                      \
     M(TypedArrayOutOfRangeByteOffset, "Typed array byte offset {} is out of range for buffer with length {}")                           \
     M(TypedArrayOutOfRangeByteOffsetOrLength, "Typed array range {}:{} is out of range for buffer with length {}")                      \
+    M(TypedArrayPrototypeOneArg, "TypedArray.prototype.{}() requires at least one argument")                                            \
+    M(TypedArrayFailedSettingIndex, "Failed setting value of index {} of typed array")                                                  \
     M(UnknownIdentifier, "'{}' is not defined")                                                                                         \
-    M(URIMalformed, "URI malformed")                                                                                                    \
-    /* LibWeb bindings */                                                                                                               \
+    M(UnsupportedDeleteSuperProperty, "Can't delete a property on 'super'")                                                             \
+    M(URIMalformed, "URI malformed") /* LibWeb bindings */                                                                              \
     M(NotAByteString, "Argument to {}() must be a byte string")                                                                         \
     M(BadArgCountOne, "{}() needs one argument")                                                                                        \
     M(BadArgCountAtLeastOne, "{}() needs at least one argument")                                                                        \
-    M(BadArgCountMany, "{}() needs {} arguments")
+    M(BadArgCountMany, "{}() needs {} arguments")                                                                                       \
+    M(FixmeAddAnErrorString, "FIXME: Add a string for this error.")
 
 namespace JS {
 

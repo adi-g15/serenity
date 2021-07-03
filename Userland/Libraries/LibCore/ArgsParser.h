@@ -22,6 +22,13 @@ public:
         No
     };
 
+    enum class FailureBehavior {
+        PrintUsageAndExit,
+        PrintUsage,
+        Exit,
+        Ignore,
+    };
+
     struct Option {
         bool requires_argument { true };
         const char* help_string { nullptr };
@@ -46,21 +53,24 @@ public:
         Function<bool(const char*)> accept_value;
     };
 
-    bool parse(int argc, char** argv, bool exit_on_failure = true);
+    bool parse(int argc, char* const* argv, FailureBehavior failure_behavior = FailureBehavior::PrintUsageAndExit);
     // *Without* trailing newline!
     void set_general_help(const char* help_string) { m_general_help = help_string; };
+    void set_stop_on_first_non_option(bool stop_on_first_non_option) { m_stop_on_first_non_option = stop_on_first_non_option; }
     void print_usage(FILE*, const char* argv0);
 
     void add_option(Option&&);
     void add_option(bool& value, const char* help_string, const char* long_name, char short_name);
     void add_option(const char*& value, const char* help_string, const char* long_name, char short_name, const char* value_name);
     void add_option(String& value, const char* help_string, const char* long_name, char short_name, const char* value_name);
+    void add_option(StringView& value, char const* help_string, char const* long_name, char short_name, char const* value_name);
     void add_option(int& value, const char* help_string, const char* long_name, char short_name, const char* value_name);
     void add_option(double& value, const char* help_string, const char* long_name, char short_name, const char* value_name);
 
     void add_positional_argument(Arg&&);
     void add_positional_argument(const char*& value, const char* help_string, const char* name, Required required = Required::Yes);
     void add_positional_argument(String& value, const char* help_string, const char* name, Required required = Required::Yes);
+    void add_positional_argument(StringView& value, char const* help_string, char const* name, Required required = Required::Yes);
     void add_positional_argument(int& value, const char* help_string, const char* name, Required required = Required::Yes);
     void add_positional_argument(double& value, const char* help_string, const char* name, Required required = Required::Yes);
     void add_positional_argument(Vector<const char*>& value, const char* help_string, const char* name, Required required = Required::Yes);
@@ -72,6 +82,7 @@ private:
 
     bool m_show_help { false };
     const char* m_general_help { nullptr };
+    bool m_stop_on_first_non_option { false };
 };
 
 }

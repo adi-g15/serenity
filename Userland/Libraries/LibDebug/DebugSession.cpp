@@ -9,6 +9,7 @@
 #include <AK/JsonValue.h>
 #include <AK/LexicalPath.h>
 #include <AK/Optional.h>
+#include <AK/Platform.h>
 #include <LibCore/File.h>
 #include <LibRegex/Regex.h>
 #include <stdlib.h>
@@ -43,7 +44,7 @@ DebugSession::~DebugSession()
     }
 }
 
-OwnPtr<DebugSession> DebugSession::exec_and_attach(const String& command, String source_root)
+OwnPtr<DebugSession> DebugSession::exec_and_attach(String const& command, String source_root)
 {
     auto pid = fork();
 
@@ -285,7 +286,7 @@ PtraceRegisters DebugSession::get_registers() const
     return regs;
 }
 
-void DebugSession::set_registers(const PtraceRegisters& regs)
+void DebugSession::set_registers(PtraceRegisters const& regs)
 {
     if (ptrace(PT_SETREGS, m_debuggee_pid, reinterpret_cast<void*>(&const_cast<PtraceRegisters&>(regs)), 0) < 0) {
         perror("PT_SETREGS");
@@ -323,7 +324,11 @@ void* DebugSession::single_step()
 
     auto regs = get_registers();
     constexpr u32 TRAP_FLAG = 0x100;
+#if ARCH(I386)
     regs.eflags |= TRAP_FLAG;
+#else
+    regs.rflags |= TRAP_FLAG;
+#endif
     set_registers(regs);
 
     continue_debuggee();
@@ -334,9 +339,17 @@ void* DebugSession::single_step()
     }
 
     regs = get_registers();
+#if ARCH(I386)
     regs.eflags &= ~(TRAP_FLAG);
+#else
+    regs.rflags &= ~(TRAP_FLAG);
+#endif
     set_registers(regs);
+#if ARCH(I386)
     return (void*)regs.eip;
+#else
+    TODO();
+#endif
 }
 
 void DebugSession::detach()
@@ -349,7 +362,7 @@ void DebugSession::detach()
     continue_debuggee();
 }
 
-Optional<DebugSession::InsertBreakpointAtSymbolResult> DebugSession::insert_breakpoint(const String& symbol_name)
+Optional<DebugSession::InsertBreakpointAtSymbolResult> DebugSession::insert_breakpoint(String const& symbol_name)
 {
     Optional<InsertBreakpointAtSymbolResult> result;
     for_each_loaded_library([this, symbol_name, &result](auto& lib) {
@@ -372,7 +385,7 @@ Optional<DebugSession::InsertBreakpointAtSymbolResult> DebugSession::insert_brea
     return result;
 }
 
-Optional<DebugSession::InsertBreakpointAtSourcePositionResult> DebugSession::insert_breakpoint(const String& filename, size_t line_number)
+Optional<DebugSession::InsertBreakpointAtSourcePositionResult> DebugSession::insert_breakpoint(String const& filename, size_t line_number)
 {
     auto address_and_source_position = get_address_from_source_position(filename, line_number);
     if (!address_and_source_position.has_value())
@@ -392,7 +405,7 @@ Optional<DebugSession::InsertBreakpointAtSourcePositionResult> DebugSession::ins
 void DebugSession::update_loaded_libs()
 {
     auto file = Core::File::construct(String::formatted("/proc/{}/vm", m_debuggee_pid));
-    bool rc = file->open(Core::IODevice::ReadOnly);
+    bool rc = file->open(Core::OpenMode::ReadOnly);
     VERIFY(rc);
 
     auto file_contents = file->read_all();
@@ -402,7 +415,7 @@ void DebugSession::update_loaded_libs()
     auto vm_entries = json.value().as_array();
     Regex<PosixExtended> re("(.+): \\.text");
 
-    auto get_path_to_object = [&re](const String& vm_name) -> Optional<String> {
+    auto get_path_to_object = [&re](String const& vm_name) -> Optional<String> {
         if (vm_name == "/usr/lib/Loader.so")
             return vm_name;
         RegexResult result;
@@ -425,7 +438,7 @@ void DebugSession::update_loaded_libs()
 
         String lib_name = object_path.value();
         if (lib_name.ends_with(".so"))
-            lib_name = LexicalPath(object_path.value()).basename();
+            lib_name = LexicalPath::basename(object_path.value());
 
         // FIXME: DebugInfo currently cannot parse the debug information of libgcc_s.so
         if (lib_name == "libgcc_s.so")
@@ -470,7 +483,7 @@ Optional<DebugSession::SymbolicationResult> DebugSession::symbolicate(FlatPtr ad
     return { { lib->name, symbol } };
 }
 
-Optional<DebugInfo::SourcePositionAndAddress> DebugSession::get_address_from_source_position(const String& file, size_t line) const
+Optional<DebugInfo::SourcePositionAndAddress> DebugSession::get_address_from_source_position(String const& file, size_t line) const
 {
     Optional<DebugInfo::SourcePositionAndAddress> result;
     for_each_loaded_library([this, file, line, &result](auto& lib) {

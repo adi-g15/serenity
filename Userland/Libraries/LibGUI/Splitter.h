@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2018-2021, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -16,6 +16,11 @@ class Splitter : public Widget {
 public:
     virtual ~Splitter() override;
 
+    int first_resizee_minimum_size() { return m_first_resizee_minimum_size; }
+    void set_first_resizee_minimum_size(int minimum_size) { m_first_resizee_minimum_size = minimum_size; }
+    int second_resizee_minimum_size() { return m_second_resizee_minimum_size; }
+    void set_second_resizee_minimum_size(int minimum_size) { m_second_resizee_minimum_size = minimum_size; }
+
 protected:
     explicit Splitter(Gfx::Orientation);
 
@@ -29,9 +34,8 @@ protected:
     virtual void did_layout() override;
 
 private:
-    void recompute_grabbable_rect(const Widget&, const Widget&);
-    bool get_resize_candidates_at(const Gfx::IntPoint&, Widget*&, Widget*&);
     void override_cursor(bool do_override);
+    Gfx::IntRect rect_between_widgets(GUI::Widget const& first_widget, GUI::Widget const& second_widget, bool honor_content_margins) const;
 
     Gfx::Orientation m_orientation;
     bool m_resizing { false };
@@ -41,7 +45,29 @@ private:
     WeakPtr<Widget> m_second_resizee;
     Gfx::IntSize m_first_resizee_start_size;
     Gfx::IntSize m_second_resizee_start_size;
-    Gfx::IntRect m_grabbable_rect;
+    int m_first_resizee_minimum_size { 0 };
+    int m_second_resizee_minimum_size { 0 };
+
+    void recompute_grabbables();
+
+    struct Grabbable {
+        // Index in m_grabbables, for convenience.
+        size_t index { 0 };
+
+        // The full grabbable rect, includes the content margin of adjacent elements.
+        Gfx::IntRect grabbable_rect;
+        // The rect used for painting. Does not include content margins.
+        Gfx::IntRect paint_rect;
+
+        WeakPtr<Widget> first_widget;
+        WeakPtr<Widget> second_widget;
+    };
+
+    Grabbable* grabbable_at(Gfx::IntPoint const&);
+    void set_hovered_grabbable(Grabbable*);
+
+    Vector<Grabbable> m_grabbables;
+    Optional<size_t> m_hovered_index;
 };
 
 class VerticalSplitter final : public Splitter {

@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2021, Stephan Unverwerth <s.unverwerth@gmx.de>
+ * Copyright (c) 2021, Stephan Unverwerth <s.unverwerth@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/String.h>
 #include <math.h>
 
 namespace Gfx {
@@ -57,6 +58,16 @@ public:
     constexpr Vector4 operator-(const Vector4& other) const
     {
         return Vector4(m_x - other.m_x, m_y - other.m_y, m_z - other.m_z, m_w - other.m_w);
+    }
+
+    constexpr Vector4 operator*(const Vector4& other) const
+    {
+        return Vector4(m_x * other.m_x, m_y * other.m_y, m_z * other.m_z, m_w * other.m_w);
+    }
+
+    constexpr Vector4 operator/(const Vector4& other) const
+    {
+        return Vector4(m_x / other.m_x, m_y / other.m_y, m_z / other.m_z, m_w / other.m_w);
     }
 
     constexpr Vector4 operator*(T f) const
@@ -113,6 +124,11 @@ public:
         return sqrt(m_x * m_x + m_y * m_y + m_z * m_z + m_w * m_w);
     }
 
+    String to_string() const
+    {
+        return String::formatted("[{},{},{},{}]", x(), y(), z(), w());
+    }
+
 private:
     T m_x;
     T m_y;
@@ -122,6 +138,18 @@ private:
 
 typedef Vector4<float> FloatVector4;
 typedef Vector4<double> DoubleVector4;
+
+}
+
+namespace AK {
+
+template<typename T>
+struct Formatter<Gfx::Vector4<T>> : Formatter<StringView> {
+    void format(FormatBuilder& builder, const Gfx::Vector4<T>& value)
+    {
+        Formatter<StringView>::format(builder, value.to_string());
+    }
+};
 
 }
 

@@ -22,17 +22,12 @@
 
 int main(int argc, char* argv[])
 {
-    if (pledge("stdio recvfd sendfd accept rpath unix cpath wpath fattr thread", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd rpath fattr unix cpath wpath thread", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     auto app = GUI::Application::construct(argc, argv);
-
-    if (pledge("stdio recvfd sendfd thread rpath accept cpath wpath fattr unix", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
 
     const char* filename = nullptr;
 
@@ -143,7 +138,7 @@ int main(int argc, char* argv[])
         return GUI::Window::CloseRequestDecision::StayOpen;
     };
 
-    auto& edit_menu = menubar->add_menu("Edit");
+    auto& edit_menu = menubar->add_menu("&Edit");
 
     auto clipboard_action = [&](bool is_cut) {
         /// text/x-spreadsheet-data:
@@ -191,8 +186,8 @@ int main(int argc, char* argv[])
         GUI::Clipboard::the().set_data(text_builder.string_view().bytes(), "text/plain", move(metadata));
     };
 
-    edit_menu.add_action(GUI::CommonActions::make_copy_action([&] { clipboard_action(false); }, window));
-    edit_menu.add_action(GUI::CommonActions::make_cut_action([&] { clipboard_action(true); }, window));
+    edit_menu.add_action(GUI::CommonActions::make_copy_action([&](auto&) { clipboard_action(false); }, window));
+    edit_menu.add_action(GUI::CommonActions::make_cut_action([&](auto&) { clipboard_action(true); }, window));
     edit_menu.add_action(GUI::CommonActions::make_paste_action([&](auto&) {
         ScopeGuard update_after_paste { [&] { spreadsheet_widget.update(); } };
 
@@ -233,10 +228,10 @@ int main(int argc, char* argv[])
     },
         window));
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
 
     help_menu.add_action(GUI::Action::create(
-        "Functions Help", [&](auto&) {
+        "&Functions Help", [&](auto&) {
             if (auto* worksheet_ptr = spreadsheet_widget.current_worksheet_if_available()) {
                 auto docs = worksheet_ptr->gather_documentation();
                 auto help_window = Spreadsheet::HelpWindow::the(window);

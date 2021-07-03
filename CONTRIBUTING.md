@@ -2,15 +2,13 @@
 
 When contributing to SerenityOS, make sure that the changes you wish to make are in line with the project direction. If you are not sure about this, open an issue first, so we can discuss it.
 
-For your first PR, start with something small to get familiar with the project and its development processes.
+**For your first couple of PR's, start with something small to get familiar with the project and its development processes. Please do not start by adding a new application, library or other large component.**
 
 Everyone is welcome to work on the project, and while we have lots of fun, it's a serious kind of fun. :^)
 
 ## Communication
 
-Discord: [SerenityOS Discord](https://discord.com/invite/29gCcKsXkF)
-
-IRC: `#serenityos` on the Freenode IRC network.
+Join our Discord server: [SerenityOS Discord](https://discord.gg/serenityos)
 
 ## Issue policy
 
@@ -21,6 +19,7 @@ That said, please do file any bugs you find, keeping the following in mind:
 * One issue per bug. Putting multiple things in the same issue makes both discussion and completion unnecessarily complicated.
 * No build issues (or other support requests). If the GitHub Actions CI build succeeds, the build problem is most likely on your side. Work it out locally, or ask in the `#build-problems` channel on Discord.
 * Don't comment on issues just to add a joke or irrelevant commentary. Hundreds of people get notified about comments so let's keep them relevant.
+* For bare metal issues, please include the complete debug log from the serial console and what you tried to do to solve the issue before opening the issue. Don't forget to add the hardware model of your machine and relevant details about it, to help us diagnose what is the problem.
 
 ## Human language policy
 
@@ -28,7 +27,7 @@ In SerenityOS, we treat human language as seriously as we do programming languag
 
 The following applies to all user-facing strings, code, comments, and commit messages:
 
-* The official project language is American English.
+* The official project language is American English with ISO 8601 dates and metric units.
 * Use proper spelling, grammar, and punctuation.
 * Write in an authoritative and technical tone.
 
@@ -43,10 +42,11 @@ Nobody is perfect, and sometimes we mess things up. That said, here are some goo
 * Write in idiomatic SerenityOS C++20, using the `AK` containers in all code.
 * Conform to the project coding style found in [CodingStyle.md](https://github.com/SerenityOS/serenity/blob/master/Documentation/CodingStyle.md). Use `clang-format` (version 11 or later) to automatically format C++ files.
 * Choose expressive variable, function and class names. Make it as obvious as possible what the code is doing.
-* Split your changes into separate, atomic commits.
+* Split your changes into separate, atomic commits (i.e. A commit per feature or fix, where the build, tests and the system are all functioning).
 * Make sure your commits are rebased on the master branch.
 * Wrap your commit messages at 72 characters.
-* The first line of the commit message should have the format "Category: Brief description of what's being changed". The "category" can be a subdirectory, but also something like "POSIX compliance" or "ClassName". Whatever seems logical.
+* The first line of the commit message is the subject line, and should have the format "Category: Brief description of what's being changed". The "category" can be a subdirectory, but also something like "POSIX compliance" or "ClassName". Whatever seems logical.
+* Write the commit message subject line in the imperative mood ("Foo: Change the way dates work", not "Foo: Changed the way dates work").
 * Write your commit messages in proper English, with care and punctuation.
 * Squash your commits when making revisions after a patch review.
 * Add your personal copyright line to files when making substantive changes. (Optional but encouraged!)
@@ -58,6 +58,33 @@ Nobody is perfect, and sometimes we mess things up. That said, here are some goo
 * Touch anything outside the stated scope of the PR.
 * Iterate excessively on your design across multiple commits.
 * Use weasel-words like "refactor" or "fix" to avoid explaining what's being changed.
+* End commit message subject lines with a period.
 * Include commented-out code.
 * Write in C. (Instead, take advantage of C++'s amenities, and don't limit yourself to the standard C library.)
 * Attempt large architectural changes until you are familiar with the system and have worked on it for a while.
+
+## Pull Request Q&A
+
+### I've submitted a PR and it passes CI. When can I expect to get first reviewer feedback?
+
+While unadvertised PR's may get randomly merged by curious reviewers, you will have a much smoother time if you engage with the community on Discord.
+
+### If my PR isn't getting attention, how long should I wait before pinging one of the project reviewers?
+
+Ping them right away if it's something urgent! If it's less urgent, advertise your PR on Discord and ask if someone could review it.
+
+### Who are the project reviewers?
+
+The project reviewers at this time are [@awesomekling](https://github.com/awesomekling), [@linusg](https://github.com/linusg), [@alimpfard](https://github.com/alimpfard), and [@gunnarbeutner](https://github.com/gunnarbeutner).
+
+### Is there a policy for branches/PRs that haven't been touched in X days? Should they be closed?
+
+Yes, we have a "stalebot" that will mark untouched PR's as "stale" after 21 days, and close them after another 7 days if nothing happens.
+
+### Are there specific people to reach out to for different subsystems (e.g. Kernel, Browser, GUI, etc)?
+
+In theory, the best person to speak with is whoever wrote most code adjacent to what you're working on. In practice, asking in one of the development channels on Discord is usually easier/better, since that allows many people to join the discussion.
+
+### Is Discord the place to ask for review help, or is Github preferred?
+
+It's definitely better to ask on Discord. Due to the volume of GitHub notifications, many of us turn them off and rely on Discord for learning about review requests.

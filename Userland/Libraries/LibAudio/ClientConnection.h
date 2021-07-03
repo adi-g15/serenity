@@ -14,13 +14,13 @@ namespace Audio {
 
 class Buffer;
 
-class ClientConnection : public IPC::ServerConnection<AudioClientEndpoint, AudioServerEndpoint>
+class ClientConnection final
+    : public IPC::ServerConnection<AudioClientEndpoint, AudioServerEndpoint>
     , public AudioClientEndpoint {
     C_OBJECT(ClientConnection)
 public:
     ClientConnection();
 
-    virtual void handshake() override;
     void enqueue(const Buffer&);
     bool try_enqueue(const Buffer&);
 

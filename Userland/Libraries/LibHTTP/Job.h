@@ -42,6 +42,7 @@ protected:
     virtual bool is_established() const = 0;
     virtual bool should_fail_on_empty_payload() const { return true; }
     virtual void read_while_data_available(Function<IterationDecision()> read) { read(); };
+    virtual void timer_event(Core::TimerEvent&) override;
 
     enum class State {
         InStatus,
@@ -63,6 +64,7 @@ protected:
     Optional<size_t> m_current_chunk_total_size;
     bool m_can_stream_response { true };
     bool m_should_read_chunk_ending_line { false };
+    bool m_has_scheduled_finish { false };
 };
 
 }

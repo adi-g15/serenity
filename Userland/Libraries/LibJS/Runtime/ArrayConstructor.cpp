@@ -17,7 +17,7 @@
 namespace JS {
 
 ArrayConstructor::ArrayConstructor(GlobalObject& global_object)
-    : NativeFunction(vm().names.Array, *global_object.function_prototype())
+    : NativeFunction(vm().names.Array.as_string(), *global_object.function_prototype())
 {
 }
 
@@ -30,28 +30,35 @@ void ArrayConstructor::initialize(GlobalObject& global_object)
     auto& vm = this->vm();
     NativeFunction::initialize(global_object);
 
+    // 23.1.2.4 Array.prototype, https://tc39.es/ecma262/#sec-array.prototype
     define_property(vm.names.prototype, global_object.array_prototype(), 0);
+
     define_property(vm.names.length, Value(1), Attribute::Configurable);
 
     u8 attr = Attribute::Writable | Attribute::Configurable;
     define_native_function(vm.names.from, from, 1, attr);
     define_native_function(vm.names.isArray, is_array, 1, attr);
     define_native_function(vm.names.of, of, 0, attr);
+
+    // 23.1.2.5 get Array [ @@species ], https://tc39.es/ecma262/#sec-get-array-@@species
+    define_native_accessor(*vm.well_known_symbol_species(), symbol_species_getter, {}, Attribute::Configurable);
 }
 
+// 23.1.1.1 Array ( ...values ), https://tc39.es/ecma262/#sec-array
 Value ArrayConstructor::call()
 {
     if (vm().argument_count() <= 0)
         return Array::create(global_object());
 
     if (vm().argument_count() == 1 && vm().argument(0).is_number()) {
-        auto array_length_value = vm().argument(0);
-        if (!array_length_value.is_integer() || array_length_value.as_i32() < 0) {
+        auto length = vm().argument(0);
+        auto int_length = length.to_u32(global_object());
+        if (int_length != length.as_double()) {
             vm().throw_exception<RangeError>(global_object(), ErrorType::InvalidLength, "array");
             return {};
         }
         auto* array = Array::create(global_object());
-        array->indexed_properties().set_array_like_size(array_length_value.as_i32());
+        array->indexed_properties().set_array_like_size(int_length);
         return array;
     }
 
@@ -61,11 +68,13 @@ Value ArrayConstructor::call()
     return array;
 }
 
-Value ArrayConstructor::construct(Function&)
+// 23.1.1.1 Array ( ...values ), https://tc39.es/ecma262/#sec-array
+Value ArrayConstructor::construct(FunctionObject&)
 {
     return call();
 }
 
+// 23.1.2.1 Array.from ( items [ , mapfn [ , thisArg ] ] ), https://tc39.es/ecma262/#sec-array.from
 JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
 {
     auto value = vm.argument(0);
@@ -75,7 +84,7 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
 
     auto* array = Array::create(global_object);
 
-    Function* map_fn = nullptr;
+    FunctionObject* map_fn = nullptr;
     if (!vm.argument(1).is_undefined()) {
         auto callback = vm.argument(1);
         if (!callback.is_function()) {
@@ -137,18 +146,43 @@ JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::from)
     return array;
 }
 
+// 23.1.2.2 Array.isArray ( arg ), https://tc39.es/ecma262/#sec-array.isarray
 JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::is_array)
 {
     auto value = vm.argument(0);
-    return Value(value.is_array());
+    return Value(value.is_array(global_object));
 }
 
+// 23.1.2.3 Array.of ( ...items ), https://tc39.es/ecma262/#sec-array.of
 JS_DEFINE_NATIVE_FUNCTION(ArrayConstructor::of)
 {
-    auto* array = Array::create(global_object);
-    for (size_t i = 0; i < vm.argument_count(); ++i)
-        array->indexed_properties().append(vm.argument(i));
+    auto this_value = vm.this_value(global_object);
+    Value array;
+    if (this_value.is_constructor()) {
+        MarkedValueList arguments(vm.heap());
+        arguments.empend(vm.argument_count());
+        array = vm.construct(this_value.as_function(), this_value.as_function(), move(arguments));
+        if (vm.exception())
+            return {};
+    } else {
+        array = Array::create(global_object);
+    }
+    auto& array_object = array.as_object();
+    for (size_t k = 0; k < vm.argument_count(); ++k) {
+        array_object.define_property(k, vm.argument(k));
+        if (vm.exception())
+            return {};
+    }
+    array_object.put(vm.names.length, Value(vm.argument_count()));
+    if (vm.exception())
+        return {};
     return array;
+}
+
+// 23.1.2.5 get Array [ @@species ], https://tc39.es/ecma262/#sec-get-array-@@species
+JS_DEFINE_NATIVE_GETTER(ArrayConstructor::symbol_species_getter)
+{
+    return vm.this_value(global_object);
 }
 
 }

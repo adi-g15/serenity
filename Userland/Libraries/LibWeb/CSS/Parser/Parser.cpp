@@ -89,7 +89,7 @@ Vector<CSS::Selector::ComplexSelector> Parser::parse_selectors(Vector<String> pa
     // TODO:
     // This is a mess because the prelude is parsed as a string.
     // It should really be parsed as its class, but the cpp gods have forsaken me
-    // and i cant make it work due to cyclic includes.
+    // and I can't make it work due to cyclic includes.
 
     Vector<CSS::Selector::ComplexSelector> selectors;
 
@@ -200,6 +200,8 @@ Vector<CSS::Selector::ComplexSelector> Parser::parse_selectors(Vector<String> pa
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Link;
             } else if (pseudo_name.equals_ignoring_case("visited")) {
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Visited;
+            } else if (pseudo_name.equals_ignoring_case("active")) {
+                simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Active;
             } else if (pseudo_name.equals_ignoring_case("hover")) {
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Hover;
             } else if (pseudo_name.equals_ignoring_case("focus")) {
@@ -648,7 +650,7 @@ Optional<QualifiedStyleRule> Parser::parse_as_rule()
 
     for (;;) {
         auto maybe_whitespace = peek_token();
-        if (!token.is_whitespace()) {
+        if (!maybe_whitespace.is_whitespace()) {
             break;
         }
         next_token();
@@ -710,7 +712,7 @@ Optional<StyleComponentValueRule> Parser::parse_as_component_value()
 
     for (;;) {
         auto maybe_whitespace = peek_token();
-        if (!token.is_whitespace()) {
+        if (!maybe_whitespace.is_whitespace()) {
             break;
         }
         next_token();

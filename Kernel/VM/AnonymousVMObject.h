@@ -8,6 +8,7 @@
 
 #include <Kernel/PhysicalAddress.h>
 #include <Kernel/VM/AllocationStrategy.h>
+#include <Kernel/VM/MemoryManager.h>
 #include <Kernel/VM/PageFaultResponse.h>
 #include <Kernel/VM/PurgeablePageRanges.h>
 #include <Kernel/VM/VMObject.h>
@@ -22,8 +23,8 @@ public:
 
     static RefPtr<AnonymousVMObject> create_with_size(size_t, AllocationStrategy);
     static RefPtr<AnonymousVMObject> create_for_physical_range(PhysicalAddress paddr, size_t size);
-    static NonnullRefPtr<AnonymousVMObject> create_with_physical_page(PhysicalPage& page);
-    static NonnullRefPtr<AnonymousVMObject> create_with_physical_pages(NonnullRefPtrVector<PhysicalPage>);
+    static RefPtr<AnonymousVMObject> create_with_physical_page(PhysicalPage& page);
+    static RefPtr<AnonymousVMObject> create_with_physical_pages(NonnullRefPtrVector<PhysicalPage>);
     virtual RefPtr<VMObject> clone() override;
 
     RefPtr<PhysicalPage> allocate_committed_page(size_t);
@@ -40,7 +41,7 @@ public:
 
     bool is_any_volatile() const;
 
-    template<typename F>
+    template<IteratorFunction<const VolatilePageRange&> F>
     IterationDecision for_each_volatile_range(F f) const
     {
         VERIFY(m_lock.is_locked());
@@ -78,22 +79,40 @@ public:
         return IterationDecision::Continue;
     }
 
-    template<typename F>
+    template<IteratorFunction<const VolatilePageRange&> F>
     IterationDecision for_each_nonvolatile_range(F f) const
     {
         size_t base = 0;
         for_each_volatile_range([&](const VolatilePageRange& volatile_range) {
             if (volatile_range.base == base)
                 return IterationDecision::Continue;
-            IterationDecision decision = f({ base, volatile_range.base - base });
+            IterationDecision decision = f(VolatilePageRange { base, volatile_range.base - base });
             if (decision != IterationDecision::Continue)
                 return decision;
             base = volatile_range.base + volatile_range.count;
             return IterationDecision::Continue;
         });
         if (base < page_count())
-            return f({ base, page_count() - base });
+            return f(VolatilePageRange { base, page_count() - base });
         return IterationDecision::Continue;
+    }
+
+    template<VoidFunction<const VolatilePageRange&> F>
+    IterationDecision for_each_volatile_range(F f) const
+    {
+        return for_each_volatile_range([&](auto& range) {
+            f(range);
+            return IterationDecision::Continue;
+        });
+    }
+
+    template<VoidFunction<const VolatilePageRange&> F>
+    IterationDecision for_each_nonvolatile_range(F f) const
+    {
+        return for_each_nonvolatile_range([&](auto range) {
+            f(move(range));
+            return IterationDecision::Continue;
+        });
     }
 
 private:

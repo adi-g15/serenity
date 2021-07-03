@@ -27,14 +27,18 @@ public:
 
 private:
     HexEditorWidget();
-    void set_path(const LexicalPath& file);
+    void set_path(StringView const&);
     void update_title();
+    void set_search_results_visible(bool visible);
+
+    RefPtr<Core::ConfigFile> m_config;
 
     RefPtr<HexEditor> m_editor;
     String m_path;
     String m_name;
     String m_extension;
 
+    int m_goto_history { 0 };
     String m_search_text;
     ByteBuffer m_search_buffer;
     int last_found_index() const { return m_last_found_index == -1 ? 0 : m_last_found_index; }
@@ -44,12 +48,18 @@ private:
     RefPtr<GUI::Action> m_open_action;
     RefPtr<GUI::Action> m_save_action;
     RefPtr<GUI::Action> m_save_as_action;
-    RefPtr<GUI::Action> m_goto_decimal_offset_action;
-    RefPtr<GUI::Action> m_goto_hex_offset_action;
+    RefPtr<GUI::Action> m_find_action;
+    RefPtr<GUI::Action> m_goto_offset_action;
+    RefPtr<GUI::Action> m_layout_toolbar_action;
+    RefPtr<GUI::Action> m_layout_search_results_action;
 
     GUI::ActionGroup m_bytes_per_row_actions;
 
     RefPtr<GUI::Statusbar> m_statusbar;
+    RefPtr<GUI::Toolbar> m_toolbar;
+    RefPtr<GUI::ToolbarContainer> m_toolbar_container;
+    RefPtr<GUI::TableView> m_search_results;
+    RefPtr<GUI::Widget> m_search_results_container;
 
     bool m_document_dirty { false };
 };

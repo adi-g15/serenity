@@ -6,8 +6,11 @@
 
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
-#include <AK/JsonParser.h>
 #include <AK/JsonValue.h>
+
+#ifndef KERNEL
+#    include <AK/JsonParser.h>
+#endif
 
 namespace AK {
 
@@ -90,7 +93,7 @@ bool JsonValue::equals(const JsonValue& other) const
 
     if (is_array() && other.is_array() && as_array().size() == other.as_array().size()) {
         bool result = true;
-        for (int i = 0; i < as_array().size(); ++i) {
+        for (size_t i = 0; i < as_array().size(); ++i) {
             result &= as_array().at(i).equals(other.as_array().at(i));
         }
         return result;
@@ -181,11 +184,6 @@ JsonValue::JsonValue(const String& value)
     }
 }
 
-JsonValue::JsonValue(const IPv4Address& value)
-    : JsonValue(value.to_string())
-{
-}
-
 JsonValue::JsonValue(const JsonObject& value)
     : m_type(Type::Object)
 {
@@ -229,9 +227,11 @@ void JsonValue::clear()
     m_value.as_string = nullptr;
 }
 
+#ifndef KERNEL
 Optional<JsonValue> JsonValue::from_string(const StringView& input)
 {
     return JsonParser(input).parse();
 }
+#endif
 
 }

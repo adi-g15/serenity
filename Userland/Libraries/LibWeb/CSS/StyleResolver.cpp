@@ -74,7 +74,7 @@ Vector<MatchingRule> StyleResolver::collect_matching_rules(const DOM::Element& e
             size_t selector_index = 0;
             for (auto& selector : rule.selectors()) {
                 if (SelectorEngine::matches(selector, element)) {
-                    matching_rules.append({ rule, style_sheet_index, rule_index, selector_index });
+                    matching_rules.append({ rule, style_sheet_index, rule_index, selector_index, selector.specificity() });
                     break;
                 }
                 ++selector_index;
@@ -264,6 +264,106 @@ static void set_property_expanding_shorthands(StyleProperties& style, CSS::Prope
         return;
     }
 
+    if (property_id == CSS::PropertyID::BorderRadius) {
+        // FIXME: Allow for two values per corner to support elliptical radii.
+        // FIXME: Add support the '/' to specify elliptical radii.
+        if (value.is_length()) {
+            style.set_property(CSS::PropertyID::BorderTopLeftRadius, value);
+            style.set_property(CSS::PropertyID::BorderTopRightRadius, value);
+            style.set_property(CSS::PropertyID::BorderBottomRightRadius, value);
+            style.set_property(CSS::PropertyID::BorderBottomLeftRadius, value);
+            return;
+        }
+        if (value.is_string()) {
+            auto parts = split_on_whitespace(value.to_string());
+            if (value.is_string() && parts.size() == 2) {
+                auto diagonal1 = parse_css_value(context, parts[0]);
+                auto diagonal2 = parse_css_value(context, parts[1]);
+                if (diagonal1 && diagonal2) {
+                    style.set_property(CSS::PropertyID::BorderTopLeftRadius, *diagonal1);
+                    style.set_property(CSS::PropertyID::BorderBottomRightRadius, *diagonal1);
+                    style.set_property(CSS::PropertyID::BorderTopRightRadius, *diagonal2);
+                    style.set_property(CSS::PropertyID::BorderBottomLeftRadius, *diagonal2);
+                }
+                return;
+            }
+            if (value.is_string() && parts.size() == 3) {
+                auto top_left = parse_css_value(context, parts[0]);
+                auto diagonal = parse_css_value(context, parts[1]);
+                auto bottom_right = parse_css_value(context, parts[2]);
+                if (top_left && diagonal && bottom_right) {
+                    style.set_property(CSS::PropertyID::BorderTopLeftRadius, *top_left);
+                    style.set_property(CSS::PropertyID::BorderBottomRightRadius, *bottom_right);
+                    style.set_property(CSS::PropertyID::BorderTopRightRadius, *diagonal);
+                    style.set_property(CSS::PropertyID::BorderBottomLeftRadius, *diagonal);
+                }
+                return;
+            }
+            if (value.is_string() && parts.size() == 4) {
+                auto top_left = parse_css_value(context, parts[0]);
+                auto top_right = parse_css_value(context, parts[1]);
+                auto bottom_right = parse_css_value(context, parts[2]);
+                auto bottom_left = parse_css_value(context, parts[3]);
+                if (top_left && top_right && bottom_right && bottom_left) {
+                    style.set_property(CSS::PropertyID::BorderTopLeftRadius, *top_left);
+                    style.set_property(CSS::PropertyID::BorderBottomRightRadius, *bottom_right);
+                    style.set_property(CSS::PropertyID::BorderTopRightRadius, *top_right);
+                    style.set_property(CSS::PropertyID::BorderBottomLeftRadius, *bottom_left);
+                }
+                return;
+            }
+            dbgln("Unsure what to do with CSS border-radius value '{}'", value.to_string());
+            return;
+        }
+        return;
+    }
+
+    if (property_id == CSS::PropertyID::Flex) {
+        if (value.is_length() || (value.is_identifier() && value.to_identifier() == CSS::ValueID::Content)) {
+            style.set_property(CSS::PropertyID::FlexBasis, value);
+            return;
+        }
+
+        if (!value.is_string())
+            return;
+
+        auto parts = split_on_whitespace(value.to_string());
+        if (parts.size() == 1) {
+            auto flex_grow = parse_css_value(context, parts[0]);
+            style.set_property(CSS::PropertyID::FlexGrow, *flex_grow);
+            return;
+        }
+
+        if (parts.size() == 2) {
+            auto flex_grow = parse_css_value(context, parts[0]);
+            style.set_property(CSS::PropertyID::FlexGrow, *flex_grow);
+
+            auto second_value = parse_css_value(context, parts[1]);
+            if (second_value->is_length() || (second_value->is_identifier() && second_value->to_identifier() == CSS::ValueID::Content)) {
+                style.set_property(CSS::PropertyID::FlexBasis, *second_value);
+            } else {
+                auto flex_shrink = parse_css_value(context, parts[1]);
+                style.set_property(CSS::PropertyID::FlexShrink, *flex_shrink);
+            }
+            return;
+        }
+
+        if (parts.size() == 3) {
+            auto flex_grow = parse_css_value(context, parts[0]);
+            style.set_property(CSS::PropertyID::FlexGrow, *flex_grow);
+            auto flex_shrink = parse_css_value(context, parts[1]);
+            style.set_property(CSS::PropertyID::FlexShrink, *flex_shrink);
+
+            auto third_value = parse_css_value(context, parts[2]);
+            if (third_value->is_length() || (third_value->is_identifier() && third_value->to_identifier() == CSS::ValueID::Content))
+                style.set_property(CSS::PropertyID::FlexBasis, *third_value);
+            return;
+        }
+
+        dbgln("Unsure what to do with CSS flex value '{}'", value.to_string());
+        return;
+    }
+
     if (property_id == CSS::PropertyID::BorderTop
         || property_id == CSS::PropertyID::BorderRight
         || property_id == CSS::PropertyID::BorderBottom
@@ -389,7 +489,28 @@ static void set_property_expanding_shorthands(StyleProperties& style, CSS::Prope
 
     if (property_id == CSS::PropertyID::BorderWidth) {
         auto parts = split_on_whitespace(value.to_string());
-        if (value.is_string() && parts.size() == 2) {
+        if (value.is_string() && parts.size() == 4) {
+            auto top_border_width = parse_css_value(context, parts[0]);
+            auto right_border_width = parse_css_value(context, parts[1]);
+            auto bottom_border_width = parse_css_value(context, parts[2]);
+            auto left_border_width = parse_css_value(context, parts[3]);
+            if (top_border_width && right_border_width && bottom_border_width && left_border_width) {
+                style.set_property(CSS::PropertyID::BorderTopWidth, *top_border_width);
+                style.set_property(CSS::PropertyID::BorderRightWidth, *right_border_width);
+                style.set_property(CSS::PropertyID::BorderBottomWidth, *bottom_border_width);
+                style.set_property(CSS::PropertyID::BorderLeftWidth, *left_border_width);
+            }
+        } else if (value.is_string() && parts.size() == 3) {
+            auto top_border_width = parse_css_value(context, parts[0]);
+            auto horizontal_border_width = parse_css_value(context, parts[1]);
+            auto bottom_border_width = parse_css_value(context, parts[2]);
+            if (top_border_width && horizontal_border_width && bottom_border_width) {
+                style.set_property(CSS::PropertyID::BorderTopWidth, *top_border_width);
+                style.set_property(CSS::PropertyID::BorderRightWidth, *horizontal_border_width);
+                style.set_property(CSS::PropertyID::BorderBottomWidth, *bottom_border_width);
+                style.set_property(CSS::PropertyID::BorderLeftWidth, *horizontal_border_width);
+            }
+        } else if (value.is_string() && parts.size() == 2) {
             auto vertical_border_width = parse_css_value(context, parts[0]);
             auto horizontal_border_width = parse_css_value(context, parts[1]);
             if (vertical_border_width && horizontal_border_width) {
@@ -419,6 +540,25 @@ static void set_property_expanding_shorthands(StyleProperties& style, CSS::Prope
                 style.set_property(CSS::PropertyID::BorderRightColor, *right);
                 style.set_property(CSS::PropertyID::BorderBottomColor, *bottom);
                 style.set_property(CSS::PropertyID::BorderLeftColor, *left);
+            }
+        } else if (value.is_string() && parts.size() == 3) {
+            auto top = parse_css_value(context, parts[0]);
+            auto horizontal = parse_css_value(context, parts[1]);
+            auto bottom = parse_css_value(context, parts[2]);
+            if (top && horizontal && bottom) {
+                style.set_property(CSS::PropertyID::BorderTopColor, *top);
+                style.set_property(CSS::PropertyID::BorderRightColor, *horizontal);
+                style.set_property(CSS::PropertyID::BorderBottomColor, *bottom);
+                style.set_property(CSS::PropertyID::BorderLeftColor, *horizontal);
+            }
+        } else if (value.is_string() && parts.size() == 2) {
+            auto vertical = parse_css_value(context, parts[0]);
+            auto horizontal = parse_css_value(context, parts[1]);
+            if (vertical && horizontal) {
+                style.set_property(CSS::PropertyID::BorderTopColor, *vertical);
+                style.set_property(CSS::PropertyID::BorderRightColor, *horizontal);
+                style.set_property(CSS::PropertyID::BorderBottomColor, *vertical);
+                style.set_property(CSS::PropertyID::BorderLeftColor, *horizontal);
             }
         } else {
             style.set_property(CSS::PropertyID::BorderTopColor, value);
@@ -668,10 +808,60 @@ static void set_property_expanding_shorthands(StyleProperties& style, CSS::Prope
         return;
     }
 
+    if (property_id == CSS::PropertyID::FlexFlow) {
+        auto parts = split_on_whitespace(value.to_string());
+        if (parts.size() == 0)
+            return;
+
+        auto direction = parse_css_value(context, parts[0]);
+        style.set_property(CSS::PropertyID::FlexDirection, direction.release_nonnull());
+
+        if (parts.size() > 1) {
+            auto wrap = parse_css_value(context, parts[1]);
+            style.set_property(CSS::PropertyID::FlexWrap, wrap.release_nonnull());
+        }
+        return;
+    }
+
     style.set_property(property_id, value);
 }
 
-NonnullRefPtr<StyleProperties> StyleResolver::resolve_style(const DOM::Element& element) const
+StyleResolver::CustomPropertyResolutionTuple StyleResolver::resolve_custom_property_with_specificity(DOM::Element& element, const String& custom_property_name) const
+{
+    if (auto maybe_property = element.resolve_custom_property(custom_property_name); maybe_property.has_value())
+        return maybe_property.value();
+
+    auto parent_element = element.parent_element();
+    CustomPropertyResolutionTuple parent_resolved {};
+    if (parent_element)
+        parent_resolved = resolve_custom_property_with_specificity(*parent_element, custom_property_name);
+
+    auto matching_rules = collect_matching_rules(element);
+    sort_matching_rules(matching_rules);
+
+    for (int i = matching_rules.size() - 1; i >= 0; --i) {
+        auto& match = matching_rules[i];
+        if (match.specificity < parent_resolved.specificity)
+            continue;
+
+        auto custom_property_style = match.rule->declaration().custom_property(custom_property_name);
+        if (custom_property_style.has_value()) {
+            element.add_custom_property(custom_property_name, { custom_property_style.value(), match.specificity });
+            return { custom_property_style.value(), match.specificity };
+        }
+    }
+
+    return parent_resolved;
+}
+
+Optional<StyleProperty> StyleResolver::resolve_custom_property(DOM::Element& element, const String& custom_property_name) const
+{
+    auto resolved_with_specificity = resolve_custom_property_with_specificity(element, custom_property_name);
+
+    return resolved_with_specificity.style;
+}
+
+NonnullRefPtr<StyleProperties> StyleResolver::resolve_style(DOM::Element& element) const
 {
     auto style = StyleProperties::create();
 
@@ -689,7 +879,16 @@ NonnullRefPtr<StyleProperties> StyleResolver::resolve_style(const DOM::Element& 
 
     for (auto& match : matching_rules) {
         for (auto& property : match.rule->declaration().properties()) {
-            set_property_expanding_shorthands(style, property.property_id, property.value, m_document);
+            auto property_value = property.value;
+            if (property.value->is_custom_property()) {
+                auto prop = reinterpret_cast<const CSS::CustomStyleValue*>(property.value.ptr());
+                auto custom_prop_name = prop->custom_property_name();
+                auto resolved = resolve_custom_property(element, custom_prop_name);
+                if (resolved.has_value()) {
+                    property_value = resolved.value().value;
+                }
+            }
+            set_property_expanding_shorthands(style, property.property_id, property_value, m_document);
         }
     }
 

@@ -10,11 +10,11 @@
 #include <Kernel/Debug.h>
 #include <Kernel/FileSystem/FileDescription.h>
 #include <Kernel/Process.h>
+#include <Kernel/Sections.h>
 #include <LibC/errno_numbers.h>
 
 namespace Kernel {
 
-static const unsigned s_max_pty_pairs = 8;
 static AK::Singleton<PTYMultiplexer> s_the;
 
 PTYMultiplexer& PTYMultiplexer::the()
@@ -25,8 +25,9 @@ PTYMultiplexer& PTYMultiplexer::the()
 UNMAP_AFTER_INIT PTYMultiplexer::PTYMultiplexer()
     : CharacterDevice(5, 2)
 {
-    m_freelist.ensure_capacity(s_max_pty_pairs);
-    for (int i = s_max_pty_pairs; i > 0; --i)
+    constexpr unsigned max_pty_pairs = 8;
+    m_freelist.ensure_capacity(max_pty_pairs);
+    for (int i = max_pty_pairs; i > 0; --i)
         m_freelist.unchecked_append(i - 1);
 }
 
@@ -40,9 +41,11 @@ KResultOr<NonnullRefPtr<FileDescription>> PTYMultiplexer::open(int options)
     if (m_freelist.is_empty())
         return EBUSY;
     auto master_index = m_freelist.take_last();
-    auto master = adopt_ref(*new MasterPTY(master_index));
+    auto master = try_create<MasterPTY>(master_index);
+    if (!master)
+        return ENOMEM;
     dbgln_if(PTMX_DEBUG, "PTYMultiplexer::open: Vending master {}", master->index());
-    auto description = FileDescription::create(move(master));
+    auto description = FileDescription::create(*master);
     if (!description.is_error()) {
         description.value()->set_rw_mode(options);
         description.value()->set_file_flags(options);

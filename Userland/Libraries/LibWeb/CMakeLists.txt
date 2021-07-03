@@ -1,8 +1,8 @@
 set(SOURCES
     Bindings/CSSStyleDeclarationWrapperCustom.cpp
     Bindings/EventListenerWrapper.cpp
-    Bindings/EventWrapperFactory.cpp
     Bindings/EventTargetWrapperFactory.cpp
+    Bindings/EventWrapperFactory.cpp
     Bindings/HTMLCollectionWrapperCustom.cpp
     Bindings/ImageConstructor.cpp
     Bindings/LocationObject.cpp
@@ -12,7 +12,6 @@ set(SOURCES
     Bindings/ScriptExecutionContext.cpp
     Bindings/WindowObject.cpp
     Bindings/Wrappable.cpp
-    Cookie/ParsedCookie.cpp
     CSS/CSSImportRule.cpp
     CSS/CSSRule.cpp
     CSS/CSSStyleDeclaration.cpp
@@ -39,38 +38,40 @@ set(SOURCES
     CSS/StyleValue.cpp
     CSS/ValueID.cpp
     CSS/ValueID.h
+    Cookie/ParsedCookie.cpp
     DOM/CharacterData.cpp
     DOM/CharacterData.idl
     DOM/Comment.cpp
+    DOM/DOMImplementation.cpp
     DOM/Document.cpp
     DOM/DocumentFragment.cpp
     DOM/DocumentType.cpp
-    DOM/DOMImplementation.cpp
     DOM/Element.cpp
     DOM/ElementFactory.cpp
     DOM/Event.cpp
-    DOM/HTMLCollection.cpp
-    DOM/Range.cpp
     DOM/EventDispatcher.cpp
     DOM/EventListener.cpp
     DOM/EventTarget.cpp
+    DOM/HTMLCollection.cpp
     DOM/Node.cpp
     DOM/ParentNode.cpp
     DOM/Position.cpp
     DOM/ProcessingInstruction.cpp
+    DOM/Range.cpp
     DOM/ShadowRoot.cpp
     DOM/Text.cpp
     DOM/Text.idl
     DOM/Timer.cpp
     DOM/Window.cpp
     DOMTreeModel.cpp
+    DOMTreeJSONModel.cpp
     Dump.cpp
     FontCache.cpp
     HTML/AttributeNames.cpp
+    HTML/BrowsingContextContainer.cpp
     HTML/CanvasRenderingContext2D.cpp
     HTML/EventNames.cpp
     HTML/FormAssociatedElement.cpp
-    HTML/FrameHostElement.cpp
     HTML/GlobalEventHandlers.cpp
     HTML/HTMLAnchorElement.cpp
     HTML/HTMLAreaElement.cpp
@@ -147,11 +148,13 @@ set(SOURCES
     HTML/ImageData.cpp
     HTML/Parser/Entities.cpp
     HTML/Parser/HTMLDocumentParser.cpp
+    HTML/Parser/HTMLEncodingDetection.cpp
     HTML/Parser/HTMLToken.cpp
     HTML/Parser/HTMLTokenizer.cpp
     HTML/Parser/ListOfActiveFormattingElements.cpp
     HTML/Parser/StackOfOpenElements.cpp
     HTML/SubmitEvent.cpp
+    HTML/SyntaxHighlighter/SyntaxHighlighter.cpp
     HTML/TagNames.cpp
     HTML/WebSocket.cpp
     HighResolutionTime/Performance.cpp
@@ -192,8 +195,8 @@ set(SOURCES
     Layout/TextNode.cpp
     Layout/TreeBuilder.cpp
     LayoutTreeModel.cpp
-    Loader/ContentFilter.cpp
     Loader/CSSLoader.cpp
+    Loader/ContentFilter.cpp
     Loader/FrameLoader.cpp
     Loader/ImageLoader.cpp
     Loader/ImageResource.cpp
@@ -203,9 +206,9 @@ set(SOURCES
     Namespace.cpp
     NavigationTiming/PerformanceTiming.cpp
     OutOfProcessWebView.cpp
-    Page/EventHandler.cpp
+    Page/BrowsingContext.cpp
     Page/EditEventHandler.cpp
-    Page/Frame.cpp
+    Page/EventHandler.cpp
     Page/Page.cpp
     Painting/BorderPainting.cpp
     Painting/StackingContext.cpp
@@ -219,9 +222,17 @@ set(SOURCES
     UIEvents/EventNames.cpp
     UIEvents/MouseEvent.cpp
     URLEncoder.cpp
+    WebAssembly/WebAssemblyInstanceConstructor.cpp
+    WebAssembly/WebAssemblyInstanceObject.cpp
+    WebAssembly/WebAssemblyInstanceObjectPrototype.cpp
+    WebAssembly/WebAssemblyMemoryConstructor.cpp
+    WebAssembly/WebAssemblyMemoryPrototype.cpp
+    WebAssembly/WebAssemblyModuleConstructor.cpp
+    WebAssembly/WebAssemblyModuleObject.cpp
+    WebAssembly/WebAssemblyObject.cpp
+    WebContentClient.cpp
     XHR/EventNames.cpp
     XHR/XMLHttpRequest.cpp
-    WebContentClient.cpp
 )
 
 set(GENERATED_SOURCES
@@ -464,6 +475,6 @@ add_custom_command(
 )
 
 serenity_lib(LibWeb web)
-target_link_libraries(LibWeb LibCore LibJS LibMarkdown LibGemini LibGUI LibGfx LibTextCodec LibProtocol LibImageDecoderClient)
+target_link_libraries(LibWeb LibCore LibJS LibMarkdown LibGemini LibGUI LibGfx LibTextCodec LibProtocol LibImageDecoderClient LibWasm)
 
 add_subdirectory(DumpLayoutTree)

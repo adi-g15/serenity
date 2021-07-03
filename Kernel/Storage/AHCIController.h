@@ -9,6 +9,7 @@
 #include <AK/OwnPtr.h>
 #include <AK/RefPtr.h>
 #include <AK/Types.h>
+#include <Kernel/Sections.h>
 #include <Kernel/Storage/AHCI.h>
 #include <Kernel/Storage/StorageController.h>
 #include <Kernel/Storage/StorageDevice.h>
@@ -23,7 +24,6 @@ class AHCIController final : public StorageController
     friend class AHCIPortHandler;
     friend class AHCIPort;
     AK_MAKE_ETERNAL
-public:
 public:
     UNMAP_AFTER_INIT static NonnullRefPtr<AHCIController> initialize(PCI::Address address);
     virtual ~AHCIController() override;
@@ -48,7 +48,7 @@ private:
     RefPtr<StorageDevice> device_by_port(u32 index) const;
 
     volatile AHCI::PortRegisters& port(size_t port_number) const;
-    NonnullOwnPtr<Region> hba_region() const;
+    UNMAP_AFTER_INIT NonnullOwnPtr<Region> default_hba_region() const;
     volatile AHCI::HBA& hba() const;
 
     NonnullOwnPtr<Region> m_hba_region;

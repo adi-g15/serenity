@@ -10,7 +10,8 @@
 #include <AK/Atomic.h>
 #include <AK/Noncopyable.h>
 #ifdef KERNEL
-#    include <Kernel/Arch/x86/CPU.h>
+#    include <Kernel/Arch/x86/Processor.h>
+#    include <Kernel/Arch/x86/ScopedCritical.h>
 #endif
 
 #ifndef __serenity__
@@ -36,19 +37,19 @@ public:
     Singleton() = default;
 
     template<bool allow_create = true>
-    static T* get(T*& obj_var)
+    static T* get(Atomic<T*>& obj_var)
     {
-        T* obj = AK::atomic_load(&obj_var, AK::memory_order_acquire);
+        T* obj = obj_var.load(AK::memory_order_acquire);
         if (FlatPtr(obj) <= 0x1) {
             // If this is the first time, see if we get to initialize it
 #ifdef KERNEL
             Kernel::ScopedCritical critical;
 #endif
             if constexpr (allow_create) {
-                if (obj == nullptr && AK::atomic_compare_exchange_strong(&obj_var, obj, (T*)0x1, AK::memory_order_acq_rel)) {
+                if (obj == nullptr && obj_var.compare_exchange_strong(obj, (T*)0x1, AK::memory_order_acq_rel)) {
                     // We're the first one
                     obj = InitFunction();
-                    AK::atomic_store(&obj_var, obj, AK::memory_order_release);
+                    obj_var.store(obj, AK::memory_order_release);
                     return obj;
                 }
             }
@@ -59,7 +60,7 @@ public:
 #else
                 // TODO: yield
 #endif
-                obj = AK::atomic_load(&obj_var, AK::memory_order_acquire);
+                obj = obj_var.load(AK::memory_order_acquire);
             }
             if constexpr (allow_create) {
                 // We should always return an instance if we allow creating one
@@ -97,7 +98,7 @@ public:
 
     bool is_initialized() const
     {
-        T* obj = AK::atomic_load(&m_obj, AK::memory_order_consume);
+        T* obj = m_obj.load(AK::MemoryOrder::memory_order_consume);
         return FlatPtr(obj) > 0x1;
     }
 
@@ -107,7 +108,6 @@ public:
     }
 
 private:
-    mutable T* m_obj { nullptr }; // atomic
+    mutable Atomic<T*> m_obj { nullptr };
 };
-
 }

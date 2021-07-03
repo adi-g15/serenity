@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
- * Copyright (c) 2020, Linus Groh <linusg@serenityos.org>
+ * Copyright (c) 2020-2021, Linus Groh <linusg@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -8,6 +8,7 @@
 #include <AK/LexicalPath.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ArgsParser.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -43,7 +44,7 @@ int main(int argc, char** argv)
         StringBuilder path_builder;
         if (lexical_path.is_absolute())
             path_builder.append("/");
-        for (auto& part : lexical_path.parts()) {
+        for (auto& part : lexical_path.parts_view()) {
             path_builder.append(part);
             auto path = path_builder.build();
             struct stat st;
@@ -60,7 +61,7 @@ int main(int argc, char** argv)
                 }
             } else {
                 if (!S_ISDIR(st.st_mode)) {
-                    fprintf(stderr, "mkdir: cannot create directory '%s': not a directory\n", path.characters());
+                    warnln("mkdir: cannot create directory '{}': not a directory", path);
                     has_errors = true;
                     break;
                 }

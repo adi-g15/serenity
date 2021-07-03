@@ -4,25 +4,28 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Assertions.h>
 #include <Kernel/Debug.h>
+#include <Kernel/Sections.h>
 #include <Kernel/Time/HPETComparator.h>
 #include <Kernel/Time/TimeManagement.h>
 
 namespace Kernel {
 
-UNMAP_AFTER_INIT NonnullRefPtr<HPETComparator> HPETComparator::create(u8 number, u8 irq, bool periodic_capable)
+UNMAP_AFTER_INIT NonnullRefPtr<HPETComparator> HPETComparator::create(u8 number, u8 irq, bool periodic_capable, bool is_64bit_capable)
 {
-    auto timer = adopt_ref(*new HPETComparator(number, irq, periodic_capable));
+    auto timer = adopt_ref(*new HPETComparator(number, irq, periodic_capable, is_64bit_capable));
     timer->register_interrupt_handler();
     return timer;
 }
 
-UNMAP_AFTER_INIT HPETComparator::HPETComparator(u8 number, u8 irq, bool periodic_capable)
+UNMAP_AFTER_INIT HPETComparator::HPETComparator(u8 number, u8 irq, bool periodic_capable, bool is_64bit_capable)
     : HardwareTimer(irq)
     , m_periodic(false)
     , m_periodic_capable(periodic_capable)
     , m_enabled(false)
+    , m_is_64bit_capable(is_64bit_capable)
     , m_comparator_number(number)
 {
 }
@@ -50,11 +53,12 @@ void HPETComparator::set_non_periodic()
     HPET::the().disable_periodic_interrupt(*this);
 }
 
-void HPETComparator::handle_irq(const RegisterState& regs)
+bool HPETComparator::handle_irq(const RegisterState& regs)
 {
-    HardwareTimer::handle_irq(regs);
+    auto result = HardwareTimer::handle_irq(regs);
     if (!is_periodic())
         set_new_countdown();
+    return result;
 }
 
 void HPETComparator::set_new_countdown()
@@ -82,7 +86,7 @@ bool HPETComparator::try_to_set_frequency(size_t frequency)
 {
     InterruptDisabler disabler;
     if (!is_capable_of_frequency(frequency)) {
-        dbgln("HPETComparator: not cable of frequency: {}", frequency);
+        dbgln("HPETComparator: not capable of frequency: {}", frequency);
         return false;
     }
 
@@ -98,6 +102,7 @@ bool HPETComparator::try_to_set_frequency(size_t frequency)
     } else {
         HPET::the().update_non_periodic_comparator_value(*this);
     }
+    HPET::the().enable(*this);
     enable_irq(); // Enable if we haven't already
     return true;
 }

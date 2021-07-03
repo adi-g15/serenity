@@ -1,3 +1,2 @@
-add_executable(test-js test-js.cpp)
-target_link_libraries(test-js LibJS LibLine LibCore)
-install(TARGETS test-js RUNTIME DESTINATION bin)
+serenity_testjs_test(test-js.cpp test-js)
+install(TARGETS test-js RUNTIME DESTINATION bin OPTIONAL)

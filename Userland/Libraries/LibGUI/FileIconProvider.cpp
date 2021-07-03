@@ -122,7 +122,7 @@ Icon FileIconProvider::icon_for_path(const String& path)
 {
     struct stat stat;
     if (::stat(path.characters(), &stat) < 0)
-        return {};
+        return s_file_icon;
     return icon_for_path(path, stat.st_mode);
 }
 
@@ -176,10 +176,10 @@ Icon FileIconProvider::icon_for_executable(const String& path)
         auto section = image.lookup_section(icon_section.section_name);
 
         RefPtr<Gfx::Bitmap> bitmap;
-        if (section.is_undefined()) {
+        if (!section.has_value()) {
             bitmap = s_executable_icon.bitmap_for_size(icon_section.image_size);
         } else {
-            bitmap = Gfx::load_png_from_memory(reinterpret_cast<const u8*>(section.raw_data()), section.size());
+            bitmap = Gfx::load_png_from_memory(reinterpret_cast<u8 const*>(section->raw_data()), section->size());
         }
 
         if (!bitmap) {
@@ -222,11 +222,9 @@ Icon FileIconProvider::icon_for_path(const String& path, mode_t mode)
         if (raw_symlink_target.starts_with('/')) {
             target_path = raw_symlink_target;
         } else {
-            target_path = Core::File::real_path_for(String::formatted("{}/{}", LexicalPath(path).dirname(), raw_symlink_target));
+            target_path = Core::File::real_path_for(String::formatted("{}/{}", LexicalPath::dirname(path), raw_symlink_target));
         }
         auto target_icon = icon_for_path(target_path);
-        if (target_icon.sizes().is_empty())
-            return s_symlink_icon;
 
         Icon generated_icon;
         for (auto size : target_icon.sizes()) {

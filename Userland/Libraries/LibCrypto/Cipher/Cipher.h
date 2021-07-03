@@ -39,14 +39,12 @@ public:
     {
     }
 
-    static size_t block_size() { VERIFY_NOT_REACHED(); }
-
     virtual ReadonlyBytes bytes() const = 0;
 
     virtual void overwrite(ReadonlyBytes) = 0;
     virtual void overwrite(const u8* data, size_t size) { overwrite({ data, size }); }
 
-    virtual void apply_initialization_vector(const u8* ivec) = 0;
+    virtual void apply_initialization_vector(ReadonlyBytes ivec) = 0;
 
     PaddingMode padding_mode() const { return m_padding_mode; }
     void set_padding_mode(PaddingMode mode) { m_padding_mode = mode; }
@@ -106,7 +104,7 @@ public:
     virtual const KeyType& key() const = 0;
     virtual KeyType& key() = 0;
 
-    static size_t block_size() { return BlockType::block_size(); }
+    constexpr static size_t block_size() { return BlockType::block_size(); }
 
     PaddingMode padding_mode() const { return m_padding_mode; }
 

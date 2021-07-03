@@ -86,18 +86,20 @@ bool matches(const StringView& str, const StringView& mask, CaseSensitivity case
 }
 
 template<typename T>
-Optional<T> convert_to_int(const StringView& str)
+Optional<T> convert_to_int(const StringView& str, TrimWhitespace trim_whitespace)
 {
-    auto str_trimmed = str.trim_whitespace();
-    if (str_trimmed.is_empty())
+    auto string = trim_whitespace == TrimWhitespace::Yes
+        ? str.trim_whitespace()
+        : str;
+    if (string.is_empty())
         return {};
 
     T sign = 1;
     size_t i = 0;
-    const auto characters = str_trimmed.characters_without_null_termination();
+    const auto characters = string.characters_without_null_termination();
 
     if (characters[0] == '-' || characters[0] == '+') {
-        if (str_trimmed.length() == 1)
+        if (string.length() == 1)
             return {};
         i++;
         if (characters[0] == '-')
@@ -105,7 +107,7 @@ Optional<T> convert_to_int(const StringView& str)
     }
 
     T value = 0;
-    for (; i < str_trimmed.length(); i++) {
+    for (; i < string.length(); i++) {
         if (characters[i] < '0' || characters[i] > '9')
             return {};
 
@@ -118,22 +120,24 @@ Optional<T> convert_to_int(const StringView& str)
     return value;
 }
 
-template Optional<i8> convert_to_int(const StringView& str);
-template Optional<i16> convert_to_int(const StringView& str);
-template Optional<i32> convert_to_int(const StringView& str);
-template Optional<i64> convert_to_int(const StringView& str);
+template Optional<i8> convert_to_int(const StringView& str, TrimWhitespace);
+template Optional<i16> convert_to_int(const StringView& str, TrimWhitespace);
+template Optional<i32> convert_to_int(const StringView& str, TrimWhitespace);
+template Optional<i64> convert_to_int(const StringView& str, TrimWhitespace);
 
 template<typename T>
-Optional<T> convert_to_uint(const StringView& str)
+Optional<T> convert_to_uint(const StringView& str, TrimWhitespace trim_whitespace)
 {
-    auto str_trimmed = str.trim_whitespace();
-    if (str_trimmed.is_empty())
+    auto string = trim_whitespace == TrimWhitespace::Yes
+        ? str.trim_whitespace()
+        : str;
+    if (string.is_empty())
         return {};
 
     T value = 0;
-    const auto characters = str_trimmed.characters_without_null_termination();
+    const auto characters = string.characters_without_null_termination();
 
-    for (size_t i = 0; i < str_trimmed.length(); i++) {
+    for (size_t i = 0; i < string.length(); i++) {
         if (characters[i] < '0' || characters[i] > '9')
             return {};
 
@@ -146,26 +150,28 @@ Optional<T> convert_to_uint(const StringView& str)
     return value;
 }
 
-template Optional<u8> convert_to_uint(const StringView& str);
-template Optional<u16> convert_to_uint(const StringView& str);
-template Optional<u32> convert_to_uint(const StringView& str);
-template Optional<u64> convert_to_uint(const StringView& str);
-template Optional<long> convert_to_uint(const StringView& str);
-template Optional<long long> convert_to_uint(const StringView& str);
+template Optional<u8> convert_to_uint(const StringView& str, TrimWhitespace);
+template Optional<u16> convert_to_uint(const StringView& str, TrimWhitespace);
+template Optional<u32> convert_to_uint(const StringView& str, TrimWhitespace);
+template Optional<u64> convert_to_uint(const StringView& str, TrimWhitespace);
+template Optional<long> convert_to_uint(const StringView& str, TrimWhitespace);
+template Optional<long long> convert_to_uint(const StringView& str, TrimWhitespace);
 
 template<typename T>
-Optional<T> convert_to_uint_from_hex(const StringView& str)
+Optional<T> convert_to_uint_from_hex(const StringView& str, TrimWhitespace trim_whitespace)
 {
-    auto str_trimmed = str.trim_whitespace();
-    if (str_trimmed.is_empty())
+    auto string = trim_whitespace == TrimWhitespace::Yes
+        ? str.trim_whitespace()
+        : str;
+    if (string.is_empty())
         return {};
 
     T value = 0;
-    const auto count = str_trimmed.length();
+    const auto count = string.length();
     const T upper_bound = NumericLimits<T>::max();
 
     for (size_t i = 0; i < count; i++) {
-        char digit = str_trimmed[i];
+        char digit = string[i];
         u8 digit_val;
         if (value > (upper_bound >> 4))
             return {};
@@ -185,10 +191,10 @@ Optional<T> convert_to_uint_from_hex(const StringView& str)
     return value;
 }
 
-template Optional<u8> convert_to_uint_from_hex(const StringView& str);
-template Optional<u16> convert_to_uint_from_hex(const StringView& str);
-template Optional<u32> convert_to_uint_from_hex(const StringView& str);
-template Optional<u64> convert_to_uint_from_hex(const StringView& str);
+template Optional<u8> convert_to_uint_from_hex(const StringView& str, TrimWhitespace);
+template Optional<u16> convert_to_uint_from_hex(const StringView& str, TrimWhitespace);
+template Optional<u32> convert_to_uint_from_hex(const StringView& str, TrimWhitespace);
+template Optional<u64> convert_to_uint_from_hex(const StringView& str, TrimWhitespace);
 
 static inline char to_lowercase(char c)
 {
@@ -292,7 +298,7 @@ bool is_whitespace(const StringView& str)
     return true;
 }
 
-StringView trim_whitespace(const StringView& str, TrimMode mode)
+StringView trim(const StringView& str, const StringView& characters, TrimMode mode)
 {
     size_t substring_start = 0;
     size_t substring_length = str.length();
@@ -301,7 +307,7 @@ StringView trim_whitespace(const StringView& str, TrimMode mode)
         for (size_t i = 0; i < str.length(); ++i) {
             if (substring_length == 0)
                 return "";
-            if (!isspace(str[i]))
+            if (!characters.contains(str[i]))
                 break;
             ++substring_start;
             --substring_length;
@@ -312,7 +318,7 @@ StringView trim_whitespace(const StringView& str, TrimMode mode)
         for (size_t i = str.length() - 1; i > 0; --i) {
             if (substring_length == 0)
                 return "";
-            if (!isspace(str[i]))
+            if (!characters.contains(str[i]))
                 break;
             --substring_length;
         }
@@ -321,11 +327,73 @@ StringView trim_whitespace(const StringView& str, TrimMode mode)
     return str.substring_view(substring_start, substring_length);
 }
 
-Optional<size_t> find(const StringView& haystack, const StringView& needle)
+StringView trim_whitespace(const StringView& str, TrimMode mode)
 {
-    return AK::memmem_optional(
-        haystack.characters_without_null_termination(), haystack.length(),
+    return trim(str, " \n\t\v\f\r", mode);
+}
+
+Optional<size_t> find(StringView const& haystack, char needle, size_t start)
+{
+    if (start >= haystack.length())
+        return {};
+    for (size_t i = start; i < haystack.length(); ++i) {
+        if (haystack[i] == needle)
+            return i;
+    }
+    return {};
+}
+
+Optional<size_t> find(StringView const& haystack, StringView const& needle, size_t start)
+{
+    if (start > haystack.length())
+        return {};
+    auto index = AK::memmem_optional(
+        haystack.characters_without_null_termination() + start, haystack.length() - start,
         needle.characters_without_null_termination(), needle.length());
+    return index.has_value() ? (*index + start) : index;
+}
+
+Optional<size_t> find_last(StringView const& haystack, char needle)
+{
+    for (size_t i = haystack.length(); i > 0; --i) {
+        if (haystack[i - 1] == needle)
+            return i - 1;
+    }
+    return {};
+}
+
+Vector<size_t> find_all(StringView const& haystack, StringView const& needle)
+{
+    Vector<size_t> positions;
+    size_t current_position = 0;
+    while (current_position <= haystack.length()) {
+        auto maybe_position = AK::memmem_optional(
+            haystack.characters_without_null_termination() + current_position, haystack.length() - current_position,
+            needle.characters_without_null_termination(), needle.length());
+        if (!maybe_position.has_value())
+            break;
+        positions.append(current_position + *maybe_position);
+        current_position += *maybe_position + 1;
+    }
+    return positions;
+}
+
+Optional<size_t> find_any_of(StringView const& haystack, StringView const& needles, SearchDirection direction)
+{
+    if (haystack.is_empty() || needles.is_empty())
+        return {};
+    if (direction == SearchDirection::Forward) {
+        for (size_t i = 0; i < haystack.length(); ++i) {
+            if (needles.contains(haystack[i]))
+                return i;
+        }
+    } else if (direction == SearchDirection::Backward) {
+        for (size_t i = haystack.length(); i > 0; --i) {
+            if (needles.contains(haystack[i - 1]))
+                return i - 1;
+        }
+    }
+    return {};
 }
 
 String to_snakecase(const StringView& str)

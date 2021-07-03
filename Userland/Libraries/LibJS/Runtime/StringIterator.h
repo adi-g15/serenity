@@ -17,17 +17,17 @@ class StringIterator final : public Object {
 public:
     static StringIterator* create(GlobalObject&, String string);
 
-    explicit StringIterator(Object& prototype, String string);
+    explicit StringIterator(String string, Object& prototype);
     virtual ~StringIterator() override;
 
-    Utf8CodepointIterator& iterator() { return m_iterator; }
+    Utf8CodePointIterator& iterator() { return m_iterator; }
     bool done() const { return m_done; }
 
 private:
     friend class StringIteratorPrototype;
 
     String m_string;
-    Utf8CodepointIterator m_iterator;
+    Utf8CodePointIterator m_iterator;
     bool m_done { false };
 };
 

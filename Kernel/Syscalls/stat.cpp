@@ -5,16 +5,17 @@
  */
 
 #include <AK/NonnullRefPtrVector.h>
+#include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/FileDescription.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
 #include <Kernel/Process.h>
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$fstat(int fd, Userspace<stat*> user_statbuf)
+KResultOr<FlatPtr> Process::sys$fstat(int fd, Userspace<stat*> user_statbuf)
 {
     REQUIRE_PROMISE(stdio);
-    auto description = file_description(fd);
+    auto description = fds().file_description(fd);
     if (!description)
         return EBADF;
     stat buffer = {};
@@ -24,7 +25,7 @@ KResultOr<int> Process::sys$fstat(int fd, Userspace<stat*> user_statbuf)
     return rc;
 }
 
-KResultOr<int> Process::sys$stat(Userspace<const Syscall::SC_stat_params*> user_params)
+KResultOr<FlatPtr> Process::sys$stat(Userspace<const Syscall::SC_stat_params*> user_params)
 {
     REQUIRE_PROMISE(rpath);
     Syscall::SC_stat_params params;
@@ -33,7 +34,20 @@ KResultOr<int> Process::sys$stat(Userspace<const Syscall::SC_stat_params*> user_
     auto path = get_syscall_path_argument(params.path);
     if (path.is_error())
         return path.error();
-    auto metadata_or_error = VFS::the().lookup_metadata(path.value(), current_directory(), params.follow_symlinks ? 0 : O_NOFOLLOW_NOERROR);
+    RefPtr<Custody> base;
+    if (params.dirfd == AT_FDCWD) {
+        base = current_directory();
+    } else {
+        auto base_description = fds().file_description(params.dirfd);
+        if (!base_description)
+            return EBADF;
+        if (!base_description->is_directory())
+            return ENOTDIR;
+        if (!base_description->custody())
+            return EINVAL;
+        base = base_description->custody();
+    }
+    auto metadata_or_error = VFS::the().lookup_metadata(path.value()->view(), *base, params.follow_symlinks ? 0 : O_NOFOLLOW_NOERROR);
     if (metadata_or_error.is_error())
         return metadata_or_error.error();
     stat statbuf;

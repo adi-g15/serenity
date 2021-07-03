@@ -110,6 +110,10 @@ public:
     Optional<HTMLToken> next_token();
 
     void switch_to(Badge<HTMLDocumentParser>, State new_state);
+    void switch_to(State new_state)
+    {
+        m_state = new_state;
+    }
 
     void set_blocked(bool b) { m_blocked = b; }
     bool is_blocked() const { return m_blocked; }
@@ -117,6 +121,7 @@ public:
     String source() const { return m_decoded_input; }
 
 private:
+    void skip(size_t count);
     Optional<u32> next_code_point();
     Optional<u32> peek_code_point(size_t offset) const;
     bool consume_next_if_match(const StringView&, CaseSensitivity = CaseSensitivity::CaseSensitive);
@@ -141,6 +146,9 @@ private:
 
     bool consumed_as_part_of_an_attribute() const;
 
+    void restore_to(const Utf8CodePointIterator& new_iterator);
+    HTMLToken::Position nth_last_position(size_t n = 0);
+
     State m_state { State::Data };
     State m_return_state { State::Data };
 
@@ -151,8 +159,8 @@ private:
     StringView m_input;
 
     Utf8View m_utf8_view;
-    Utf8CodepointIterator m_utf8_iterator;
-    Utf8CodepointIterator m_prev_utf8_iterator;
+    Utf8CodePointIterator m_utf8_iterator;
+    Utf8CodePointIterator m_prev_utf8_iterator;
 
     HTMLToken m_current_token;
 
@@ -165,6 +173,8 @@ private:
     u32 m_character_reference_code { 0 };
 
     bool m_blocked { false };
+
+    Vector<HTMLToken::Position> m_source_positions;
 };
 
 }

@@ -22,6 +22,8 @@ int main(int argc, char** argv)
     Vector<const char*> values;
 
     Core::ArgsParser args_parser;
+    args_parser.set_stop_on_first_non_option(true);
+
     args_parser.add_option(ignore_env, "Start with an empty environment", "ignore-environment", 'i');
     args_parser.add_option(split_string, "Process and split S into separate arguments; used to pass multiple arguments on shebang lines", "split-string", 'S', "S");
 
@@ -57,7 +59,7 @@ int main(int argc, char** argv)
 
     if (new_argv.size() == 0) {
         for (auto entry = environ; *entry != nullptr; ++entry)
-            printf("%s\n", *entry);
+            outln("{}", *entry);
 
         return 0;
     }

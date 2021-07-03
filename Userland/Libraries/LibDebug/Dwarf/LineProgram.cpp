@@ -130,14 +130,14 @@ void LineProgram::append_to_line_info()
     if (m_file_index >= m_source_files.size())
         return;
 
-    String directory = m_source_directories[m_source_files[m_file_index].directory_index];
+    auto const& directory = m_source_directories[m_source_files[m_file_index].directory_index];
 
     StringBuilder full_path(directory.length() + m_source_files[m_file_index].name.length() + 1);
     full_path.append(directory);
     full_path.append('/');
     full_path.append(m_source_files[m_file_index].name);
 
-    m_lines.append({ m_address, full_path.to_string(), m_line });
+    m_lines.append({ m_address, FlyString { full_path.string_view() }, m_line });
 }
 
 void LineProgram::reset_registers()
@@ -288,6 +288,15 @@ void LineProgram::run_program()
             handle_special_opcode(opcode);
         }
     }
+}
+
+LineProgram::DirectoryAndFile LineProgram::get_directory_and_file(size_t file_index) const
+{
+    VERIFY(file_index < m_source_files.size());
+    auto file_entry = m_source_files[file_index];
+    VERIFY(file_entry.directory_index < m_source_directories.size());
+    auto directory_entry = m_source_directories[file_entry.directory_index];
+    return { directory_entry, file_entry.name };
 }
 
 }

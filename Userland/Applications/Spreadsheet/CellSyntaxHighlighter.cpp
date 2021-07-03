@@ -31,13 +31,13 @@ void CellSyntaxHighlighter::rehighlight(const Palette& palette)
             false,
             false,
         },
-        nullptr,
+        (u64)-1,
         false);
 
     if (m_cell && m_cell->exception()) {
         auto& traceback = m_cell->exception()->traceback();
         auto& range = traceback.first().source_range;
-        GUI::TextRange text_range { { range.start.line - 1, range.start.column }, { range.end.line - 1, range.end.column - 1 } };
+        GUI::TextRange text_range { { range.start.line - 1, range.start.column }, { range.end.line - 1, range.end.column } };
         m_client->spans().prepend(
             GUI::TextDocumentSpan {
                 text_range,
@@ -47,7 +47,7 @@ void CellSyntaxHighlighter::rehighlight(const Palette& palette)
                     false,
                     false,
                 },
-                nullptr,
+                (u64)-1,
                 false });
     }
     m_client->do_update();

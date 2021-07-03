@@ -5,32 +5,31 @@
  */
 
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/LexicalEnvironment.h>
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/Value.h>
 
 namespace JS {
 
-NativeFunction* NativeFunction::create(GlobalObject& global_object, const FlyString& name, AK::Function<Value(VM&, GlobalObject&)> function)
+NativeFunction* NativeFunction::create(GlobalObject& global_object, const FlyString& name, Function<Value(VM&, GlobalObject&)> function)
 {
     return global_object.heap().allocate<NativeFunction>(global_object, name, move(function), *global_object.function_prototype());
 }
 
 NativeFunction::NativeFunction(Object& prototype)
-    : Function(prototype)
+    : FunctionObject(prototype)
 {
 }
 
-NativeFunction::NativeFunction(const FlyString& name, AK::Function<Value(VM&, GlobalObject&)> native_function, Object& prototype)
-    : Function(prototype)
-    , m_name(name)
+NativeFunction::NativeFunction(FlyString name, Function<Value(VM&, GlobalObject&)> native_function, Object& prototype)
+    : FunctionObject(prototype)
+    , m_name(move(name))
     , m_native_function(move(native_function))
 {
 }
 
-NativeFunction::NativeFunction(const FlyString& name, Object& prototype)
-    : Function(prototype)
-    , m_name(name)
+NativeFunction::NativeFunction(FlyString name, Object& prototype)
+    : FunctionObject(prototype)
+    , m_name(move(name))
 {
 }
 
@@ -43,14 +42,14 @@ Value NativeFunction::call()
     return m_native_function(vm(), global_object());
 }
 
-Value NativeFunction::construct(Function&)
+Value NativeFunction::construct(FunctionObject&)
 {
     return {};
 }
 
-LexicalEnvironment* NativeFunction::create_environment()
+FunctionEnvironment* NativeFunction::create_environment(FunctionObject&)
 {
-    return heap().allocate<LexicalEnvironment>(global_object(), LexicalEnvironment::EnvironmentRecordType::Function);
+    return nullptr;
 }
 
 bool NativeFunction::is_strict_mode() const

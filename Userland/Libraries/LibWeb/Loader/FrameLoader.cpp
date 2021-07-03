@@ -18,13 +18,13 @@
 #include <LibWeb/Loader/FrameLoader.h>
 #include <LibWeb/Loader/ResourceLoader.h>
 #include <LibWeb/Namespace.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 #include <LibWeb/Page/Page.h>
 
 namespace Web {
 
-FrameLoader::FrameLoader(Frame& frame)
-    : m_frame(frame)
+FrameLoader::FrameLoader(BrowsingContext& browsing_context)
+    : m_browsing_context(browsing_context)
 {
 }
 
@@ -81,7 +81,7 @@ static bool build_image_document(DOM::Document& document, const ByteBuffer& data
     auto title_element = document.create_element("title");
     head_element->append_child(title_element);
 
-    auto basename = LexicalPath(document.url().path()).basename();
+    auto basename = LexicalPath::basename(document.url().path());
     auto title_text = adopt_ref(*new DOM::Text(document, String::formatted("{} [{}x{}]", basename, bitmap->width(), bitmap->height())));
     title_element->append_child(title_text);
 
@@ -113,8 +113,8 @@ bool FrameLoader::parse_document(DOM::Document& document, const ByteBuffer& data
 {
     auto& mime_type = document.content_type();
     if (mime_type == "text/html" || mime_type == "image/svg+xml") {
-        HTML::HTMLDocumentParser parser(document, data, document.encoding());
-        parser.run(document.url());
+        auto parser = HTML::HTMLDocumentParser::create_with_uncertain_encoding(document, data);
+        parser->run(document.url());
         return true;
     }
     if (mime_type.starts_with("image/"))
@@ -136,19 +136,19 @@ bool FrameLoader::load(const LoadRequest& request, Type type)
         return false;
     }
 
-    if (!m_frame.is_frame_nesting_allowed(request.url())) {
+    if (!m_browsing_context.is_frame_nesting_allowed(request.url())) {
         dbgln("No further recursion is allowed for the frame, abort load!");
         return false;
     }
 
     auto& url = request.url();
 
-    set_resource(ResourceLoader::the().load_resource(Resource::Type::Generic, request));
-
-    if (type == Type::Navigation) {
-        if (auto* page = frame().page())
+    if (type == Type::Navigation || type == Type::Reload) {
+        if (auto* page = browsing_context().page())
             page->client().page_did_start_loading(url);
     }
+
+    set_resource(ResourceLoader::the().load_resource(Resource::Type::Generic, request));
 
     if (type == Type::IFrame)
         return true;
@@ -158,7 +158,7 @@ bool FrameLoader::load(const LoadRequest& request, Type type)
         favicon_url.set_protocol(url.protocol());
         favicon_url.set_host(url.host());
         favicon_url.set_port(url.port());
-        favicon_url.set_path("/favicon.ico");
+        favicon_url.set_paths({ "favicon.ico" });
 
         ResourceLoader::the().load(
             favicon_url,
@@ -171,7 +171,7 @@ bool FrameLoader::load(const LoadRequest& request, Type type)
                     return;
                 }
                 dbgln("Decoded favicon, {}", bitmap->size());
-                if (auto* page = frame().page())
+                if (auto* page = browsing_context().page())
                     page->client().page_did_change_favicon(*bitmap);
             });
     }
@@ -188,7 +188,7 @@ bool FrameLoader::load(const URL& url, Type type)
         return false;
     }
 
-    auto request = LoadRequest::create_for_url_on_page(url, frame().page());
+    auto request = LoadRequest::create_for_url_on_page(url, browsing_context().page());
     return load(request, type);
 }
 
@@ -197,7 +197,7 @@ void FrameLoader::load_html(const StringView& html, const URL& url)
     auto document = DOM::Document::create(url);
     HTML::HTMLDocumentParser parser(document, html, "utf-8");
     parser.run(url);
-    frame().set_document(&parser.document());
+    browsing_context().set_document(&parser.document());
 }
 
 // FIXME: Use an actual templating engine (our own one when it's built, preferably
@@ -217,7 +217,7 @@ void FrameLoader::load_error_page(const URL& failed_url, const String& error)
             generator.append(data);
             auto document = HTML::parse_html_document(generator.as_string_view(), failed_url, "utf-8");
             VERIFY(document);
-            frame().set_document(document);
+            browsing_context().set_document(document);
         },
         [](auto& error, auto) {
             dbgln("Failed to load error page: {}", error);
@@ -229,26 +229,37 @@ void FrameLoader::resource_did_load()
 {
     auto url = resource()->url();
 
+    // FIXME: Also check HTTP status code before redirecting
+    auto location = resource()->response_headers().get("Location");
+    if (location.has_value()) {
+        if (m_redirects_count > maximum_redirects_allowed) {
+            m_redirects_count = 0;
+            load_error_page(url, "Too many redirects");
+            return;
+        }
+        m_redirects_count++;
+        load(url.complete_url(location.value()), FrameLoader::Type::Navigation);
+        return;
+    }
+    m_redirects_count = 0;
+
     if (!resource()->has_encoded_data()) {
         load_error_page(url, "No data");
         return;
     }
 
-    // FIXME: Also check HTTP status code before redirecting
-    auto location = resource()->response_headers().get("Location");
-    if (location.has_value()) {
-        load(url.complete_url(location.value()), FrameLoader::Type::Navigation);
-        return;
+    if (resource()->has_encoding()) {
+        dbgln("This content has MIME type '{}', encoding '{}'", resource()->mime_type(), resource()->encoding().value());
+    } else {
+        dbgln("This content has MIME type '{}', encoding unknown", resource()->mime_type());
     }
-
-    dbgln("I believe this content has MIME type '{}', encoding '{}'", resource()->mime_type(), resource()->encoding());
 
     auto document = DOM::Document::create();
     document->set_url(url);
     document->set_encoding(resource()->encoding());
     document->set_content_type(resource()->mime_type());
 
-    frame().set_document(document);
+    browsing_context().set_document(document);
 
     if (!parse_document(*document, resource()->encoded_data())) {
         load_error_page(url, "Failed to parse content.");
@@ -261,15 +272,14 @@ void FrameLoader::resource_did_load()
         document->set_cookie(set_cookie.value(), Cookie::Source::Http);
 
     if (!url.fragment().is_empty())
-        frame().scroll_to_anchor(url.fragment());
+        browsing_context().scroll_to_anchor(url.fragment());
 
-    if (auto* host_element = frame().host_element()) {
+    if (auto* host_element = browsing_context().host_element()) {
         // FIXME: Perhaps in the future we'll have a better common base class for <frame> and <iframe>
-        VERIFY(is<HTML::HTMLIFrameElement>(*host_element));
-        downcast<HTML::HTMLIFrameElement>(*host_element).content_frame_did_load({});
+        verify_cast<HTML::HTMLIFrameElement>(*host_element).nested_browsing_context_did_load({});
     }
 
-    if (auto* page = frame().page())
+    if (auto* page = browsing_context().page())
         page->client().page_did_finish_loading(url);
 }
 

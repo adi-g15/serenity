@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include "InspectorServerClient.h"
 #include <AK/NonnullOwnPtrVector.h>
 #include <LibCore/LocalSocket.h>
 
@@ -31,6 +32,8 @@ public:
 
     void set_property(FlatPtr object, const StringView& name, const JsonValue& value);
 
+    bool is_inspectable();
+
     Function<void()> on_update;
 
 private:
@@ -42,8 +45,8 @@ private:
     pid_t m_pid { -1 };
     String m_process_name;
     NonnullRefPtr<RemoteObjectGraphModel> m_object_graph_model;
-    RefPtr<Core::LocalSocket> m_socket;
     NonnullOwnPtrVector<RemoteObject> m_roots;
+    RefPtr<InspectorServerClient> m_client;
 };
 
 }

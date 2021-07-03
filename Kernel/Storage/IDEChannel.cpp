@@ -9,6 +9,7 @@
 #include <AK/StringView.h>
 #include <Kernel/IO.h>
 #include <Kernel/Process.h>
+#include <Kernel/Sections.h>
 #include <Kernel/Storage/ATA.h>
 #include <Kernel/Storage/IDEChannel.h>
 #include <Kernel/Storage/IDEController.h>
@@ -190,7 +191,7 @@ void IDEChannel::try_disambiguate_error()
     }
 }
 
-void IDEChannel::handle_irq(const RegisterState&)
+bool IDEChannel::handle_irq(const RegisterState&)
 {
     u8 status = m_io_group.io_base().offset(ATA_REG_STATUS).in<u8>();
 
@@ -204,7 +205,7 @@ void IDEChannel::handle_irq(const RegisterState&)
 
     if (!m_current_request) {
         dbgln("IDEChannel: IRQ but no pending request!");
-        return;
+        return false;
     }
 
     if (status & ATA_SR_ERR) {
@@ -213,7 +214,7 @@ void IDEChannel::handle_irq(const RegisterState&)
         dbgln("IDEChannel: Error {:#02x}!", (u8)m_device_error);
         try_disambiguate_error();
         complete_current_request(AsyncDeviceRequest::Failure);
-        return;
+        return true;
     }
     m_device_error = 0;
 
@@ -251,6 +252,7 @@ void IDEChannel::handle_irq(const RegisterState&)
             }
         }
     });
+    return true;
 }
 
 static void io_delay()
@@ -269,7 +271,7 @@ bool IDEChannel::wait_until_not_busy(bool slave, size_t milliseconds_timeout)
         IO::delay(1000);
         time_elapsed++;
     }
-    return time_elapsed != milliseconds_timeout;
+    return time_elapsed <= milliseconds_timeout;
 }
 
 bool IDEChannel::wait_until_not_busy(size_t milliseconds_timeout)
@@ -279,7 +281,7 @@ bool IDEChannel::wait_until_not_busy(size_t milliseconds_timeout)
         IO::delay(1000);
         time_elapsed++;
     }
-    return time_elapsed != milliseconds_timeout;
+    return time_elapsed <= milliseconds_timeout;
 }
 
 String IDEChannel::channel_type_string() const
@@ -476,12 +478,12 @@ bool IDEChannel::ata_do_read_sector()
     dbgln_if(PATA_DEBUG, "IDEChannel::ata_do_read_sector");
     auto& request = *m_current_request;
     auto out_buffer = request.buffer().offset(m_current_request_block_index * 512);
-    ssize_t nwritten = request.write_to_buffer_buffered<512>(out_buffer, 512, [&](u8* buffer, size_t buffer_bytes) {
+    auto result = request.write_to_buffer_buffered<512>(out_buffer, 512, [&](u8* buffer, size_t buffer_bytes) {
         for (size_t i = 0; i < buffer_bytes; i += sizeof(u16))
             *(u16*)&buffer[i] = IO::in16(m_io_group.io_base().offset(ATA_REG_DATA).get());
-        return (ssize_t)buffer_bytes;
+        return buffer_bytes;
     });
-    if (nwritten < 0) {
+    if (result.is_error()) {
         // TODO: Do we need to abort the PATA read if this wasn't the last block?
         complete_current_request(AsyncDeviceRequest::MemoryFault);
         return false;
@@ -518,12 +520,12 @@ void IDEChannel::ata_do_write_sector()
 
     auto in_buffer = request.buffer().offset(m_current_request_block_index * 512);
     dbgln_if(PATA_DEBUG, "IDEChannel: Writing 512 bytes (part {}) (status={:#02x})...", m_current_request_block_index, status);
-    ssize_t nread = request.read_from_buffer_buffered<512>(in_buffer, 512, [&](const u8* buffer, size_t buffer_bytes) {
+    auto result = request.read_from_buffer_buffered<512>(in_buffer, 512, [&](u8 const* buffer, size_t buffer_bytes) {
         for (size_t i = 0; i < buffer_bytes; i += sizeof(u16))
             IO::out16(m_io_group.io_base().offset(ATA_REG_DATA).get(), *(const u16*)&buffer[i]);
-        return (ssize_t)buffer_bytes;
+        return buffer_bytes;
     });
-    if (nread < 0)
+    if (result.is_error())
         complete_current_request(AsyncDeviceRequest::MemoryFault);
 }
 

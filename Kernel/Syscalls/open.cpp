@@ -12,7 +12,7 @@
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$open(Userspace<const Syscall::SC_open_params*> user_params)
+KResultOr<FlatPtr> Process::sys$open(Userspace<const Syscall::SC_open_params*> user_params)
 {
     Syscall::SC_open_params params;
     if (!copy_from_user(&params, user_params))
@@ -43,8 +43,8 @@ KResultOr<int> Process::sys$open(Userspace<const Syscall::SC_open_params*> user_
     if (path.is_error())
         return path.error();
 
-    dbgln_if(IO_DEBUG, "sys$open(dirfd={}, path='{}', options={}, mode={})", dirfd, path.value(), options, mode);
-    int fd = alloc_fd();
+    dbgln_if(IO_DEBUG, "sys$open(dirfd={}, path='{}', options={}, mode={})", dirfd, path.value()->view(), options, mode);
+    int fd = m_fds.allocate();
     if (fd < 0)
         return fd;
 
@@ -52,7 +52,7 @@ KResultOr<int> Process::sys$open(Userspace<const Syscall::SC_open_params*> user_
     if (dirfd == AT_FDCWD) {
         base = current_directory();
     } else {
-        auto base_description = file_description(dirfd);
+        auto base_description = fds().file_description(dirfd);
         if (!base_description)
             return EBADF;
         if (!base_description->is_directory())
@@ -62,7 +62,7 @@ KResultOr<int> Process::sys$open(Userspace<const Syscall::SC_open_params*> user_
         base = base_description->custody();
     }
 
-    auto result = VFS::the().open(path.value(), options, mode & ~umask(), *base);
+    auto result = VFS::the().open(path.value()->view(), options, mode & ~umask(), *base);
     if (result.is_error())
         return result.error();
     auto description = result.value();
@@ -75,10 +75,10 @@ KResultOr<int> Process::sys$open(Userspace<const Syscall::SC_open_params*> user_
     return fd;
 }
 
-KResultOr<int> Process::sys$close(int fd)
+KResultOr<FlatPtr> Process::sys$close(int fd)
 {
     REQUIRE_PROMISE(stdio);
-    auto description = file_description(fd);
+    auto description = fds().file_description(fd);
     dbgln_if(IO_DEBUG, "sys$close({}) {}", fd, description.ptr());
     if (!description)
         return EBADF;

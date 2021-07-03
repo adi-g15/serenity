@@ -42,11 +42,14 @@ public:
 
 private:
     MainWidget();
-    void set_path(const LexicalPath& file);
+    void set_path(StringView const&);
     void update_preview();
     void update_markdown_preview();
     void update_html_preview();
     void update_statusbar();
+
+    Web::OutOfProcessWebView& ensure_web_view();
+    void set_web_view_visible(bool);
 
     virtual void drop_event(GUI::DropEvent&) override;
 
@@ -111,6 +114,7 @@ private:
     RefPtr<GUI::Action> m_plain_text_highlight;
     RefPtr<GUI::Action> m_cpp_highlight;
     RefPtr<GUI::Action> m_js_highlight;
+    RefPtr<GUI::Action> m_html_highlight;
     RefPtr<GUI::Action> m_gml_highlight;
     RefPtr<GUI::Action> m_ini_highlight;
     RefPtr<GUI::Action> m_shell_highlight;

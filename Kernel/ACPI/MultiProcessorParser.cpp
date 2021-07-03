@@ -10,6 +10,7 @@
 #include <Kernel/Arch/PC/BIOS.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Interrupts/IOAPIC.h>
+#include <Kernel/Sections.h>
 #include <Kernel/StdLib.h>
 #include <Kernel/VM/MemoryManager.h>
 #include <Kernel/VM/TypedMapping.h>
@@ -21,7 +22,9 @@ UNMAP_AFTER_INIT OwnPtr<MultiProcessorParser> MultiProcessorParser::autodetect()
     auto floating_pointer = find_floating_pointer();
     if (!floating_pointer.has_value())
         return {};
-    return adopt_own(*new MultiProcessorParser(floating_pointer.value()));
+    auto parser = adopt_own_if_nonnull(new (nothrow) MultiProcessorParser(floating_pointer.value()));
+    VERIFY(parser != nullptr);
+    return parser;
 }
 
 UNMAP_AFTER_INIT MultiProcessorParser::MultiProcessorParser(PhysicalAddress floating_pointer)

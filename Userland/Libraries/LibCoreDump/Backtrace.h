@@ -14,14 +14,14 @@
 namespace CoreDump {
 
 struct ELFObjectInfo {
-    ELFObjectInfo(NonnullRefPtr<MappedFile> file, Debug::DebugInfo&& debug_info)
+    ELFObjectInfo(NonnullRefPtr<MappedFile> file, NonnullOwnPtr<Debug::DebugInfo>&& debug_info)
         : file(move(file))
         , debug_info(move(debug_info))
     {
     }
 
     NonnullRefPtr<MappedFile> file;
-    Debug::DebugInfo debug_info;
+    NonnullOwnPtr<Debug::DebugInfo> debug_info;
 };
 
 class Backtrace {
@@ -30,7 +30,7 @@ public:
         FlatPtr eip;
         String object_name;
         String function_name;
-        Optional<Debug::DebugInfo::SourcePosition> source_position;
+        Debug::DebugInfo::SourcePositionWithInlines source_position_with_inlines;
 
         String to_string(bool color = false) const;
     };
@@ -43,9 +43,11 @@ public:
 
 private:
     void add_entry(const Reader&, FlatPtr eip);
+    ELFObjectInfo const* object_info_for_region(ELF::Core::MemoryRegionInfo const&);
 
     ELF::Core::ThreadInfo m_thread_info;
     Vector<Entry> m_entries;
+    HashMap<String, NonnullOwnPtr<ELFObjectInfo>> m_debug_info_cache;
 };
 
 }

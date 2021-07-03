@@ -8,6 +8,7 @@
 #include <AK/Memory.h>
 #include <Kernel/Heap/SlabAllocator.h>
 #include <Kernel/Heap/kmalloc.h>
+#include <Kernel/Sections.h>
 #include <Kernel/SpinLock.h>
 #include <Kernel/VM/Region.h>
 
@@ -97,7 +98,7 @@ private:
     };
 
     Atomic<FreeSlab*> m_freelist { nullptr };
-    Atomic<ssize_t, AK::MemoryOrder::memory_order_relaxed> m_num_allocated;
+    Atomic<size_t, AK::MemoryOrder::memory_order_relaxed> m_num_allocated;
     size_t m_slab_count;
     void* m_base { nullptr };
     void* m_end { nullptr };
@@ -109,6 +110,7 @@ static SlabAllocator<16> s_slab_allocator_16;
 static SlabAllocator<32> s_slab_allocator_32;
 static SlabAllocator<64> s_slab_allocator_64;
 static SlabAllocator<128> s_slab_allocator_128;
+static SlabAllocator<256> s_slab_allocator_256;
 
 #if ARCH(I386)
 static_assert(sizeof(Region) <= s_slab_allocator_128.slab_size());
@@ -121,6 +123,7 @@ void for_each_allocator(Callback callback)
     callback(s_slab_allocator_32);
     callback(s_slab_allocator_64);
     callback(s_slab_allocator_128);
+    callback(s_slab_allocator_256);
 }
 
 UNMAP_AFTER_INIT void slab_alloc_init()
@@ -129,6 +132,7 @@ UNMAP_AFTER_INIT void slab_alloc_init()
     s_slab_allocator_32.init(128 * KiB);
     s_slab_allocator_64.init(512 * KiB);
     s_slab_allocator_128.init(512 * KiB);
+    s_slab_allocator_256.init(128 * KiB);
 }
 
 void* slab_alloc(size_t slab_size)
@@ -141,6 +145,8 @@ void* slab_alloc(size_t slab_size)
         return s_slab_allocator_64.alloc();
     if (slab_size <= 128)
         return s_slab_allocator_128.alloc();
+    if (slab_size <= 256)
+        return s_slab_allocator_256.alloc();
     VERIFY_NOT_REACHED();
 }
 
@@ -154,6 +160,8 @@ void slab_dealloc(void* ptr, size_t slab_size)
         return s_slab_allocator_64.dealloc(ptr);
     if (slab_size <= 128)
         return s_slab_allocator_128.dealloc(ptr);
+    if (slab_size <= 256)
+        return s_slab_allocator_256.dealloc(ptr);
     VERIFY_NOT_REACHED();
 }
 

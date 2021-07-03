@@ -31,7 +31,7 @@ AHCIPortHandler::AHCIPortHandler(AHCIController& controller, u8 irq, AHCI::Maske
     m_pending_ports_interrupts.set_all();
     enable_irq();
 
-    if (kernel_command_line().ahci_reset_mode() == AHCIResetMode::Complete) {
+    if (kernel_command_line().ahci_reset_mode() == AHCIResetMode::Aggressive) {
         for (auto index : taken_ports.to_vector()) {
             auto port = AHCIPort::create(*this, static_cast<volatile AHCI::PortRegisters&>(controller.hba().port_regs[index]), index);
             m_handled_ports.set(index, port);
@@ -82,9 +82,11 @@ AHCIPortHandler::~AHCIPortHandler()
 {
 }
 
-void AHCIPortHandler::handle_irq(const RegisterState&)
+bool AHCIPortHandler::handle_irq(const RegisterState&)
 {
     dbgln_if(AHCI_DEBUG, "AHCI Port Handler: IRQ received");
+    if (m_pending_ports_interrupts.is_zeroed())
+        return false;
     for (auto port_index : m_pending_ports_interrupts.to_vector()) {
         auto port = m_handled_ports.get(port_index);
         VERIFY(port.has_value());
@@ -93,6 +95,7 @@ void AHCIPortHandler::handle_irq(const RegisterState&)
         // We do this to clear the pending interrupt after we handled it.
         m_pending_ports_interrupts.set_at(port_index);
     }
+    return true;
 }
 
 }

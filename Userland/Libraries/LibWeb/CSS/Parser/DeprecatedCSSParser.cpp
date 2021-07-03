@@ -214,7 +214,19 @@ static CSS::Length parse_length(const CSS::ParsingContext& context, const String
 
 static bool takes_integer_value(CSS::PropertyID property_id)
 {
-    return property_id == CSS::PropertyID::ZIndex || property_id == CSS::PropertyID::FontWeight;
+    return property_id == CSS::PropertyID::ZIndex || property_id == CSS::PropertyID::FontWeight || property_id == CSS::PropertyID::Custom;
+}
+
+static StringView parse_custom_property_name(const StringView& value)
+{
+    if (!value.starts_with("var(") || !value.ends_with(")"))
+        return {};
+    // FIXME: Allow for fallback
+    auto first_comma_index = value.find(',');
+    auto length = value.length();
+
+    auto substring_length = first_comma_index.has_value() ? first_comma_index.value() - 4 - 1 : length - 4 - 1;
+    return value.substring_view(4, substring_length);
 }
 
 RefPtr<CSS::StyleValue> parse_css_value(const CSS::ParsingContext& context, const StringView& string, CSS::PropertyID property_id)
@@ -228,8 +240,12 @@ RefPtr<CSS::StyleValue> parse_css_value(const CSS::ParsingContext& context, cons
     }
 
     auto length = parse_length(context, string, is_bad_length);
-    if (is_bad_length)
+    if (is_bad_length) {
+        auto float_number = try_parse_float(string);
+        if (float_number.has_value())
+            return CSS::NumericStyleValue::create(float_number.value());
         return nullptr;
+    }
     if (!length.is_undefined())
         return CSS::LengthStyleValue::create(length);
 
@@ -239,6 +255,8 @@ RefPtr<CSS::StyleValue> parse_css_value(const CSS::ParsingContext& context, cons
         return CSS::InitialStyleValue::create();
     if (string.equals_ignoring_case("auto"))
         return CSS::LengthStyleValue::create(CSS::Length::make_auto());
+    if (string.starts_with("var("))
+        return CSS::CustomStyleValue::create(parse_custom_property_name(string));
 
     auto value_id = CSS::value_id_from_string(string);
     if (value_id != CSS::ValueID::Invalid)
@@ -389,7 +407,7 @@ public:
     {
         if (const auto start_pos = pseudo_name.find('('); start_pos.has_value()) {
             const auto start = start_pos.value() + 1;
-            if (const auto end_pos = pseudo_name.index_of(")", start); end_pos.has_value()) {
+            if (const auto end_pos = pseudo_name.find(')', start); end_pos.has_value()) {
                 return pseudo_name.substring_view(start, end_pos.value() - start).trim_whitespace();
             }
         }
@@ -431,7 +449,7 @@ public:
         if (type != CSS::Selector::SimpleSelector::Type::Universal) {
             while (is_valid_selector_char(peek()))
                 buffer.append(consume_one());
-            PARSE_VERIFY(!buffer.is_null());
+            PARSE_VERIFY(!buffer.is_empty());
         }
 
         auto value = String::copy(buffer);
@@ -545,6 +563,8 @@ public:
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Link;
             } else if (pseudo_name.equals_ignoring_case("visited")) {
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Visited;
+            } else if (pseudo_name.equals_ignoring_case("active")) {
+                simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Active;
             } else if (pseudo_name.equals_ignoring_case("hover")) {
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Hover;
             } else if (pseudo_name.equals_ignoring_case("focus")) {
@@ -566,10 +586,22 @@ public:
             } else if (pseudo_name.starts_with("nth-child", CaseSensitivity::CaseInsensitive)) {
                 simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::NthChild;
                 simple_selector.nth_child_pattern = CSS::Selector::SimpleSelector::NthChildPattern::parse(capture_selector_args(pseudo_name));
+            } else if (pseudo_name.starts_with("nth-last-child", CaseSensitivity::CaseInsensitive)) {
+                simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::NthLastChild;
+                simple_selector.nth_child_pattern = CSS::Selector::SimpleSelector::NthChildPattern::parse(capture_selector_args(pseudo_name));
             } else if (pseudo_name.equals_ignoring_case("before")) {
                 simple_selector.pseudo_element = CSS::Selector::SimpleSelector::PseudoElement::Before;
             } else if (pseudo_name.equals_ignoring_case("after")) {
                 simple_selector.pseudo_element = CSS::Selector::SimpleSelector::PseudoElement::After;
+            } else if (pseudo_name.equals_ignoring_case("disabled")) {
+                simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Disabled;
+            } else if (pseudo_name.equals_ignoring_case("enabled")) {
+                simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Enabled;
+            } else if (pseudo_name.equals_ignoring_case("checked")) {
+                simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Checked;
+            } else if (pseudo_name.starts_with("not", CaseSensitivity::CaseInsensitive)) {
+                simple_selector.pseudo_class = CSS::Selector::SimpleSelector::PseudoClass::Not;
+                simple_selector.not_selector = capture_selector_args(pseudo_name);
             } else {
                 dbgln("Unknown pseudo class: '{}'", pseudo_name);
                 return {};
@@ -790,21 +822,33 @@ public:
         }
 
         auto property_id = CSS::property_id_from_string(property_name);
-        if (property_id == CSS::PropertyID::Invalid) {
+
+        if (property_id == CSS::PropertyID::Invalid && property_name.starts_with("--"))
+            property_id = CSS::PropertyID::Custom;
+
+        if (property_id == CSS::PropertyID::Invalid && !property_name.starts_with("-")) {
             dbgln("CSSParser: Unrecognized property '{}'", property_name);
         }
         auto value = parse_css_value(m_context, property_value, property_id);
         if (!value)
             return {};
-        return CSS::StyleProperty { property_id, value.release_nonnull(), important };
+        if (property_id == CSS::PropertyID::Custom) {
+            return CSS::StyleProperty { property_id, value.release_nonnull(), property_name, important };
+        }
+        return CSS::StyleProperty { property_id, value.release_nonnull(), {}, important };
     }
 
     void parse_declaration()
     {
         for (;;) {
             auto property = parse_property();
-            if (property.has_value())
-                current_rule.properties.append(property.value());
+            if (property.has_value()) {
+                auto property_value = property.value();
+                if (property_value.property_id == CSS::PropertyID::Custom)
+                    current_rule.custom_properties.set(property_value.custom_name, property_value);
+                else
+                    current_rule.properties.append(property_value);
+            }
             consume_whitespace_or_comments();
             if (!peek() || peek() == '}')
                 break;
@@ -824,7 +868,7 @@ public:
             return;
         }
 
-        rules.append(CSS::CSSStyleRule::create(move(current_rule.selectors), CSS::CSSStyleDeclaration::create(move(current_rule.properties))));
+        rules.append(CSS::CSSStyleRule::create(move(current_rule.selectors), CSS::CSSStyleDeclaration::create(move(current_rule.properties), move(current_rule.custom_properties))));
     }
 
     Optional<String> parse_string()
@@ -968,13 +1012,18 @@ public:
         consume_whitespace_or_comments();
         for (;;) {
             auto property = parse_property();
-            if (property.has_value())
-                current_rule.properties.append(property.value());
+            if (property.has_value()) {
+                auto property_value = property.value();
+                if (property_value.property_id == CSS::PropertyID::Custom)
+                    current_rule.custom_properties.set(property_value.custom_name, property_value);
+                else
+                    current_rule.properties.append(property_value);
+            }
             consume_whitespace_or_comments();
             if (!peek())
                 break;
         }
-        return CSS::CSSStyleDeclaration::create(move(current_rule.properties));
+        return CSS::CSSStyleDeclaration::create(move(current_rule.properties), move(current_rule.custom_properties));
     }
 
 private:
@@ -985,6 +1034,7 @@ private:
     struct CurrentRule {
         Vector<CSS::Selector> selectors;
         Vector<CSS::StyleProperty> properties;
+        HashMap<String, CSS::StyleProperty> custom_properties;
     };
 
     CurrentRule current_rule;
@@ -1012,7 +1062,7 @@ RefPtr<CSS::CSSStyleSheet> parse_css(const CSS::ParsingContext& context, const S
 RefPtr<CSS::CSSStyleDeclaration> parse_css_declaration(const CSS::ParsingContext& context, const StringView& css)
 {
     if (css.is_empty())
-        return CSS::CSSStyleDeclaration::create({});
+        return CSS::CSSStyleDeclaration::create({}, {});
     CSSParser parser(context, css);
     return parser.parse_standalone_declaration();
 }

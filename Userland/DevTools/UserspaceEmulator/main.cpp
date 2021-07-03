@@ -19,25 +19,26 @@ bool g_report_to_debug = false;
 
 int main(int argc, char** argv, char** env)
 {
-    Vector<const char*> command;
+    Vector<String> arguments;
+    bool pause_on_startup { false };
 
     Core::ArgsParser parser;
+    parser.set_stop_on_first_non_option(true);
     parser.add_option(g_report_to_debug, "Write reports to the debug log", "report-to-debug", 0);
-    parser.add_positional_argument(command, "Command to emulate", "command");
+    parser.add_option(pause_on_startup, "Pause on startup", "pause", 'p');
+
+    parser.add_positional_argument(arguments, "Command to emulate", "command");
+
     parser.parse(argc, argv);
 
-    auto executable_path = Core::find_executable_in_path(command[0]);
+    String executable_path;
+    if (arguments[0].contains("/"sv))
+        executable_path = Core::File::real_path_for(arguments[0]);
+    else
+        executable_path = Core::find_executable_in_path(arguments[0]);
     if (executable_path.is_empty()) {
-        executable_path = Core::File::real_path_for(command[0]);
-        if (executable_path.is_empty()) {
-            reportln("Cannot find executable for '{}'.", executable_path);
-            return 1;
-        }
-    }
-
-    Vector<String> arguments;
-    for (auto arg : command) {
-        arguments.append(arg);
+        reportln("Cannot find executable for '{}'.", arguments[0]);
+        return 1;
     }
 
     Vector<String> environment;
@@ -52,7 +53,7 @@ int main(int argc, char** argv, char** env)
 
     StringBuilder builder;
     builder.append("(UE) ");
-    builder.append(LexicalPath(arguments[0]).basename());
+    builder.append(LexicalPath::basename(arguments[0]));
     if (set_process_name(builder.string_view().characters_without_null_termination(), builder.string_view().length()) < 0) {
         perror("set_process_name");
         return 1;
@@ -62,5 +63,9 @@ int main(int argc, char** argv, char** env)
         reportln("pthread_setname_np: {}", strerror(rc));
         return 1;
     }
+
+    if (pause_on_startup)
+        emulator.pause();
+
     return emulator.exec();
 }

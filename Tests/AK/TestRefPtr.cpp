@@ -129,21 +129,32 @@ TEST_CASE(assign_copy_self)
 
 TEST_CASE(self_observers)
 {
-    RefPtr<SelfAwareObject> object = adopt_ref(*new SelfAwareObject);
-    EXPECT_EQ(object->ref_count(), 1u);
-    EXPECT_EQ(object->m_has_one_ref_left, false);
-    EXPECT_EQ(SelfAwareObject::num_destroyed, 0u);
+    {
+        RefPtr<SelfAwareObject> object = adopt_ref(*new SelfAwareObject);
+        EXPECT_EQ(object->ref_count(), 1u);
+        EXPECT_EQ(object->m_has_one_ref_left, false);
+        EXPECT_EQ(SelfAwareObject::num_destroyed, 0u);
 
-    object->ref();
-    EXPECT_EQ(object->ref_count(), 2u);
-    EXPECT_EQ(object->m_has_one_ref_left, false);
-    EXPECT_EQ(SelfAwareObject::num_destroyed, 0u);
+        object->ref();
+        EXPECT_EQ(object->ref_count(), 2u);
+        EXPECT_EQ(object->m_has_one_ref_left, false);
+        EXPECT_EQ(SelfAwareObject::num_destroyed, 0u);
 
-    object->unref();
-    EXPECT_EQ(object->ref_count(), 1u);
-    EXPECT_EQ(object->m_has_one_ref_left, true);
-    EXPECT_EQ(SelfAwareObject::num_destroyed, 0u);
-
-    object->unref();
+        object->unref();
+        EXPECT_EQ(object->ref_count(), 1u);
+        EXPECT_EQ(object->m_has_one_ref_left, true);
+        EXPECT_EQ(SelfAwareObject::num_destroyed, 0u);
+    }
     EXPECT_EQ(SelfAwareObject::num_destroyed, 1u);
+}
+
+TEST_CASE(adopt_ref_if_nonnull)
+{
+    RefPtr<SelfAwareObject> object = adopt_ref_if_nonnull(new (nothrow) SelfAwareObject);
+    EXPECT_EQ(object.is_null(), false);
+    EXPECT_EQ(object->ref_count(), 1u);
+
+    SelfAwareObject* null_object = nullptr;
+    RefPtr<SelfAwareObject> failed_allocation = adopt_ref_if_nonnull(null_object);
+    EXPECT_EQ(failed_allocation.is_null(), true);
 }

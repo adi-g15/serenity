@@ -99,12 +99,13 @@ Vector<StringView> StringView::lines(bool consider_cr) const
             if (last_ch_was_cr) {
                 substart = i + 1;
                 split_view = false;
-                last_ch_was_cr = false;
             }
         }
         if (ch == '\r') {
             split_view = true;
             last_ch_was_cr = true;
+        } else {
+            last_ch_was_cr = false;
         }
         if (split_view) {
             size_t sublen = i - substart;
@@ -172,6 +173,16 @@ bool StringView::equals_ignoring_case(const StringView& other) const
     return StringUtils::equals_ignoring_case(*this, other);
 }
 
+String StringView::to_lowercase_string() const
+{
+    return StringImpl::create_lowercased(characters_without_null_termination(), length());
+}
+
+String StringView::to_uppercase_string() const
+{
+    return StringImpl::create_uppercased(characters_without_null_termination(), length());
+}
+
 StringView StringView::substring_view_starting_from_substring(const StringView& substring) const
 {
     const char* remaining_characters = substring.characters_without_null_termination();
@@ -214,13 +225,6 @@ template Optional<u64> StringView::to_uint() const;
 template Optional<long> StringView::to_uint() const;
 template Optional<long long> StringView::to_uint() const;
 
-unsigned StringView::hash() const
-{
-    if (is_empty())
-        return 0;
-    return string_hash(characters_without_null_termination(), length());
-}
-
 bool StringView::operator==(const String& string) const
 {
     if (string.is_null())
@@ -232,60 +236,6 @@ bool StringView::operator==(const String& string) const
     if (m_characters == string.characters())
         return true;
     return !__builtin_memcmp(m_characters, string.characters(), m_length);
-}
-
-Optional<size_t> StringView::find_first_of(char c) const
-{
-    if (const auto location = AK::find(begin(), end(), c); location != end()) {
-        return location.index();
-    }
-    return {};
-}
-
-Optional<size_t> StringView::find_first_of(const StringView& view) const
-{
-    if (const auto location = AK::find_if(begin(), end(),
-            [&](const auto c) {
-                return any_of(view.begin(), view.end(),
-                    [&](const auto view_char) {
-                        return c == view_char;
-                    });
-            });
-        location != end()) {
-        return location.index();
-    }
-    return {};
-}
-
-Optional<size_t> StringView::find_last_of(char c) const
-{
-    for (size_t pos = m_length; pos != 0; --pos) {
-        if (m_characters[pos - 1] == c)
-            return pos - 1;
-    }
-    return {};
-}
-
-Optional<size_t> StringView::find_last_of(const StringView& view) const
-{
-    for (size_t pos = m_length; pos != 0; --pos) {
-        char c = m_characters[pos - 1];
-        for (char view_char : view) {
-            if (c == view_char)
-                return pos - 1;
-        }
-    }
-    return {};
-}
-
-Optional<size_t> StringView::find(char c) const
-{
-    return find(StringView { &c, 1 });
-}
-
-Optional<size_t> StringView::find(const StringView& view) const
-{
-    return StringUtils::find(*this, view);
 }
 
 String StringView::to_string() const { return String { *this }; }

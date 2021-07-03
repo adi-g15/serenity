@@ -10,13 +10,14 @@
 #include <Kernel/FileSystem/Ext2FileSystem.h>
 #include <Kernel/FileSystem/Plan9FileSystem.h>
 #include <Kernel/FileSystem/ProcFS.h>
+#include <Kernel/FileSystem/SysFS.h>
 #include <Kernel/FileSystem/TmpFS.h>
 #include <Kernel/FileSystem/VirtualFileSystem.h>
 #include <Kernel/Process.h>
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$mount(Userspace<const Syscall::SC_mount_params*> user_params)
+KResultOr<FlatPtr> Process::sys$mount(Userspace<const Syscall::SC_mount_params*> user_params)
 {
     if (!is_superuser())
         return EPERM;
@@ -35,7 +36,7 @@ KResultOr<int> Process::sys$mount(Userspace<const Syscall::SC_mount_params*> use
     if (fs_type.is_null())
         return EFAULT;
 
-    auto description = file_description(source_fd);
+    auto description = fds().file_description(source_fd);
     if (!description.is_null())
         dbgln("mount {}: source fd {} @ {}", fs_type, source_fd, target);
     else
@@ -89,11 +90,16 @@ KResultOr<int> Process::sys$mount(Userspace<const Syscall::SC_mount_params*> use
         fs = DevPtsFS::create();
     } else if (fs_type == "dev" || fs_type == "DevFS") {
         fs = DevFS::create();
+    } else if (fs_type == "sys" || fs_type == "SysFS") {
+        fs = SysFS::create();
     } else if (fs_type == "tmp" || fs_type == "TmpFS") {
         fs = TmpFS::create();
     } else {
         return ENODEV;
     }
+
+    if (!fs)
+        return ENOMEM;
 
     if (!fs->initialize()) {
         dbgln("mount: failed to initialize {} filesystem, fd={}", fs_type, source_fd);
@@ -108,7 +114,7 @@ KResultOr<int> Process::sys$mount(Userspace<const Syscall::SC_mount_params*> use
     return result;
 }
 
-KResultOr<int> Process::sys$umount(Userspace<const char*> user_mountpoint, size_t mountpoint_length)
+KResultOr<FlatPtr> Process::sys$umount(Userspace<const char*> user_mountpoint, size_t mountpoint_length)
 {
     if (!is_superuser())
         return EPERM;
@@ -119,7 +125,7 @@ KResultOr<int> Process::sys$umount(Userspace<const char*> user_mountpoint, size_
     if (mountpoint.is_error())
         return mountpoint.error();
 
-    auto custody_or_error = VFS::the().resolve_path(mountpoint.value(), current_directory());
+    auto custody_or_error = VFS::the().resolve_path(mountpoint.value()->view(), current_directory());
     if (custody_or_error.is_error())
         return custody_or_error.error();
 

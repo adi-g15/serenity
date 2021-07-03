@@ -30,7 +30,7 @@ static bool g_should_output_color = false;
 
 static void handle_sigint(int)
 {
-    printf("Debugger: SIGINT\n");
+    outln("Debugger: SIGINT");
 
     // The destructor of DebugSession takes care of detaching
     g_debug_session = nullptr;
@@ -47,10 +47,11 @@ static void print_function_call(String function_name, size_t depth)
 static void print_syscall(PtraceRegisters& regs, size_t depth)
 {
     for (size_t i = 0; i < depth; ++i) {
-        printf("  ");
+        out("  ");
     }
     const char* begin_color = g_should_output_color ? "\033[34;1m" : "";
     const char* end_color = g_should_output_color ? "\033[0m" : "";
+#if ARCH(I386)
     outln("=> {}SC_{}(0x{:x}, 0x{:x}, 0x{:x}){}",
         begin_color,
         Syscall::to_string((Syscall::Function)regs.eax),
@@ -58,6 +59,15 @@ static void print_syscall(PtraceRegisters& regs, size_t depth)
         regs.ecx,
         regs.ebx,
         end_color);
+#else
+    outln("=> {}SC_{}(0x{:x}, 0x{:x}, 0x{:x}){}",
+        begin_color,
+        Syscall::to_string((Syscall::Function)regs.rax),
+        regs.rdx,
+        regs.rcx,
+        regs.rbx,
+        end_color);
+#endif
 }
 
 static NonnullOwnPtr<HashMap<void*, X86::Instruction>> instrument_code()
@@ -133,13 +143,19 @@ int main(int argc, char** argv)
             return Debug::DebugSession::DebugDecision::ContinueBreakAtSyscall;
         }
 
+#if ARCH(I386)
+        const FlatPtr ip = regs.value().eip;
+#else
+        const FlatPtr ip = regs.value().rip;
+#endif
+
         if (new_function) {
-            auto function_name = g_debug_session->symbolicate(regs.value().eip);
+            auto function_name = g_debug_session->symbolicate(ip);
             print_function_call(function_name.value().symbol, depth);
             new_function = false;
             return Debug::DebugSession::ContinueBreakAtSyscall;
         }
-        auto instruction = instrumented->get((void*)regs.value().eip).value();
+        auto instruction = instrumented->get((void*)ip).value();
 
         if (instruction.mnemonic() == "RET") {
             if (depth != 0)

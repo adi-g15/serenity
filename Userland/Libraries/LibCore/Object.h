@@ -11,6 +11,7 @@
 #include <AK/IntrusiveList.h>
 #include <AK/Noncopyable.h>
 #include <AK/NonnullRefPtrVector.h>
+#include <AK/OwnPtr.h>
 #include <AK/String.h>
 #include <AK/TypeCasts.h>
 #include <AK/Weakable.h>
@@ -48,7 +49,7 @@ private:
     ObjectClassRegistration* m_parent_class { nullptr };
 };
 
-class RPCClient;
+class InspectorServerConnection;
 
 enum class TimerShouldFireWhenNotVisible {
     No = 0,
@@ -58,10 +59,13 @@ enum class TimerShouldFireWhenNotVisible {
 #define C_OBJECT(klass)                                                \
 public:                                                                \
     virtual const char* class_name() const override { return #klass; } \
-    template<class... Args>                                            \
+    template<typename Klass = klass, class... Args>                    \
     static inline NonnullRefPtr<klass> construct(Args&&... args)       \
     {                                                                  \
-        return adopt_ref(*new klass(forward<Args>(args)...));          \
+        auto obj = adopt_ref(*new Klass(forward<Args>(args)...));      \
+        if constexpr (requires { declval<Klass>().did_construct(); })  \
+            obj->did_construct();                                      \
+        return obj;                                                    \
     }
 
 #define C_OBJECT_ABSTRACT(klass) \
@@ -155,8 +159,8 @@ public:
 
     bool is_being_inspected() const { return m_inspector_count; }
 
-    void increment_inspector_count(Badge<RPCClient>);
-    void decrement_inspector_count(Badge<RPCClient>);
+    void increment_inspector_count(Badge<InspectorServerConnection>);
+    void decrement_inspector_count(Badge<InspectorServerConnection>);
 
     virtual bool load_from_json(const JsonObject&, RefPtr<Core::Object> (*)(const String&)) { return false; }
 
@@ -352,11 +356,12 @@ T* Object::find_descendant_of_type_named(String const& name) requires IsBaseOf<O
 #define REGISTER_TEXT_ALIGNMENT_PROPERTY(property_name, getter, setter) \
     REGISTER_ENUM_PROPERTY(                                             \
         property_name, getter, setter, Gfx::TextAlignment,              \
-        { Gfx::TextAlignment::TopLeft, "TopLeft" },                     \
-        { Gfx::TextAlignment::CenterLeft, "CenterLeft" },               \
         { Gfx::TextAlignment::Center, "Center" },                       \
+        { Gfx::TextAlignment::CenterLeft, "CenterLeft" },               \
         { Gfx::TextAlignment::CenterRight, "CenterRight" },             \
+        { Gfx::TextAlignment::TopLeft, "TopLeft" },                     \
         { Gfx::TextAlignment::TopRight, "TopRight" },                   \
+        { Gfx::TextAlignment::BottomLeft, "BottomLeft" },               \
         { Gfx::TextAlignment::BottomRight, "BottomRight" })
 
 #define REGISTER_FONT_WEIGHT_PROPERTY(property_name, getter, setter) \

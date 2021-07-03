@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020, Andrew Kaster <andrewdkaster@gmail.com>
+ * Copyright (c) 2019-2020, Andrew Kaster <akaster@serenityos.org>
  * Copyright (c) 2020, Itamar S. <itamar8910@gmail.com>
  * Copyright (c) 2021, Andreas Kling <kling@serenityos.org>
  *
@@ -45,7 +45,7 @@ Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> DynamicLoader::try_create(i
 
     VERIFY(stat.st_size >= 0);
     auto size = static_cast<size_t>(stat.st_size);
-    if (size < sizeof(Elf32_Ehdr))
+    if (size < sizeof(ElfW(Ehdr)))
         return DlErrorMessage { String::formatted("File {} has invalid ELF header", filename) };
 
     String file_mmap_name = String::formatted("ELF_DYN: {}", filename);
@@ -54,7 +54,10 @@ Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> DynamicLoader::try_create(i
         return DlErrorMessage { "DynamicLoader::try_create mmap" };
     }
 
-    return adopt_ref(*new DynamicLoader(fd, move(filename), data, size));
+    auto loader = adopt_ref(*new DynamicLoader(fd, move(filename), data, size));
+    if (!loader->is_valid())
+        return DlErrorMessage { "ELF image validation failed" };
+    return loader;
 }
 
 DynamicLoader::DynamicLoader(int fd, String filename, void* data, size_t size)
@@ -64,8 +67,11 @@ DynamicLoader::DynamicLoader(int fd, String filename, void* data, size_t size)
     , m_file_data(data)
     , m_elf_image((u8*)m_file_data, m_file_size)
 {
-    m_tls_size_of_current_object = calculate_tls_size();
     m_valid = validate();
+    if (m_valid)
+        m_tls_size_of_current_object = calculate_tls_size();
+    else
+        dbgln("Image validation failed for file {}", m_filename);
 }
 
 DynamicLoader::~DynamicLoader()
@@ -89,7 +95,6 @@ const DynamicObject& DynamicLoader::dynamic_object() const
             if (program_header.type() == PT_DYNAMIC) {
                 dynamic_section_address = VirtualAddress(program_header.raw_data());
             }
-            return IterationDecision::Continue;
         });
         VERIFY(!dynamic_section_address.is_null());
 
@@ -105,7 +110,6 @@ size_t DynamicLoader::calculate_tls_size() const
         if (program_header.type() == PT_TLS) {
             tls_size = program_header.size_in_memory();
         }
-        return IterationDecision::Continue;
     });
     return tls_size;
 }
@@ -115,7 +119,7 @@ bool DynamicLoader::validate()
     if (!m_elf_image.is_valid())
         return false;
 
-    auto* elf_header = (Elf32_Ehdr*)m_file_data;
+    auto* elf_header = (ElfW(Ehdr)*)m_file_data;
     if (!validate_elf_header(*elf_header, m_file_size))
         return false;
     if (!validate_program_headers(*elf_header, m_file_size, (u8*)m_file_data, m_file_size, &m_program_interpreter))
@@ -190,7 +194,6 @@ void DynamicLoader::do_main_relocations()
         case RelocationResult::Success:
             break;
         }
-        return IterationDecision::Continue;
     };
     m_dynamic_object->relocation_section().for_each_relocation(do_single_relocation);
     m_dynamic_object->plt_relocation_section().for_each_relocation(do_single_relocation);
@@ -212,7 +215,7 @@ Result<NonnullRefPtr<DynamicObject>, DlErrorMessage> DynamicLoader::load_stage_3
 
     if (m_relro_segment_size) {
         if (mprotect(m_relro_segment_address.as_ptr(), m_relro_segment_size, PROT_READ) < 0) {
-            return DlErrorMessage { String::formatted("mprotect .text: PROT_READ: {}", strerror(errno)) };
+            return DlErrorMessage { String::formatted("mprotect .relro: PROT_READ: {}", strerror(errno)) };
         }
 
 #if __serenity__
@@ -269,7 +272,6 @@ void DynamicLoader::load_program_headers()
             VERIFY(!relro_region.has_value());
             relro_region = region;
         }
-        return IterationDecision::Continue;
     });
 
     VERIFY(!text_regions.is_empty() || !data_regions.is_empty());
@@ -318,11 +320,10 @@ void DynamicLoader::load_program_headers()
 
     for (auto& text_region : text_regions) {
         FlatPtr ph_text_base = text_region.desired_load_address().page_base().get();
-        FlatPtr ph_text_end = round_up_to_power_of_two(text_region.desired_load_address().offset(text_region.size_in_memory()).get(), PAGE_SIZE);
-        size_t text_segment_size = ph_text_end - ph_text_base;
+        FlatPtr ph_text_end = ph_text_base + round_up_to_power_of_two(text_region.size_in_memory() + (size_t)(text_region.desired_load_address().as_ptr() - ph_text_base), PAGE_SIZE);
 
-        auto text_segment_offset = ph_text_base - ph_load_base;
-        auto* text_segment_address = (u8*)reservation + text_segment_offset;
+        auto* text_segment_address = (u8*)reservation + ph_text_base;
+        size_t text_segment_size = ph_text_end - ph_text_base;
 
         // Now we can map the text segment at the reserved address.
         auto* text_segment_begin = (u8*)mmap_with_name(
@@ -356,11 +357,10 @@ void DynamicLoader::load_program_headers()
 
     for (auto& data_region : data_regions) {
         FlatPtr ph_data_base = data_region.desired_load_address().page_base().get();
-        FlatPtr ph_data_end = round_up_to_power_of_two(data_region.desired_load_address().offset(data_region.size_in_memory()).get(), PAGE_SIZE);
-        size_t data_segment_size = ph_data_end - ph_data_base;
+        FlatPtr ph_data_end = ph_data_base + round_up_to_power_of_two(data_region.size_in_memory() + (size_t)(data_region.desired_load_address().as_ptr() - ph_data_base), PAGE_SIZE);
 
-        auto data_segment_offset = ph_data_base - ph_load_base;
-        auto* data_segment_address = (u8*)reservation + data_segment_offset;
+        auto* data_segment_address = (u8*)reservation + ph_data_base;
+        size_t data_segment_size = ph_data_end - ph_data_base;
 
         // Finally, we make an anonymous mapping for the data segment. Contents are then copied from the file.
         auto* data_segment = (u8*)mmap_with_name(
@@ -382,6 +382,8 @@ void DynamicLoader::load_program_headers()
             data_segment_start = VirtualAddress { (u8*)reservation + data_region.desired_load_address().get() };
         else
             data_segment_start = data_region.desired_load_address();
+
+        VERIFY(data_segment_start.as_ptr() + data_region.size_in_memory() <= data_segment + data_segment_size);
 
         memcpy(data_segment_start.as_ptr(), (u8*)m_file_data + data_region.offset(), data_region.size_in_image());
     }
@@ -420,7 +422,10 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
             return RelocationResult::Failed;
         }
         auto symbol_address = res.value().address;
-        *patch_ptr += symbol_address.get();
+        if (relocation.addend_used())
+            *patch_ptr = symbol_address.get() + relocation.addend();
+        else
+            *patch_ptr += symbol_address.get();
         break;
     }
 #ifndef __LP64__
@@ -464,7 +469,10 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
         // FIXME: According to the spec, R_386_relative ones must be done first.
         //     We could explicitly do them first using m_number_of_relocations from DT_RELCOUNT
         //     However, our compiler is nice enough to put them at the front of the relocations for us :)
-        *patch_ptr += (FlatPtr)m_dynamic_object->base_address().as_ptr(); // + addend for RelA (addend for Rel is stored at addr)
+        if (relocation.addend_used())
+            *patch_ptr = (FlatPtr)m_dynamic_object->base_address().as_ptr() + relocation.addend();
+        else
+            *patch_ptr += (FlatPtr)m_dynamic_object->base_address().as_ptr();
         break;
     }
 #ifndef __LP64__
@@ -482,6 +490,13 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
         *patch_ptr = negative_offset_from_tls_block_end(res.value().value, dynamic_object_of_symbol->tls_offset().value(), res.value().size);
         break;
     }
+#else
+    case R_X86_64_TPOFF64:
+        dbgln("FIXME: Patched R_X86_64_TPOFF64 relocation with invalid ptr.");
+        *patch_ptr = 0xaaaaaaaaaaaaaaaa;
+        break;
+#endif
+#ifndef __LP64__
     case R_386_JMP_SLOT: {
 #else
     case R_X86_64_JUMP_SLOT: {
@@ -495,7 +510,7 @@ DynamicLoader::RelocationResult DynamicLoader::do_relocation(const ELF::DynamicO
             u8* relocation_address = relocation.address().as_ptr();
 
             if (m_elf_image.is_dynamic())
-                *(u32*)relocation_address += (FlatPtr)m_dynamic_object->base_address().as_ptr();
+                *(FlatPtr*)relocation_address += (FlatPtr)m_dynamic_object->base_address().as_ptr();
         }
         break;
     }

@@ -55,7 +55,7 @@ static void run_file_operation([[maybe_unused]] FileOperation operation, const S
             perror("dup2");
             _exit(1);
         }
-        if (execlp("/bin/FileOperation", "/bin/FileOperation", "Copy", source.characters(), LexicalPath(destination).dirname().characters(), nullptr) < 0) {
+        if (execlp("/bin/FileOperation", "/bin/FileOperation", "Copy", source.characters(), LexicalPath::dirname(destination).characters(), nullptr) < 0) {
             perror("execlp");
             _exit(1);
         }
@@ -71,7 +71,7 @@ static void run_file_operation([[maybe_unused]] FileOperation operation, const S
     file_operation_windows.set(window);
 
     auto pipe_input_file = Core::File::construct();
-    pipe_input_file->open(pipe_fds[0], Core::IODevice::ReadOnly, Core::File::ShouldCloseFileDescriptor::Yes);
+    pipe_input_file->open(pipe_fds[0], Core::OpenMode::ReadOnly, Core::File::ShouldCloseFileDescriptor::Yes);
 
     window->set_title("Copying Files...");
     window->set_main_widget<FileOperationProgressWidget>(pipe_input_file);
@@ -154,8 +154,12 @@ void DirectoryView::handle_activation(const GUI::ModelIndex& index)
     auto url = URL::create_with_file_protocol(path);
     auto launcher_handlers = get_launch_handlers(url);
     auto default_launcher = get_default_launch_handler(launcher_handlers);
+
     if (default_launcher) {
+        auto launch_origin_rect = current_view().to_widget_rect(current_view().content_rect(index)).translated(current_view().screen_relative_rect().location());
+        setenv("__libgui_launch_origin_rect", String::formatted("{},{},{},{}", launch_origin_rect.x(), launch_origin_rect.y(), launch_origin_rect.width(), launch_origin_rect.height()).characters(), 1);
         launch(url, *default_launcher);
+        unsetenv("__libgui_launch_origin_rect");
     } else {
         auto error_message = String::formatted("Could not open {}", path);
         GUI::MessageBox::show(window(), error_message, "File Manager", GUI::MessageBox::Type::Error);
@@ -526,7 +530,7 @@ void DirectoryView::handle_selection_change()
 
 void DirectoryView::setup_actions()
 {
-    m_mkdir_action = GUI::Action::create("New &Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [&](const GUI::Action&) {
+    m_mkdir_action = GUI::Action::create("&New Directory...", { Mod_Ctrl | Mod_Shift, Key_N }, Gfx::Bitmap::load_from_file("/res/icons/16x16/mkdir.png"), [&](const GUI::Action&) {
         String value;
         if (GUI::InputBox::show(window(), value, "Enter name:", "New directory") == GUI::InputBox::ExecOK && !value.is_empty()) {
             auto new_dir_path = LexicalPath::canonicalized_path(String::formatted("{}/{}", path(), value));
@@ -605,7 +609,7 @@ void DirectoryView::handle_drop(const GUI::ModelIndex& index, const GUI::DropEve
     for (auto& url_to_copy : urls) {
         if (!url_to_copy.is_valid() || url_to_copy.path() == target_node.full_path())
             continue;
-        auto new_path = String::formatted("{}/{}", target_node.full_path(), LexicalPath(url_to_copy.path()).basename());
+        auto new_path = String::formatted("{}/{}", target_node.full_path(), LexicalPath::basename(url_to_copy.path()));
         if (url_to_copy.path() == new_path)
             continue;
 

@@ -7,6 +7,7 @@
 #include "LanguageClient.h"
 #include "HackStudio.h"
 #include "ProjectDeclarations.h"
+#include "ToDoEntries.h"
 #include <AK/String.h>
 #include <AK/Vector.h>
 #include <DevTools/HackStudio/LanguageServers/LanguageServerEndpoint.h>
@@ -84,13 +85,6 @@ void LanguageClient::provide_autocomplete_suggestions(const Vector<GUI::Autocomp
     // Otherwise, drop it on the floor :shrug:
 }
 
-void LanguageClient::set_autocomplete_mode(const String& mode)
-{
-    if (!m_connection_wrapper.connection())
-        return;
-    m_connection_wrapper.connection()->async_set_auto_complete_mode(mode);
-}
-
 void LanguageClient::set_active_client()
 {
     if (!m_connection_wrapper.connection())
@@ -103,6 +97,11 @@ HashMap<String, NonnullOwnPtr<ServerConnectionWrapper>> ServerConnectionInstance
 void ServerConnection::declarations_in_document(const String& filename, const Vector<GUI::AutocompleteProvider::Declaration>& declarations)
 {
     ProjectDeclarations::the().set_declared_symbols(filename, declarations);
+}
+
+void ServerConnection::todo_entries_in_document(String const& filename, Vector<Cpp::Parser::TodoEntry> const& todo_entries)
+{
+    ToDoEntries::the().set_entries(filename, move(todo_entries));
 }
 
 void LanguageClient::search_declaration(const String& path, size_t line, size_t column)
@@ -185,7 +184,6 @@ void ServerConnectionWrapper::create_connection()
     VERIFY(m_connection.is_null());
     m_connection = m_connection_creator();
     m_connection->set_wrapper(*this);
-    m_connection->handshake();
 }
 
 ServerConnection* ServerConnectionWrapper::connection()

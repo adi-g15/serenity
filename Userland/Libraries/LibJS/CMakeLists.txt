@@ -1,7 +1,20 @@
 set(SOURCES
     AST.cpp
+    Bytecode/ASTCodegen.cpp
+    Bytecode/BasicBlock.cpp
+    Bytecode/Generator.cpp
+    Bytecode/Instruction.cpp
+    Bytecode/Interpreter.cpp
+    Bytecode/Op.cpp
+    Bytecode/Pass/DumpCFG.cpp
+    Bytecode/Pass/GenerateCFG.cpp
+    Bytecode/Pass/MergeBlocks.cpp
+    Bytecode/Pass/PlaceBlocks.cpp
+    Bytecode/Pass/UnifySameBlocks.cpp
+    Bytecode/StringTable.cpp
     Console.cpp
-    Heap/Allocator.cpp
+    Heap/CellAllocator.cpp
+    Heap/BlockAllocator.cpp
     Heap/Handle.cpp
     Heap/HeapBlock.cpp
     Heap/Heap.cpp
@@ -9,6 +22,11 @@ set(SOURCES
     Lexer.cpp
     MarkupGenerator.cpp
     Parser.cpp
+    Runtime/AbstractOperations.cpp
+    Runtime/AggregateError.cpp
+    Runtime/AggregateErrorConstructor.cpp
+    Runtime/AggregateErrorPrototype.cpp
+    Runtime/ArgumentsObject.cpp
     Runtime/Array.cpp
     Runtime/ArrayBuffer.cpp
     Runtime/ArrayBufferConstructor.cpp
@@ -25,25 +43,42 @@ set(SOURCES
     Runtime/BooleanObject.cpp
     Runtime/BooleanPrototype.cpp
     Runtime/BoundFunction.cpp
-    Runtime/Cell.cpp
     Runtime/ConsoleObject.cpp
+    Runtime/DataView.cpp
+    Runtime/DataViewConstructor.cpp
+    Runtime/DataViewPrototype.cpp
     Runtime/DateConstructor.cpp
     Runtime/Date.cpp
     Runtime/DatePrototype.cpp
+    Runtime/DeclarativeEnvironment.cpp
+    Runtime/Environment.cpp
     Runtime/ErrorConstructor.cpp
     Runtime/Error.cpp
     Runtime/ErrorPrototype.cpp
     Runtime/ErrorTypes.cpp
     Runtime/Exception.cpp
+    Runtime/FinalizationRegistry.cpp
+    Runtime/FinalizationRegistryConstructor.cpp
+    Runtime/FinalizationRegistryPrototype.cpp
     Runtime/FunctionConstructor.cpp
-    Runtime/Function.cpp
+    Runtime/FunctionEnvironment.cpp
+    Runtime/FunctionObject.cpp
     Runtime/FunctionPrototype.cpp
+    Runtime/GeneratorFunctionConstructor.cpp
+    Runtime/GeneratorFunctionPrototype.cpp
+    Runtime/GeneratorObject.cpp
+    Runtime/GeneratorObjectPrototype.cpp
+    Runtime/GlobalEnvironment.cpp
     Runtime/GlobalObject.cpp
     Runtime/IndexedProperties.cpp
     Runtime/IteratorOperations.cpp
     Runtime/IteratorPrototype.cpp
     Runtime/JSONObject.cpp
-    Runtime/LexicalEnvironment.cpp
+    Runtime/Map.cpp
+    Runtime/MapConstructor.cpp
+    Runtime/MapIterator.cpp
+    Runtime/MapIteratorPrototype.cpp
+    Runtime/MapPrototype.cpp
     Runtime/MarkedValueList.cpp
     Runtime/MathObject.cpp
     Runtime/NativeFunction.cpp
@@ -51,8 +86,9 @@ set(SOURCES
     Runtime/NumberConstructor.cpp
     Runtime/NumberObject.cpp
     Runtime/NumberPrototype.cpp
-    Runtime/ObjectConstructor.cpp
     Runtime/Object.cpp
+    Runtime/ObjectConstructor.cpp
+    Runtime/ObjectEnvironment.cpp
     Runtime/ObjectPrototype.cpp
     Runtime/PrimitiveString.cpp
     Runtime/Promise.cpp
@@ -61,6 +97,7 @@ set(SOURCES
     Runtime/PromisePrototype.cpp
     Runtime/PromiseReaction.cpp
     Runtime/PromiseResolvingFunction.cpp
+    Runtime/PropertyAttributes.cpp
     Runtime/ProxyConstructor.cpp
     Runtime/ProxyObject.cpp
     Runtime/Reference.cpp
@@ -68,8 +105,12 @@ set(SOURCES
     Runtime/RegExpConstructor.cpp
     Runtime/RegExpObject.cpp
     Runtime/RegExpPrototype.cpp
-    Runtime/ScopeObject.cpp
-    Runtime/ScriptFunction.cpp
+        Runtime/OrdinaryFunctionObject.cpp
+    Runtime/Set.cpp
+    Runtime/SetConstructor.cpp
+    Runtime/SetIterator.cpp
+    Runtime/SetIteratorPrototype.cpp
+    Runtime/SetPrototype.cpp
     Runtime/Shape.cpp
     Runtime/StringConstructor.cpp
     Runtime/StringIterator.cpp
@@ -83,16 +124,20 @@ set(SOURCES
     Runtime/TypedArray.cpp
     Runtime/TypedArrayConstructor.cpp
     Runtime/TypedArrayPrototype.cpp
-    Runtime/Uint8ClampedArray.cpp
     Runtime/VM.cpp
     Runtime/Value.cpp
-    Runtime/WithScope.cpp
+    Runtime/WeakMap.cpp
+    Runtime/WeakMapConstructor.cpp
+    Runtime/WeakMapPrototype.cpp
+    Runtime/WeakRef.cpp
+    Runtime/WeakRefConstructor.cpp
+    Runtime/WeakRefPrototype.cpp
+    Runtime/WeakSet.cpp
+    Runtime/WeakSetConstructor.cpp
+    Runtime/WeakSetPrototype.cpp
     SyntaxHighlighter.cpp
     Token.cpp
 )
 
 serenity_lib(LibJS js)
 target_link_libraries(LibJS LibM LibCore LibCrypto LibRegex LibSyntax)
-
-serenity_add_precompiled_header_to_target(LibJS ${CMAKE_CURRENT_SOURCE_DIR}/Heap/Heap.h)
-serenity_add_precompiled_header_to_target(LibJS ${CMAKE_CURRENT_SOURCE_DIR}/Runtime/GlobalObject.h)

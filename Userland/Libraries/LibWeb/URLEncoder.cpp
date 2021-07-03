@@ -5,18 +5,18 @@
  */
 
 #include <AK/StringBuilder.h>
-#include <AK/URLParser.h>
+#include <AK/URL.h>
 #include <LibWeb/URLEncoder.h>
 
 namespace Web {
 
-String urlencode(const Vector<URLQueryParam>& pairs)
+String urlencode(const Vector<URLQueryParam>& pairs, URL::PercentEncodeSet percent_encode_set)
 {
     StringBuilder builder;
     for (size_t i = 0; i < pairs.size(); ++i) {
-        builder.append(urlencode(pairs[i].name));
+        builder.append(URL::percent_encode(pairs[i].name, percent_encode_set));
         builder.append('=');
-        builder.append(urlencode(pairs[i].value));
+        builder.append(URL::percent_encode(pairs[i].value, percent_encode_set));
         if (i != pairs.size() - 1)
             builder.append('&');
     }

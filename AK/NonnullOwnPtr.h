@@ -33,7 +33,7 @@ public:
         : m_ptr(&ptr)
     {
         static_assert(
-            requires { requires typename T::AllowOwnPtr()(); } || !requires(T obj) { requires !typename T::AllowOwnPtr()(); obj.ref(); obj.unref(); },
+            requires { requires typename T::AllowOwnPtr()(); } || !requires { requires !typename T::AllowOwnPtr()(); declval<T>().ref(); declval<T>().unref(); },
             "Use NonnullRefPtr<> for RefCounted types");
     }
     NonnullOwnPtr(NonnullOwnPtr&& other)
@@ -98,17 +98,26 @@ public:
         return exchange(m_ptr, nullptr);
     }
 
-    T* ptr() { return m_ptr; }
-    const T* ptr() const { return m_ptr; }
+    ALWAYS_INLINE RETURNS_NONNULL T* ptr()
+    {
+        VERIFY(m_ptr);
+        return m_ptr;
+    }
 
-    T* operator->() { return m_ptr; }
-    const T* operator->() const { return m_ptr; }
+    ALWAYS_INLINE RETURNS_NONNULL const T* ptr() const
+    {
+        VERIFY(m_ptr);
+        return m_ptr;
+    }
 
-    T& operator*() { return *m_ptr; }
-    const T& operator*() const { return *m_ptr; }
+    ALWAYS_INLINE RETURNS_NONNULL T* operator->() { return ptr(); }
+    ALWAYS_INLINE RETURNS_NONNULL const T* operator->() const { return ptr(); }
 
-    operator const T*() const { return m_ptr; }
-    operator T*() { return m_ptr; }
+    ALWAYS_INLINE T& operator*() { return *ptr(); }
+    ALWAYS_INLINE const T& operator*() const { return *ptr(); }
+
+    ALWAYS_INLINE RETURNS_NONNULL operator const T*() const { return ptr(); }
+    ALWAYS_INLINE RETURNS_NONNULL operator T*() { return ptr(); }
 
     operator bool() const = delete;
     bool operator!() const = delete;
@@ -143,17 +152,27 @@ private:
     T* m_ptr = nullptr;
 };
 
+#if !defined(KERNEL)
+
 template<typename T>
 inline NonnullOwnPtr<T> adopt_own(T& object)
 {
     return NonnullOwnPtr<T>(NonnullOwnPtr<T>::Adopt, object);
 }
 
+#endif
+
 template<class T, class... Args>
-inline NonnullOwnPtr<T>
-make(Args&&... args)
+requires(IsConstructible<T, Args...>) inline NonnullOwnPtr<T> make(Args&&... args)
 {
     return NonnullOwnPtr<T>(NonnullOwnPtr<T>::Adopt, *new T(forward<Args>(args)...));
+}
+
+// FIXME: Remove once P0960R3 is available in Clang.
+template<class T, class... Args>
+inline NonnullOwnPtr<T> make(Args&&... args)
+{
+    return NonnullOwnPtr<T>(NonnullOwnPtr<T>::Adopt, *new T { forward<Args>(args)... });
 }
 
 template<typename T>
@@ -180,6 +199,8 @@ struct Formatter<NonnullOwnPtr<T>> : Formatter<const T*> {
 
 }
 
+#if !defined(KERNEL)
 using AK::adopt_own;
+#endif
 using AK::make;
 using AK::NonnullOwnPtr;

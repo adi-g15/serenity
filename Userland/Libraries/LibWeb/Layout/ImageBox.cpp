@@ -8,7 +8,7 @@
 #include <LibGfx/Painter.h>
 #include <LibGfx/StylePainter.h>
 #include <LibWeb/Layout/ImageBox.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 
 namespace Web::Layout {
 
@@ -16,12 +16,12 @@ ImageBox::ImageBox(DOM::Document& document, DOM::Element& element, NonnullRefPtr
     : ReplacedBox(document, element, move(style))
     , m_image_loader(image_loader)
 {
-    frame().register_viewport_client(*this);
+    browsing_context().register_viewport_client(*this);
 }
 
 ImageBox::~ImageBox()
 {
-    frame().unregister_viewport_client(*this);
+    browsing_context().unregister_viewport_client(*this);
 }
 
 int ImageBox::preferred_width() const
@@ -60,7 +60,7 @@ void ImageBox::prepare_for_replaced_layout()
     }
 
     if (renders_as_alt_text()) {
-        auto& image_element = downcast<HTML::HTMLImageElement>(dom_node());
+        auto& image_element = verify_cast<HTML::HTMLImageElement>(dom_node());
         auto& font = Gfx::FontDatabase::default_font();
         auto alt = image_element.alt();
         if (alt.is_empty())
@@ -88,7 +88,7 @@ void ImageBox::paint(PaintContext& context, PaintPhase phase)
 
     if (phase == PaintPhase::Foreground) {
         if (renders_as_alt_text()) {
-            auto& image_element = downcast<HTML::HTMLImageElement>(dom_node());
+            auto& image_element = verify_cast<HTML::HTMLImageElement>(dom_node());
             context.painter().set_font(Gfx::FontDatabase::default_font());
             Gfx::StylePainter::paint_frame(context.painter(), enclosing_int_rect(absolute_rect()), context.palette(), Gfx::FrameShape::Container, Gfx::FrameShadow::Sunken, 2);
             auto alt = image_element.alt();

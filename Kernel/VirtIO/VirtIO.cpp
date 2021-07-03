@@ -4,21 +4,23 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/Bus/PCI/IDs.h>
 #include <Kernel/CommandLine.h>
-#include <Kernel/PCI/IDs.h>
+#include <Kernel/Sections.h>
 #include <Kernel/VirtIO/VirtIO.h>
 #include <Kernel/VirtIO/VirtIOConsole.h>
 #include <Kernel/VirtIO/VirtIORNG.h>
 
 namespace Kernel {
 
-void VirtIO::detect()
+UNMAP_AFTER_INIT void VirtIO::detect()
 {
     if (kernel_command_line().disable_virtio())
         return;
     PCI::enumerate([&](const PCI::Address& address, PCI::ID id) {
         if (address.is_null() || id.is_null())
             return;
+        // TODO: We should also be checking that the device_id is in between 0x1000 - 0x107F inclusive
         if (id.vendor_id != (u16)PCIVendorID::VirtIO)
             return;
         switch (id.device_id) {
@@ -30,6 +32,10 @@ void VirtIO::detect()
             [[maybe_unused]] auto& unused = adopt_ref(*new VirtIORNG(address)).leak_ref();
             break;
         }
+        case (u16)PCIDeviceID::VirtIOGPU: {
+            // This should have been initialized by the graphics subsystem
+            break;
+        }
         default:
             dbgln_if(VIRTIO_DEBUG, "VirtIO: Unknown VirtIO device with ID: {}", id.device_id);
             break;
@@ -37,7 +43,7 @@ void VirtIO::detect()
     });
 }
 
-VirtIODevice::VirtIODevice(PCI::Address address, String class_name)
+UNMAP_AFTER_INIT VirtIODevice::VirtIODevice(PCI::Address address, String class_name)
     : PCI::Device(address, PCI::get_interrupt_line(address))
     , m_class_name(move(class_name))
     , m_io_base(IOAddress(PCI::get_BAR0(pci_address()) & ~1))
@@ -47,9 +53,6 @@ VirtIODevice::VirtIODevice(PCI::Address address, String class_name)
     enable_bus_mastering(pci_address());
     PCI::enable_interrupt_line(pci_address());
     enable_irq();
-
-    reset_device();
-    set_status_bit(DEVICE_STATUS_ACKNOWLEDGE);
 
     auto capabilities = PCI::get_physical_id(address).capabilities();
     for (auto& capability : capabilities) {
@@ -89,6 +92,9 @@ VirtIODevice::VirtIODevice(PCI::Address address, String class_name)
         m_notify_cfg = get_config(ConfigurationType::Notify, 0);
         m_isr_cfg = get_config(ConfigurationType::ISR, 0);
     }
+
+    reset_device();
+    set_status_bit(DEVICE_STATUS_ACKNOWLEDGE);
 
     set_status_bit(DEVICE_STATUS_DRIVER);
 }
@@ -161,9 +167,9 @@ u8 VirtIODevice::read_status_bits()
     return config_read8(*m_common_cfg, COMMON_CFG_DEVICE_STATUS);
 }
 
-void VirtIODevice::clear_status_bit(u8 status_bit)
+void VirtIODevice::mask_status_bits(u8 status_mask)
 {
-    m_status &= status_bit;
+    m_status &= status_mask;
     if (!m_common_cfg)
         out<u8>(REG_DEVICE_STATUS, m_status);
     else
@@ -241,7 +247,7 @@ void VirtIODevice::reset_device()
 {
     dbgln_if(VIRTIO_DEBUG, "{}: Reset device", m_class_name);
     if (!m_common_cfg) {
-        clear_status_bit(0);
+        mask_status_bits(0);
         while (read_status_bits() != 0) {
             // TODO: delay a bit?
         }
@@ -335,13 +341,6 @@ void VirtIODevice::finish_init()
     dbgln_if(VIRTIO_DEBUG, "{}: Finished initialization", m_class_name);
 }
 
-void VirtIODevice::supply_buffer_and_notify(u16 queue_index, const ScatterGatherList& scatter_list, BufferType buffer_type, void* token)
-{
-    VERIFY(queue_index < m_queue_count);
-    if (get_queue(queue_index).supply_buffer({}, scatter_list, buffer_type, token))
-        notify_queue(queue_index);
-}
-
 u8 VirtIODevice::isr_status()
 {
     if (!m_isr_cfg)
@@ -349,24 +348,41 @@ u8 VirtIODevice::isr_status()
     return config_read8(*m_isr_cfg, 0);
 }
 
-void VirtIODevice::handle_irq(const RegisterState&)
+bool VirtIODevice::handle_irq(const RegisterState&)
 {
     u8 isr_type = isr_status();
+    if ((isr_type & (QUEUE_INTERRUPT | DEVICE_CONFIG_INTERRUPT)) == 0) {
+        dbgln_if(VIRTIO_DEBUG, "{}: Handling interrupt with unknown type: {}", m_class_name, isr_type);
+        return false;
+    }
     if (isr_type & DEVICE_CONFIG_INTERRUPT) {
+        dbgln_if(VIRTIO_DEBUG, "{}: VirtIO Device config interrupt!", m_class_name);
         if (!handle_device_config_change()) {
             set_status_bit(DEVICE_STATUS_FAILED);
             dbgln("{}: Failed to handle device config change!", m_class_name);
         }
     }
     if (isr_type & QUEUE_INTERRUPT) {
+        dbgln_if(VIRTIO_DEBUG, "{}: VirtIO Queue interrupt!", m_class_name);
         for (size_t i = 0; i < m_queues.size(); i++) {
-            if (get_queue(i).new_data_available())
-                return handle_queue_update(i);
+            if (get_queue(i).new_data_available()) {
+                handle_queue_update(i);
+                return true;
+            }
         }
         dbgln_if(VIRTIO_DEBUG, "{}: Got queue interrupt but all queues are up to date!", m_class_name);
     }
-    if (isr_type & ~(QUEUE_INTERRUPT | DEVICE_CONFIG_INTERRUPT))
-        dbgln("{}: Handling interrupt with unknown type: {}", m_class_name, isr_type);
+    return true;
+}
+
+void VirtIODevice::supply_chain_and_notify(u16 queue_index, VirtIOQueueChain& chain)
+{
+    auto& queue = get_queue(queue_index);
+    VERIFY(&chain.queue() == &queue);
+    VERIFY(queue.lock().is_locked());
+    chain.submit_to_queue();
+    if (queue.should_notify())
+        notify_queue(queue_index);
 }
 
 }

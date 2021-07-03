@@ -45,7 +45,7 @@ public:
 
         if (role == GUI::ModelRole::Font) {
             if (index.column() == 0) {
-                return Gfx::FontDatabase::default_bold_font();
+                return Gfx::FontDatabase::default_font().bold_variant();
             }
         }
 
@@ -86,9 +86,9 @@ ProcessStateWidget::ProcessStateWidget(pid_t pid)
     set_layout<GUI::VerticalBoxLayout>();
     layout()->set_margins({ 4, 4, 4, 4 });
     m_table_view = add<GUI::TableView>();
+    m_table_view->set_model(adopt_ref(*new ProcessStateModel(ProcessModel::the(), pid)));
     m_table_view->column_header().set_visible(false);
     m_table_view->column_header().set_section_size(0, 90);
-    m_table_view->set_model(adopt_ref(*new ProcessStateModel(ProcessModel::the(), pid)));
 }
 
 ProcessStateWidget::~ProcessStateWidget()

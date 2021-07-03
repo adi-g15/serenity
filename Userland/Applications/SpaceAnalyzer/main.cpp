@@ -3,6 +3,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
+
 #include "TreeMapWidget.h"
 #include <AK/LexicalPath.h>
 #include <AK/Queue.h>
@@ -22,6 +23,7 @@
 #include <LibGUI/Menubar.h>
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Statusbar.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -73,18 +75,18 @@ struct MountInfo {
 static void fill_mounts(Vector<MountInfo>& output)
 {
     // Output info about currently mounted filesystems.
-    auto df = Core::File::construct("/proc/df");
-    if (!df->open(Core::IODevice::ReadOnly)) {
-        fprintf(stderr, "Failed to open /proc/df: %s\n", df->error_string());
+    auto file = Core::File::construct("/proc/df");
+    if (!file->open(Core::OpenMode::ReadOnly)) {
+        warnln("Failed to open {}: {}", file->name(), file->error_string());
         return;
     }
 
-    auto content = df->read_all();
+    auto content = file->read_all();
     auto json = JsonValue::from_string(content);
     VERIFY(json.has_value());
 
     json.value().as_array().for_each([&output](auto& value) {
-        auto filesystem_object = value.as_object();
+        auto& filesystem_object = value.as_object();
         MountInfo mount_info;
         mount_info.mount_point = filesystem_object.get("mount_point").to_string();
         mount_info.source = filesystem_object.get("source").as_string_or("none");
@@ -170,7 +172,7 @@ static void populate_filesize_tree(TreeNode& root, Vector<MountInfo>& mounts, Ha
                 int name_len = name.length();
                 builder.append(name);
                 struct stat st;
-                int stat_result = lstat(builder.to_string().characters(), &st);
+                int stat_result = fstatat(dir_iterator.fd(), name.characters(), &st, AT_SYMLINK_NOFOLLOW);
                 if (stat_result < 0) {
                     int error_sum = error_accumulator.get(errno).value_or(0);
                     error_accumulator.set(errno, error_sum + 1);
@@ -269,17 +271,20 @@ int main(int argc, char* argv[])
     auto& treemapwidget = *mainwidget.find_descendant_of_type_named<SpaceAnalyzer::TreeMapWidget>("tree_map");
     auto& statusbar = *mainwidget.find_descendant_of_type_named<GUI::Statusbar>("statusbar");
 
-    // Configure the menubar.
     auto menubar = GUI::Menubar::construct();
+
     auto& file_menu = menubar->add_menu("&File");
     file_menu.add_action(GUI::Action::create("&Analyze", [&](auto&) {
         analyze(tree, treemapwidget, statusbar);
     }));
+    file_menu.add_separator();
     file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) {
         app->quit();
     }));
-    auto& help_menu = menubar->add_menu("Help");
+
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action(APP_NAME, app_icon, window));
+
     window->set_menubar(move(menubar));
 
     // Configure the nodes context menu.

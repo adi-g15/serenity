@@ -26,22 +26,20 @@ void TLSv12WebSocketConnectionImpl::connect(ConnectionInfo const& connection)
     VERIFY(on_ready_to_read);
     m_socket = TLS::TLSv12::construct(this);
 
-    m_notifier = Core::Notifier::construct(m_socket->fd(), Core::Notifier::Read);
-    m_notifier->on_ready_to_read = [this] {
-        on_ready_to_read();
-    };
-
     m_socket->set_root_certificates(DefaultRootCACertificates::the().certificates());
     m_socket->on_tls_error = [this](TLS::AlertDescription) {
         on_connection_error();
     };
-    m_socket->on_tls_ready_to_write = [this] {
+    m_socket->on_tls_ready_to_read = [this](auto&) {
+        on_ready_to_read();
+    };
+    m_socket->on_tls_ready_to_write = [this](auto&) {
         on_connected();
     };
     m_socket->on_tls_finished = [this] {
         on_connection_error();
     };
-    m_socket->on_tls_certificate_request = [this](auto&) {
+    m_socket->on_tls_certificate_request = [](auto&) {
         // FIXME : Once we handle TLS certificate requests, handle it here as well.
     };
     bool success = m_socket->connect(connection.url().host(), connection.url().port());

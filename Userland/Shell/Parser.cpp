@@ -175,8 +175,8 @@ RefPtr<AST::Node> Parser::parse_toplevel()
         if (result.entries.is_empty())
             break;
 
-        sequence.append(move(result.entries));
-        positions.append(move(result.separator_positions));
+        sequence.extend(move(result.entries));
+        positions.extend(move(result.separator_positions));
     } while (result.decision == ShouldReadMoreSequences::Yes);
 
     if (sequence.is_empty())
@@ -353,7 +353,7 @@ RefPtr<AST::Node> Parser::parse_variable_decls()
     VERIFY(rest->is_variable_decls());
     auto* rest_decl = static_cast<AST::VariableDeclarations*>(rest.ptr());
 
-    variables.append(rest_decl->variables());
+    variables.extend(rest_decl->variables());
 
     return create<AST::VariableDeclarations>(move(variables));
 }
@@ -1772,7 +1772,7 @@ RefPtr<AST::Node> Parser::parse_bareword()
         String username;
         RefPtr<AST::Node> tilde, text;
 
-        auto first_slash_index = string.index_of("/");
+        auto first_slash_index = string.find('/');
         if (first_slash_index.has_value()) {
             username = string.substring_view(1, first_slash_index.value() - 1);
             string = string.substring_view(first_slash_index.value(), string.length() - first_slash_index.value());
@@ -2037,7 +2037,7 @@ bool Parser::parse_heredoc_entries()
             // until we find a line that contains the key
             auto end_condition = move(m_end_condition);
             found_key = false;
-            set_end_condition([this, end = record.end, &found_key] {
+            set_end_condition(make<Function<bool()>>([this, end = record.end, &found_key] {
                 if (found_key)
                     return true;
                 auto offset = current_position();
@@ -2060,7 +2060,7 @@ bool Parser::parse_heredoc_entries()
                 }
                 restore_to(offset.offset, offset.line);
                 return false;
-            });
+            }));
 
             auto expr = parse_doublequoted_string_inner();
             set_end_condition(move(end_condition));

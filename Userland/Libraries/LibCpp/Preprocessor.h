@@ -14,6 +14,7 @@
 #include <AK/Vector.h>
 
 namespace Cpp {
+
 class Preprocessor {
 
 public:
@@ -33,9 +34,12 @@ public:
     const Definitions& definitions() const { return m_definitions; }
 
     void set_ignore_unsupported_keywords(bool ignore) { m_options.ignore_unsupported_keywords = ignore; }
+    void set_keep_include_statements(bool keep) { m_options.keep_include_statements = keep; }
 
 private:
-    void handle_preprocessor_line(const StringView&);
+    using PreprocessorKeyword = StringView;
+    PreprocessorKeyword handle_preprocessor_line(const StringView&);
+    void handle_preprocessor_keyword(const StringView& keyword, GenericLexer& line_lexer);
 
     Definitions m_definitions;
     const String m_filename;
@@ -59,6 +63,7 @@ private:
 
     struct Options {
         bool ignore_unsupported_keywords { false };
+        bool keep_include_statements { false };
     } m_options;
 };
 }

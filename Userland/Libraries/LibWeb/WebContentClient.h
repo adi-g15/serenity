@@ -22,8 +22,6 @@ class WebContentClient final
     C_OBJECT(WebContentClient);
 
 public:
-    virtual void handshake() override;
-
     Function<void()> on_web_content_process_crash;
 
 private:
@@ -51,6 +49,7 @@ private:
     virtual void did_request_link_context_menu(Gfx::IntPoint const&, URL const&, String const&, unsigned) override;
     virtual void did_request_image_context_menu(Gfx::IntPoint const&, URL const&, String const&, unsigned, Gfx::ShareableBitmap const&) override;
     virtual void did_get_source(URL const&, String const&) override;
+    virtual void did_get_dom_tree(String const&) override;
     virtual void did_js_console_output(String const&, String const&) override;
     virtual void did_change_favicon(Gfx::ShareableBitmap const&) override;
     virtual void did_request_alert(String const&) override;

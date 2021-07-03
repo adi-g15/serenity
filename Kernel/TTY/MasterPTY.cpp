@@ -7,6 +7,7 @@
 #include "MasterPTY.h"
 #include "PTYMultiplexer.h"
 #include "SlavePTY.h"
+#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Process.h>
 #include <LibC/errno_numbers.h>
@@ -78,10 +79,10 @@ void MasterPTY::notify_slave_closed(Badge<SlavePTY>)
         m_slave = nullptr;
 }
 
-ssize_t MasterPTY::on_slave_write(const UserOrKernelBuffer& data, ssize_t size)
+KResultOr<size_t> MasterPTY::on_slave_write(const UserOrKernelBuffer& data, size_t size)
 {
     if (m_closed)
-        return -EIO;
+        return EIO;
     return m_buffer.write(data, size);
 }
 

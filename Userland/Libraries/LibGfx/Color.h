@@ -71,6 +71,15 @@ public:
     static constexpr Color from_rgb(unsigned rgb) { return Color(rgb | 0xff000000); }
     static constexpr Color from_rgba(unsigned rgba) { return Color(rgba); }
 
+    static constexpr Color from_cmyk(float c, float m, float y, float k)
+    {
+        auto r = static_cast<u8>(255.0f * (1.0f - c) * (1.0f - k));
+        auto g = static_cast<u8>(255.0f * (1.0f - m) * (1.0f - k));
+        auto b = static_cast<u8>(255.0f * (1.0f - y) * (1.0f - k));
+
+        return Color(r, g, b);
+    }
+
     constexpr u8 red() const { return (m_value >> 16) & 0xff; }
     constexpr u8 green() const { return (m_value >> 8) & 0xff; }
     constexpr u8 blue() const { return m_value & 0xff; }
@@ -140,7 +149,7 @@ public:
 #endif
     }
 
-    constexpr Color interpolate(const Color& other, float weight) const
+    Color interpolate(const Color& other, float weight) const noexcept
     {
         u8 r = red() + roundf(static_cast<float>(other.red() - red()) * weight);
         u8 g = green() + roundf(static_cast<float>(other.green() - green()) * weight);

@@ -7,10 +7,16 @@
 #include "FullDevice.h"
 #include <AK/Memory.h>
 #include <AK/StdLibExtras.h>
-#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/Panic.h>
+#include <Kernel/Sections.h>
 #include <LibC/errno_numbers.h>
 
 namespace Kernel {
+
+UNMAP_AFTER_INIT NonnullRefPtr<FullDevice> FullDevice::must_create()
+{
+    return adopt_ref(*new FullDevice);
+}
 
 UNMAP_AFTER_INIT FullDevice::FullDevice()
     : CharacterDevice(1, 7)
@@ -28,10 +34,9 @@ bool FullDevice::can_read(const FileDescription&, size_t) const
 
 KResultOr<size_t> FullDevice::read(FileDescription&, u64, UserOrKernelBuffer& buffer, size_t size)
 {
-    ssize_t count = min(static_cast<size_t>(PAGE_SIZE), size);
-    if (!buffer.memset(0, count))
+    if (!buffer.memset(0, size))
         return EFAULT;
-    return count;
+    return size;
 }
 
 KResultOr<size_t> FullDevice::write(FileDescription&, u64, const UserOrKernelBuffer&, size_t size)
@@ -40,5 +45,4 @@ KResultOr<size_t> FullDevice::write(FileDescription&, u64, const UserOrKernelBuf
         return 0;
     return ENOSPC;
 }
-
 }

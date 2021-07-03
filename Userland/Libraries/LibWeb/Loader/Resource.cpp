@@ -41,9 +41,9 @@ void Resource::for_each_client(Function<void(ResourceClient&)> callback)
     }
 }
 
-static String encoding_from_content_type(const String& content_type)
+static Optional<String> encoding_from_content_type(const String& content_type)
 {
-    auto offset = content_type.index_of("charset=");
+    auto offset = content_type.find("charset="sv);
     if (offset.has_value()) {
         auto encoding = content_type.substring(offset.value() + 8, content_type.length() - offset.value() - 8).to_lowercase();
         if (encoding.length() >= 2 && encoding.starts_with('"') && encoding.ends_with('"'))
@@ -53,12 +53,12 @@ static String encoding_from_content_type(const String& content_type)
         return encoding;
     }
 
-    return "utf-8";
+    return {};
 }
 
 static String mime_type_from_content_type(const String& content_type)
 {
-    auto offset = content_type.index_of(";");
+    auto offset = content_type.find(';');
     if (offset.has_value())
         return content_type.substring(0, offset.value()).to_lowercase();
 
@@ -74,18 +74,29 @@ void Resource::did_load(Badge<ResourceLoader>, ReadonlyBytes data, const HashMap
     m_loaded = true;
 
     auto content_type = headers.get("Content-Type");
+
     if (content_type.has_value()) {
         dbgln_if(RESOURCE_DEBUG, "Content-Type header: '{}'", content_type.value());
-        m_encoding = encoding_from_content_type(content_type.value());
         m_mime_type = mime_type_from_content_type(content_type.value());
     } else if (url().protocol() == "data" && !url().data_mime_type().is_empty()) {
         dbgln_if(RESOURCE_DEBUG, "This is a data URL with mime-type _{}_", url().data_mime_type());
-        m_encoding = "utf-8"; // FIXME: This doesn't seem nice.
         m_mime_type = url().data_mime_type();
     } else {
-        dbgln_if(RESOURCE_DEBUG, "No Content-Type header to go on! Guessing based on filename...");
-        m_encoding = "utf-8"; // FIXME: This doesn't seem nice.
-        m_mime_type = Core::guess_mime_type_based_on_filename(url().path());
+        auto content_type_options = headers.get("X-Content-Type-Options");
+        if (content_type_options.value_or("").equals_ignoring_case("nosniff")) {
+            m_mime_type = "text/plain";
+        } else {
+            m_mime_type = Core::guess_mime_type_based_on_filename(url().path());
+        }
+    }
+
+    m_encoding = {};
+    if (content_type.has_value()) {
+        auto encoding = encoding_from_content_type(content_type.value());
+        if (encoding.has_value()) {
+            dbgln_if(RESOURCE_DEBUG, "Set encoding '{}' from Content-Type", encoding.has_value());
+            m_encoding = encoding.value();
+        }
     }
 
     for_each_client([](auto& client) {

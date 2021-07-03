@@ -28,6 +28,7 @@ public:
     static CSS::Repeat background_repeat() { return CSS::Repeat::Repeat; }
     static CSS::ListStyleType list_style_type() { return CSS::ListStyleType::Disc; }
     static CSS::FlexDirection flex_direction() { return CSS::FlexDirection::Row; }
+    static CSS::FlexWrap flex_wrap() { return CSS::FlexWrap::Nowrap; }
     static CSS::Overflow overflow() { return CSS::Overflow::Visible; }
 };
 
@@ -36,6 +37,11 @@ public:
     Color color { Color::Transparent };
     CSS::LineStyle line_style { CSS::LineStyle::None };
     float width { 0 };
+};
+
+struct FlexBasisData {
+    CSS::FlexBasis type { CSS::FlexBasis::Content };
+    CSS::Length length {};
 };
 
 class ComputedValues {
@@ -51,6 +57,10 @@ public:
     CSS::Position position() const { return m_noninherited.position; }
     CSS::WhiteSpace white_space() const { return m_inherited.white_space; }
     CSS::FlexDirection flex_direction() const { return m_noninherited.flex_direction; }
+    CSS::FlexWrap flex_wrap() const { return m_noninherited.flex_wrap; }
+    FlexBasisData flex_basis() const { return m_noninherited.flex_basis; }
+    Optional<float> flex_grow_factor() const { return m_noninherited.flex_grow_factor; }
+    Optional<float> flex_shrink_factor() const { return m_noninherited.flex_shrink_factor; }
     const CSS::Length& width() const { return m_noninherited.width; }
     const CSS::Length& min_width() const { return m_noninherited.min_width; }
     const CSS::Length& max_width() const { return m_noninherited.max_width; }
@@ -66,6 +76,11 @@ public:
     const BorderData& border_top() const { return m_noninherited.border_top; }
     const BorderData& border_right() const { return m_noninherited.border_right; }
     const BorderData& border_bottom() const { return m_noninherited.border_bottom; }
+
+    const CSS::Length& border_bottom_left_radius() const { return m_noninherited.border_bottom_left_radius; }
+    const CSS::Length& border_bottom_right_radius() const { return m_noninherited.border_bottom_right_radius; }
+    const CSS::Length& border_top_left_radius() const { return m_noninherited.border_top_left_radius; }
+    const CSS::Length& border_top_right_radius() const { return m_noninherited.border_top_right_radius; }
 
     CSS::Overflow overflow_x() const { return m_noninherited.overflow_x; }
     CSS::Overflow overflow_y() const { return m_noninherited.overflow_y; }
@@ -114,10 +129,18 @@ protected:
         BorderData border_top;
         BorderData border_right;
         BorderData border_bottom;
+        Length border_bottom_left_radius;
+        Length border_bottom_right_radius;
+        Length border_top_left_radius;
+        Length border_top_right_radius;
         Color background_color { InitialValues::background_color() };
         CSS::Repeat background_repeat_x { InitialValues::background_repeat() };
         CSS::Repeat background_repeat_y { InitialValues::background_repeat() };
         CSS::FlexDirection flex_direction { InitialValues::flex_direction() };
+        CSS::FlexWrap flex_wrap { InitialValues::flex_wrap() };
+        CSS::FlexBasisData flex_basis {};
+        Optional<float> flex_grow_factor;
+        Optional<float> flex_shrink_factor;
         CSS::Overflow overflow_x { InitialValues::overflow() };
         CSS::Overflow overflow_y { InitialValues::overflow() };
     } m_noninherited;
@@ -154,11 +177,19 @@ public:
     void set_overflow_y(CSS::Overflow value) { m_noninherited.overflow_y = value; }
     void set_list_style_type(CSS::ListStyleType value) { m_inherited.list_style_type = value; }
     void set_display(CSS::Display value) { m_noninherited.display = value; }
+    void set_border_bottom_left_radius(CSS::Length value) { m_noninherited.border_bottom_left_radius = value; }
+    void set_border_bottom_right_radius(CSS::Length value) { m_noninherited.border_bottom_right_radius = value; }
+    void set_border_top_left_radius(CSS::Length value) { m_noninherited.border_top_left_radius = value; }
+    void set_border_top_right_radius(CSS::Length value) { m_noninherited.border_top_right_radius = value; }
     BorderData& border_left() { return m_noninherited.border_left; }
     BorderData& border_top() { return m_noninherited.border_top; }
     BorderData& border_right() { return m_noninherited.border_right; }
     BorderData& border_bottom() { return m_noninherited.border_bottom; }
     void set_flex_direction(CSS::FlexDirection value) { m_noninherited.flex_direction = value; }
+    void set_flex_wrap(CSS::FlexWrap value) { m_noninherited.flex_wrap = value; }
+    void set_flex_basis(FlexBasisData value) { m_noninherited.flex_basis = value; }
+    void set_flex_grow_factor(Optional<float> value) { m_noninherited.flex_grow_factor = value; }
+    void set_flex_shrink_factor(Optional<float> value) { m_noninherited.flex_shrink_factor = value; }
 };
 
 }

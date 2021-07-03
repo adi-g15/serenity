@@ -7,6 +7,7 @@
 #pragma once
 
 #include <AK/Assertions.h>
+#include <AK/Format.h>
 #include <AK/Platform.h>
 #include <AK/StdLibExtras.h>
 #include <LibC/errno_numbers.h>
@@ -42,7 +43,7 @@ private:
 };
 
 template<typename T>
-class alignas(T) [[nodiscard]] KResultOr {
+class [[nodiscard]] KResultOr {
 public:
     KResultOr(KResult error)
         : m_error(error)

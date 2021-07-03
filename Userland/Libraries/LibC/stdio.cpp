@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdio_ext.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/internals.h>
@@ -39,10 +40,13 @@ public:
     void setbuf(u8* data, int mode, size_t size) { m_buffer.setbuf(data, mode, size); }
 
     bool flush();
+    void purge();
     bool close();
 
     int fileno() const { return m_fd; }
     bool eof() const { return m_eof; }
+    int mode() const { return m_mode; }
+    u8 flags() const { return m_flags; }
 
     int error() const { return m_error; }
     void clear_err() { m_error = 0; }
@@ -60,6 +64,12 @@ public:
     void set_popen_child(pid_t child_pid) { m_popen_child = child_pid; }
 
     void reopen(int fd, int mode);
+
+    enum Flags : u8 {
+        None = 0,
+        LastRead = 1,
+        LastWrite = 2,
+    };
 
 private:
     struct Buffer {
@@ -117,6 +127,7 @@ private:
 
     int m_fd { -1 };
     int m_mode { 0 };
+    u8 m_flags { Flags::None };
     int m_error { 0 };
     bool m_eof { false };
     pid_t m_popen_child { -1 };
@@ -182,6 +193,11 @@ bool FILE::flush()
     return true;
 }
 
+void FILE::purge()
+{
+    m_buffer.drop();
+}
+
 ssize_t FILE::do_read(u8* data, size_t size)
 {
     int nread = ::read(m_fd, data, size);
@@ -241,6 +257,9 @@ size_t FILE::read(u8* data, size_t size)
 {
     size_t total_read = 0;
 
+    m_flags |= Flags::LastRead;
+    m_flags &= ~Flags::LastWrite;
+
     while (size > 0) {
         size_t actual_size;
 
@@ -279,6 +298,9 @@ size_t FILE::read(u8* data, size_t size)
 size_t FILE::write(const u8* data, size_t size)
 {
     size_t total_written = 0;
+
+    m_flags &= ~Flags::LastRead;
+    m_flags |= Flags::LastWrite;
 
     while (size > 0) {
         size_t actual_size;
@@ -331,6 +353,9 @@ bool FILE::gets(u8* data, size_t size)
 
     if (size == 0)
         return false;
+
+    m_flags |= Flags::LastRead;
+    m_flags &= ~Flags::LastWrite;
 
     while (size > 1) {
         if (m_buffer.may_use()) {
@@ -589,7 +614,7 @@ private:
 
 extern "C" {
 
-static u8 default_streams[3][sizeof(FILE)];
+alignas(FILE) static u8 default_streams[3][sizeof(FILE)];
 FILE* stdin = reinterpret_cast<FILE*>(&default_streams[0]);
 FILE* stdout = reinterpret_cast<FILE*>(&default_streams[1]);
 FILE* stderr = reinterpret_cast<FILE*>(&default_streams[2]);
@@ -1281,5 +1306,33 @@ FILE* tmpfile()
     // FIXME: instead of using this hack, implement with O_TMPFILE or similar
     unlink(tmp_path);
     return fdopen(fd, "rw");
+}
+
+int __freading(FILE* stream)
+{
+    ScopedFileLock lock(stream);
+
+    if ((stream->mode() & O_RDWR) == O_RDONLY) {
+        return 1;
+    }
+
+    return (stream->flags() & FILE::Flags::LastRead);
+}
+
+int __fwriting(FILE* stream)
+{
+    ScopedFileLock lock(stream);
+
+    if ((stream->mode() & O_RDWR) == O_WRONLY) {
+        return 1;
+    }
+
+    return (stream->flags() & FILE::Flags::LastWrite);
+}
+
+void __fpurge(FILE* stream)
+{
+    ScopedFileLock lock(stream);
+    stream->purge();
 }
 }

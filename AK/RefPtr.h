@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <AK/Assertions.h>
 #include <AK/Atomic.h>
 #include <AK/Format.h>
 #include <AK/NonnullRefPtr.h>
@@ -13,7 +14,8 @@
 #include <AK/Traits.h>
 #include <AK/Types.h>
 #ifdef KERNEL
-#    include <Kernel/Arch/x86/CPU.h>
+#    include <Kernel/Arch/x86/Processor.h>
+#    include <Kernel/Arch/x86/ScopedCritical.h>
 #endif
 
 namespace AK {
@@ -475,7 +477,30 @@ inline void swap(RefPtr<T, PtrTraitsT>& a, RefPtr<U, PtrTraitsU>& b)
     a.swap(b);
 }
 
+template<typename T>
+inline RefPtr<T> adopt_ref_if_nonnull(T* object)
+{
+    if (object)
+        return RefPtr<T>(RefPtr<T>::Adopt, *object);
+    return {};
 }
 
+template<typename T, class... Args>
+requires(IsConstructible<T, Args...>) inline RefPtr<T> try_create(Args&&... args)
+{
+    return adopt_ref_if_nonnull(new (nothrow) T(forward<Args>(args)...));
+}
+
+// FIXME: Remove once P0960R3 is available in Clang.
+template<typename T, class... Args>
+inline RefPtr<T> try_create(Args&&... args)
+{
+    return adopt_ref_if_nonnull(new (nothrow) T { forward<Args>(args)... });
+}
+
+}
+
+using AK::adopt_ref_if_nonnull;
 using AK::RefPtr;
 using AK::static_ptr_cast;
+using AK::try_create;

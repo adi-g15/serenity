@@ -7,10 +7,10 @@
 #pragma once
 
 #include <AK/OwnPtr.h>
+#include <Kernel/Bus/PCI/Access.h>
+#include <Kernel/Bus/PCI/Device.h>
 #include <Kernel/IO.h>
 #include <Kernel/Net/NetworkAdapter.h>
-#include <Kernel/PCI/Access.h>
-#include <Kernel/PCI/Device.h>
 #include <Kernel/Random.h>
 
 namespace Kernel {
@@ -18,9 +18,8 @@ namespace Kernel {
 class NE2000NetworkAdapter final : public NetworkAdapter
     , public PCI::Device {
 public:
-    static void detect();
+    static RefPtr<NE2000NetworkAdapter> try_to_initialize(PCI::Address);
 
-    NE2000NetworkAdapter(PCI::Address, u8 irq);
     virtual ~NE2000NetworkAdapter() override;
 
     virtual void send_raw(ReadonlyBytes) override;
@@ -29,7 +28,8 @@ public:
     virtual const char* purpose() const override { return class_name(); }
 
 private:
-    virtual void handle_irq(const RegisterState&) override;
+    NE2000NetworkAdapter(PCI::Address, u8 irq);
+    virtual bool handle_irq(const RegisterState&) override;
     virtual const char* class_name() const override { return "NE2000NetworkAdapter"; }
 
     int ram_test();

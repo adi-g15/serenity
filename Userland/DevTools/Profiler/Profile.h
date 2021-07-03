@@ -6,7 +6,11 @@
 
 #pragma once
 
+#include "DisassemblyModel.h"
 #include "Process.h"
+#include "Profile.h"
+#include "ProfileModel.h"
+#include "SamplesModel.h"
 #include <AK/Bitmap.h>
 #include <AK/FlyString.h>
 #include <AK/JsonArray.h>
@@ -22,16 +26,16 @@
 
 namespace Profiler {
 
-class DisassemblyModel;
-class Profile;
-class ProfileModel;
-class SamplesModel;
-
 class ProfileNode : public RefCounted<ProfileNode> {
 public:
-    static NonnullRefPtr<ProfileNode> create(FlyString object_name, String symbol, u32 address, u32 offset, u64 timestamp, pid_t pid)
+    static NonnullRefPtr<ProfileNode> create(Process const& process, FlyString object_name, String symbol, u32 address, u32 offset, u64 timestamp, pid_t pid)
     {
-        return adopt_ref(*new ProfileNode(move(object_name), move(symbol), address, offset, timestamp, pid));
+        return adopt_ref(*new ProfileNode(process, move(object_name), move(symbol), address, offset, timestamp, pid));
+    }
+
+    static NonnullRefPtr<ProfileNode> create_process_node(Process const& process)
+    {
+        return adopt_ref(*new ProfileNode(process));
     }
 
     // These functions are only relevant for root nodes
@@ -72,7 +76,7 @@ public:
                 return child;
             }
         }
-        auto new_child = ProfileNode::create(move(object_name), move(symbol), address, offset, timestamp, pid);
+        auto new_child = ProfileNode::create(m_process, move(object_name), move(symbol), address, offset, timestamp, pid);
         add_child(new_child);
         return new_child;
     };
@@ -97,11 +101,15 @@ public:
 
     pid_t pid() const { return m_pid; }
 
-    const Process* process(Profile&, u64 timestamp) const;
+    Process const& process() const { return m_process; }
+    bool is_root() const { return m_root; }
 
 private:
-    explicit ProfileNode(const String& object_name, String symbol, u32 address, u32 offset, u64 timestamp, pid_t);
+    explicit ProfileNode(Process const&);
+    explicit ProfileNode(Process const&, const String& object_name, String symbol, u32 address, u32 offset, u64 timestamp, pid_t);
 
+    bool m_root { false };
+    Process const& m_process;
     ProfileNode* m_parent { nullptr };
     FlyString m_object_name;
     String m_symbol;
@@ -118,8 +126,8 @@ private:
 
 struct ProcessFilter {
     pid_t pid { 0 };
-    u64 start_valid { 0 };
-    u64 end_valid { 0 };
+    EventSerialNumber start_valid;
+    EventSerialNumber end_valid;
 
     bool operator==(ProcessFilter const& rhs) const
     {
@@ -130,16 +138,15 @@ struct ProcessFilter {
 class Profile {
 public:
     static Result<NonnullOwnPtr<Profile>, String> load_from_perfcore_file(const StringView& path);
-    ~Profile();
 
     GUI::Model& model();
     GUI::Model& samples_model();
     GUI::Model* disassembly_model();
 
-    const Process* find_process(pid_t pid, u64 timestamp) const
+    const Process* find_process(pid_t pid, EventSerialNumber serial) const
     {
-        auto it = m_processes.find_if([&](auto& entry) {
-            return entry.pid == pid && entry.valid_at(timestamp);
+        auto it = m_processes.find_if([&pid, &serial](auto& entry) {
+            return entry.pid == pid && entry.valid_at(serial);
         });
         return it.is_end() ? nullptr : &(*it);
     }
@@ -156,6 +163,7 @@ public:
     };
 
     struct Event {
+        EventSerialNumber serial;
         u64 timestamp { 0 };
         String type;
         FlatPtr ptr { 0 };
@@ -166,6 +174,7 @@ public:
         String executable;
         int pid { 0 };
         int tid { 0 };
+        u32 lost_samples { 0 };
         bool in_kernel { false };
         Vector<Frame> frames;
     };
@@ -176,17 +185,16 @@ public:
     u64 length_in_ms() const { return m_last_timestamp - m_first_timestamp; }
     u64 first_timestamp() const { return m_first_timestamp; }
     u64 last_timestamp() const { return m_last_timestamp; }
-    u32 deepest_stack_depth() const { return m_deepest_stack_depth; }
 
     void set_timestamp_filter_range(u64 start, u64 end);
     void clear_timestamp_filter_range();
     bool has_timestamp_filter_range() const { return m_has_timestamp_filter_range; }
 
-    void add_process_filter(pid_t pid, u64 start_valid, u64 end_valid);
-    void remove_process_filter(pid_t pid, u64 start_valid, u64 end_valid);
+    void add_process_filter(pid_t pid, EventSerialNumber start_valid, EventSerialNumber end_valid);
+    void remove_process_filter(pid_t pid, EventSerialNumber start_valid, EventSerialNumber end_valid);
     void clear_process_filter();
     bool has_process_filter() const { return !m_process_filters.is_empty(); }
-    bool process_filter_contains(pid_t pid, u32 timestamp);
+    bool process_filter_contains(pid_t pid, EventSerialNumber serial);
 
     bool is_inverted() const { return m_inverted; }
     void set_inverted(bool);
@@ -236,7 +244,6 @@ private:
 
     Vector<ProcessFilter> m_process_filters;
 
-    u32 m_deepest_stack_depth { 0 };
     bool m_inverted { false };
     bool m_show_top_functions { false };
     bool m_show_percentages { false };

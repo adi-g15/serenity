@@ -50,12 +50,8 @@ DisassemblyModel::DisassemblyModel(Profile& profile, ProfileNode& node)
         kernel_elf = make<ELF::Image>((const u8*)m_kernel_file->data(), m_kernel_file->size());
         elf = kernel_elf.ptr();
     } else {
-        auto process = node.process(profile, node.timestamp());
-        if (!process) {
-            dbgln("no process for address {:p}", node.address());
-            return;
-        }
-        auto library_data = process->library_metadata.library_containing(node.address());
+        auto& process = node.process();
+        auto library_data = process.library_metadata.library_containing(node.address());
         if (!library_data) {
             dbgln("no library data for address {:p}", node.address());
             return;
@@ -89,7 +85,7 @@ DisassemblyModel::DisassemblyModel(Profile& profile, ProfileNode& node)
         auto disassembly = insn.value().to_string(address_in_profiled_program, &symbol_provider);
 
         StringView instruction_bytes = view.substring_view(offset_into_symbol, insn.value().length());
-        size_t samples_at_this_instruction = m_node.events_per_address().get(address_in_profiled_program).value_or(0);
+        u32 samples_at_this_instruction = m_node.events_per_address().get(address_in_profiled_program).value_or(0);
         float percent = ((float)samples_at_this_instruction / (float)m_node.event_count()) * 100.0f;
 
         m_instructions.append({ insn.value(), disassembly, instruction_bytes, address_in_profiled_program, samples_at_this_instruction, percent });

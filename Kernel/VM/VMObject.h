@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/HashTable.h>
-#include <AK/InlineLinkedList.h>
+#include <AK/IntrusiveList.h>
 #include <AK/RefCounted.h>
 #include <AK/RefPtr.h>
 #include <AK/Vector.h>
@@ -26,8 +26,7 @@ public:
 };
 
 class VMObject : public RefCounted<VMObject>
-    , public Weakable<VMObject>
-    , public InlineLinkedListNode<VMObject> {
+    , public Weakable<VMObject> {
     friend class MemoryManager;
     friend class Region;
 
@@ -43,16 +42,12 @@ public:
     virtual bool is_contiguous() const { return false; }
 
     size_t page_count() const { return m_physical_pages.size(); }
-    const Vector<RefPtr<PhysicalPage>>& physical_pages() const { return m_physical_pages; }
-    Vector<RefPtr<PhysicalPage>>& physical_pages() { return m_physical_pages; }
+    const Vector<RefPtr<PhysicalPage>, 16>& physical_pages() const { return m_physical_pages; }
+    Vector<RefPtr<PhysicalPage>, 16>& physical_pages() { return m_physical_pages; }
 
     size_t size() const { return m_physical_pages.size() * PAGE_SIZE; }
 
     virtual const char* class_name() const = 0;
-
-    // For InlineLinkedListNode
-    VMObject* m_next { nullptr };
-    VMObject* m_prev { nullptr };
 
     ALWAYS_INLINE void ref_region() { m_regions_count++; }
     ALWAYS_INLINE void unref_region() { m_regions_count--; }
@@ -75,7 +70,8 @@ protected:
     template<typename Callback>
     void for_each_region(Callback);
 
-    Vector<RefPtr<PhysicalPage>> m_physical_pages;
+    IntrusiveListNode<VMObject> m_list_node;
+    Vector<RefPtr<PhysicalPage>, 16> m_physical_pages;
     Lock m_paging_lock { "VMObject" };
 
     mutable SpinLock<u8> m_lock;
@@ -88,6 +84,9 @@ private:
     Atomic<u32, AK::MemoryOrder::memory_order_relaxed> m_regions_count { 0 };
     HashTable<VMObjectDeletedHandler*> m_on_deleted;
     SpinLock<u8> m_on_deleted_lock;
+
+public:
+    using List = IntrusiveList<VMObject, RawPtr<VMObject>, &VMObject::m_list_node>;
 };
 
 }

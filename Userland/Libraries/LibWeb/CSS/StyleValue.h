@@ -80,6 +80,17 @@ enum class FlexDirection {
     ColumnReverse,
 };
 
+enum class FlexWrap {
+    Nowrap,
+    Wrap,
+    WrapReverse
+};
+
+enum class FlexBasis {
+    Content,
+    Length
+};
+
 enum class WhiteSpace {
     Normal,
     Pre,
@@ -195,6 +206,8 @@ public:
         Identifier,
         Image,
         Position,
+        CustomProperty,
+        Numeric,
     };
 
     Type type() const { return m_type; }
@@ -207,6 +220,8 @@ public:
     bool is_string() const { return type() == Type::String; }
     bool is_length() const { return type() == Type::Length; }
     bool is_position() const { return type() == Type::Position; }
+    bool is_custom_property() const { return type() == Type::CustomProperty; }
+    bool is_numeric() const { return type() == Type::Numeric; }
 
     virtual String to_string() const = 0;
     virtual Length to_length() const { return Length::make_auto(); }
@@ -231,6 +246,46 @@ protected:
 
 private:
     Type m_type { Type::Invalid };
+};
+
+// FIXME: Allow for fallback
+class CustomStyleValue : public StyleValue {
+public:
+    static NonnullRefPtr<CustomStyleValue> create(const String& custom_property_name)
+    {
+        return adopt_ref(*new CustomStyleValue(custom_property_name));
+    }
+    String custom_property_name() const { return m_custom_property_name; }
+    String to_string() const override { return m_custom_property_name; }
+
+private:
+    explicit CustomStyleValue(const String& custom_property_name)
+        : StyleValue(Type::CustomProperty)
+        , m_custom_property_name(custom_property_name)
+    {
+    }
+
+    String m_custom_property_name {};
+};
+
+class NumericStyleValue : public StyleValue {
+public:
+    static NonnullRefPtr<NumericStyleValue> create(float value)
+    {
+        return adopt_ref(*new NumericStyleValue(value));
+    }
+
+    float value() const { return m_value; }
+    String to_string() const override { return String::formatted("{}", m_value); }
+
+private:
+    explicit NumericStyleValue(float value)
+        : StyleValue(Type::Numeric)
+        , m_value(value)
+    {
+    }
+
+    float m_value { 0 };
 };
 
 class StringStyleValue : public StyleValue {

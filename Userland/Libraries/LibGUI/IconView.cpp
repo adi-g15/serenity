@@ -12,6 +12,8 @@
 #include <LibGUI/Scrollbar.h>
 #include <LibGfx/Palette.h>
 
+REGISTER_WIDGET(GUI, IconView);
+
 namespace GUI {
 
 IconView::IconView()
@@ -433,8 +435,8 @@ void IconView::get_item_rects(int item_index, ItemData& item_data, const Gfx::Fo
         Utf8View utf8_view(item_data.text);
         auto it = utf8_view.begin();
         for (; it != utf8_view.end(); ++it) {
-            auto codepoint = *it;
-            auto glyph_width = font.glyph_width(codepoint);
+            auto code_point = *it;
+            auto glyph_width = font.glyph_width(code_point);
             if ((current_line_width + glyph_width + font.glyph_spacing()) > available_width) {
                 item_data.wrapped_text_lines.append(item_data.text.substring_view(current_line_start, utf8_view.byte_offset_of(it) - current_line_start));
                 current_line_start = utf8_view.byte_offset_of(it);
@@ -541,6 +543,7 @@ void IconView::paint_event(PaintEvent& event)
 
             const auto& lines = item_data.wrapped_text_lines;
             size_t number_of_text_lines = min((size_t)text_rect.height() / font->glyph_height(), lines.size());
+            size_t previous_line_lengths = 0;
             for (size_t line_index = 0; line_index < number_of_text_lines; ++line_index) {
                 Gfx::IntRect line_rect;
                 line_rect.set_width(text_rect.width());
@@ -553,7 +556,8 @@ void IconView::paint_event(PaintEvent& event)
                 if (number_of_text_lines - 1 == line_index && lines.size() > number_of_text_lines)
                     line_rect.inflate(-(6 + 2 * font->max_glyph_width()), 0);
 
-                draw_item_text(painter, item_data.index, item_data.selected, line_rect, lines[line_index], font, Gfx::TextAlignment::Center, Gfx::TextElision::Right);
+                draw_item_text(painter, item_data.index, item_data.selected, line_rect, lines[line_index], font, Gfx::TextAlignment::Center, Gfx::TextElision::Right, previous_line_lengths);
+                previous_line_lengths += lines[line_index].length();
             }
         } else {
             draw_item_text(painter, item_data.index, item_data.selected, item_data.text_rect, item_data.text, font, Gfx::TextAlignment::Center, Gfx::TextElision::Right);

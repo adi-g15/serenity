@@ -38,12 +38,12 @@ public:
 
 private:
     // ^Inode
-    virtual KResultOr<ssize_t> read_bytes(off_t, ssize_t, UserOrKernelBuffer& buffer, FileDescription*) const override;
+    virtual KResultOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, FileDescription*) const override;
     virtual InodeMetadata metadata() const override;
     virtual KResult traverse_as_directory(Function<bool(const FS::DirectoryEntryView&)>) const override;
     virtual RefPtr<Inode> lookup(StringView name) override;
     virtual void flush_metadata() override;
-    virtual KResultOr<ssize_t> write_bytes(off_t, ssize_t, const UserOrKernelBuffer& data, FileDescription*) override;
+    virtual KResultOr<size_t> write_bytes(off_t, size_t, const UserOrKernelBuffer& data, FileDescription*) override;
     virtual KResultOr<NonnullRefPtr<Inode>> create_child(const String& name, mode_t, dev_t, uid_t, gid_t) override;
     virtual KResult add_child(Inode& child, const StringView& name, mode_t) override;
     virtual KResult remove_child(const StringView& name) override;
@@ -59,7 +59,7 @@ private:
     virtual KResultOr<int> get_block_address(int) override;
 
     KResult write_directory(Vector<Ext2FSDirectoryEntry>&);
-    bool populate_lookup_cache() const;
+    KResult populate_lookup_cache() const;
     KResult resize(u64);
     KResult write_indirect_block(BlockBasedFS::BlockIndex, Span<BlockBasedFS::BlockIndex>);
     KResult grow_doubly_indirect_block(BlockBasedFS::BlockIndex, size_t, Span<BlockBasedFS::BlockIndex>, Vector<BlockBasedFS::BlockIndex>&, unsigned&);

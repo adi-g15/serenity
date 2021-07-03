@@ -42,7 +42,11 @@ public:
     ~String() = default;
 
     String() = default;
-    String(const StringView&);
+
+    String(const StringView& view)
+    {
+        m_impl = StringImpl::create(view.characters_without_null_termination(), view.length());
+    }
 
     String(const String& other)
         : m_impl(const_cast<String&>(other).m_impl)
@@ -92,6 +96,7 @@ public:
     String(const FlyString&);
 
     [[nodiscard]] static String repeated(char, size_t count);
+    [[nodiscard]] static String repeated(const StringView&, size_t count);
 
     [[nodiscard]] static String bijective_base_from(size_t value, unsigned base = 26, StringView map = {});
 
@@ -107,9 +112,9 @@ public:
     [[nodiscard]] bool matches(const StringView& mask, Vector<MaskSpan>&, CaseSensitivity = CaseSensitivity::CaseInsensitive) const;
 
     template<typename T = int>
-    [[nodiscard]] Optional<T> to_int() const;
+    [[nodiscard]] Optional<T> to_int(TrimWhitespace = TrimWhitespace::Yes) const;
     template<typename T = unsigned>
-    [[nodiscard]] Optional<T> to_uint() const;
+    [[nodiscard]] Optional<T> to_uint(TrimWhitespace = TrimWhitespace::Yes) const;
 
     [[nodiscard]] String to_lowercase() const;
     [[nodiscard]] String to_uppercase() const;
@@ -118,27 +123,35 @@ public:
     [[nodiscard]] bool is_whitespace() const { return StringUtils::is_whitespace(*this); }
 
 #ifndef KERNEL
+    [[nodiscard]] String trim(const StringView& characters, TrimMode mode = TrimMode::Both) const
+    {
+        return StringUtils::trim(view(), characters, mode);
+    }
+
     [[nodiscard]] String trim_whitespace(TrimMode mode = TrimMode::Both) const
     {
-        return StringUtils::trim_whitespace(StringView { characters(), length() }, mode);
+        return StringUtils::trim_whitespace(view(), mode);
     }
 #endif
 
     [[nodiscard]] bool equals_ignoring_case(const StringView&) const;
 
     [[nodiscard]] bool contains(const StringView&, CaseSensitivity = CaseSensitivity::CaseSensitive) const;
-    [[nodiscard]] Optional<size_t> index_of(const String&, size_t start = 0) const;
 
     [[nodiscard]] Vector<String> split_limit(char separator, size_t limit, bool keep_empty = false) const;
     [[nodiscard]] Vector<String> split(char separator, bool keep_empty = false) const;
-
-    [[nodiscard]] Optional<size_t> find(char) const;
-    [[nodiscard]] Optional<size_t> find(const StringView&) const;
-
-    [[nodiscard]] String substring(size_t start) const;
-    [[nodiscard]] String substring(size_t start, size_t length) const;
-
     [[nodiscard]] Vector<StringView> split_view(char separator, bool keep_empty = false) const;
+
+    [[nodiscard]] Optional<size_t> find(char needle, size_t start = 0) const { return StringUtils::find(*this, needle, start); }
+    [[nodiscard]] Optional<size_t> find(StringView const& needle, size_t start = 0) const { return StringUtils::find(*this, needle, start); }
+    [[nodiscard]] Optional<size_t> find_last(char needle) const { return StringUtils::find_last(*this, needle); }
+    // FIXME: Implement find_last(StringView const&) for API symmetry.
+    [[nodiscard]] Vector<size_t> find_all(StringView const& needle) const { return StringUtils::find_all(*this, needle); }
+    using SearchDirection = StringUtils::SearchDirection;
+    [[nodiscard]] Optional<size_t> find_any_of(StringView const& needles, SearchDirection direction) const { return StringUtils::find_any_of(*this, needles, direction); }
+
+    [[nodiscard]] String substring(size_t start, size_t length) const;
+    [[nodiscard]] String substring(size_t start) const;
     [[nodiscard]] StringView substring_view(size_t start, size_t length) const;
     [[nodiscard]] StringView substring_view(size_t start) const;
 
@@ -160,6 +173,7 @@ public:
 
     [[nodiscard]] ALWAYS_INLINE const char& operator[](size_t i) const
     {
+        VERIFY(!is_null());
         return (*m_impl)[i];
     }
 
@@ -197,7 +211,10 @@ public:
 
     [[nodiscard]] String isolated_copy() const;
 
-    [[nodiscard]] static String empty();
+    [[nodiscard]] static String empty()
+    {
+        return StringImpl::the_empty_stringimpl();
+    }
 
     [[nodiscard]] StringImpl* impl() { return m_impl.ptr(); }
     [[nodiscard]] const StringImpl* impl() const { return m_impl.ptr(); }
@@ -240,8 +257,6 @@ public:
     template<typename BufferType>
     [[nodiscard]] static String copy(const BufferType& buffer, ShouldChomp should_chomp = NoChomp)
     {
-        if (buffer.is_null())
-            return {};
         if (buffer.is_empty())
             return empty();
         return String((const char*)buffer.data(), buffer.size(), should_chomp);
@@ -261,22 +276,22 @@ public:
         return formatted("{}", value);
     }
 
-    [[nodiscard]] StringView view() const;
+    [[nodiscard]] StringView view() const
+    {
+        return { characters(), length() };
+    }
 
     int replace(const String& needle, const String& replacement, bool all_occurrences = false);
+    size_t count(const String& needle) const;
     [[nodiscard]] String reverse() const;
 
-    template<typename T, typename... Rest>
-    [[nodiscard]] bool is_one_of(const T& string, Rest... rest) const
+    template<typename... Ts>
+    [[nodiscard]] ALWAYS_INLINE constexpr bool is_one_of(Ts... strings) const
     {
-        if (*this == string)
-            return true;
-        return is_one_of(rest...);
+        return (... || this->operator==(forward<Ts>(strings)));
     }
 
 private:
-    [[nodiscard]] bool is_one_of() const { return false; }
-
     RefPtr<StringImpl> m_impl;
 };
 

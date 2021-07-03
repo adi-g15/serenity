@@ -54,9 +54,12 @@ UDPSocket::~UDPSocket()
     sockets_by_port().resource().remove(local_port());
 }
 
-NonnullRefPtr<UDPSocket> UDPSocket::create(int protocol)
+KResultOr<NonnullRefPtr<UDPSocket>> UDPSocket::create(int protocol)
 {
-    return adopt_ref(*new UDPSocket(protocol));
+    auto socket = adopt_ref_if_nonnull(new (nothrow) UDPSocket(protocol));
+    if (socket)
+        return socket.release_nonnull();
+    return ENOMEM;
 }
 
 KResultOr<size_t> UDPSocket::protocol_receive(ReadonlyBytes raw_ipv4_packet, UserOrKernelBuffer& buffer, size_t buffer_size, [[maybe_unused]] int flags)
@@ -75,18 +78,23 @@ KResultOr<size_t> UDPSocket::protocol_send(const UserOrKernelBuffer& data, size_
     auto routing_decision = route_to(peer_address(), local_address(), bound_interface());
     if (routing_decision.is_zero())
         return EHOSTUNREACH;
-    const size_t buffer_size = sizeof(UDPPacket) + data_length;
-    auto buffer = ByteBuffer::create_zeroed(buffer_size);
-    auto& udp_packet = *reinterpret_cast<UDPPacket*>(buffer.data());
+    auto ipv4_payload_offset = routing_decision.adapter->ipv4_payload_offset();
+    data_length = min(data_length, routing_decision.adapter->mtu() - ipv4_payload_offset - sizeof(UDPPacket));
+    const size_t udp_buffer_size = sizeof(UDPPacket) + data_length;
+    auto packet = routing_decision.adapter->acquire_packet_buffer(ipv4_payload_offset + udp_buffer_size);
+    if (!packet)
+        return ENOMEM;
+    memset(packet->buffer.data() + ipv4_payload_offset, 0, sizeof(UDPPacket));
+    auto& udp_packet = *reinterpret_cast<UDPPacket*>(packet->buffer.data() + ipv4_payload_offset);
     udp_packet.set_source_port(local_port());
     udp_packet.set_destination_port(peer_port());
-    udp_packet.set_length(buffer_size);
+    udp_packet.set_length(udp_buffer_size);
     if (!data.read(udp_packet.payload(), data_length))
         return EFAULT;
 
-    auto result = routing_decision.adapter->send_ipv4(routing_decision.next_hop, peer_address(), IPv4Protocol::UDP, UserOrKernelBuffer::for_kernel_buffer(buffer.data()), buffer_size, ttl());
-    if (result.is_error())
-        return result;
+    routing_decision.adapter->fill_in_ipv4_header(*packet, local_address(), routing_decision.next_hop,
+        peer_address(), IPv4Protocol::UDP, udp_buffer_size, ttl());
+    routing_decision.adapter->send_packet({ packet->buffer.data(), packet->buffer.size() });
     return data_length;
 }
 
@@ -99,9 +107,9 @@ KResult UDPSocket::protocol_connect(FileDescription&, ShouldBlock)
 
 KResultOr<u16> UDPSocket::protocol_allocate_local_port()
 {
-    static const u16 first_ephemeral_port = 32768;
-    static const u16 last_ephemeral_port = 60999;
-    static const u16 ephemeral_port_range_size = last_ephemeral_port - first_ephemeral_port;
+    constexpr u16 first_ephemeral_port = 32768;
+    constexpr u16 last_ephemeral_port = 60999;
+    constexpr u16 ephemeral_port_range_size = last_ephemeral_port - first_ephemeral_port;
     u16 first_scan_port = first_ephemeral_port + get_good_random<u16>() % ephemeral_port_range_size;
 
     Locker locker(sockets_by_port().lock());

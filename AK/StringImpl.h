@@ -26,6 +26,9 @@ public:
     static RefPtr<StringImpl> create(const char* cstring, ShouldChomp = NoChomp);
     static RefPtr<StringImpl> create(const char* cstring, size_t length, ShouldChomp = NoChomp);
     static RefPtr<StringImpl> create(ReadonlyBytes, ShouldChomp = NoChomp);
+    static RefPtr<StringImpl> create_lowercased(char const* cstring, size_t length);
+    static RefPtr<StringImpl> create_uppercased(char const* cstring, size_t length);
+
     NonnullRefPtr<StringImpl> to_lowercase() const;
     NonnullRefPtr<StringImpl> to_uppercase() const;
 
@@ -43,6 +46,7 @@ public:
     const char* characters() const { return &m_inline_buffer[0]; }
 
     ALWAYS_INLINE ReadonlyBytes bytes() const { return { characters(), length() }; }
+    ALWAYS_INLINE StringView view() const { return { characters(), length() }; }
 
     const char& operator[](size_t i) const
     {
@@ -96,20 +100,6 @@ private:
     char m_inline_buffer[0];
 };
 
-constexpr u32 string_hash(const char* characters, size_t length)
-{
-    u32 hash = 0;
-    for (size_t i = 0; i < length; ++i) {
-        hash += (u32)characters[i];
-        hash += (hash << 10);
-        hash ^= (hash >> 6);
-    }
-    hash += hash << 3;
-    hash ^= hash >> 11;
-    hash += hash << 15;
-    return hash;
-}
-
 template<>
 struct Formatter<StringImpl> : Formatter<StringView> {
     void format(FormatBuilder& builder, const StringImpl& value)
@@ -122,5 +112,4 @@ struct Formatter<StringImpl> : Formatter<StringView> {
 
 using AK::Chomp;
 using AK::NoChomp;
-using AK::string_hash;
 using AK::StringImpl;

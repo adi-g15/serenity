@@ -21,10 +21,12 @@ int main(int argc, char** argv)
     String output_path;
     bool output_to_clipboard = false;
     int delay = 0;
+    int screen = -1;
 
     args_parser.add_positional_argument(output_path, "Output filename", "output", Core::ArgsParser::Required::No);
     args_parser.add_option(output_to_clipboard, "Output to clipboard", "clipboard", 'c');
     args_parser.add_option(delay, "Seconds to wait before taking a screenshot", "delay", 'd', "seconds");
+    args_parser.add_option(screen, "The index of the screen (default: -1 for all screens)", "screen", 's', "index");
 
     args_parser.parse(argc, argv);
 
@@ -34,7 +36,12 @@ int main(int argc, char** argv)
 
     auto app = GUI::Application::construct(argc, argv);
     sleep(delay);
-    auto shared_bitmap = GUI::WindowServerConnection::the().get_screen_bitmap();
+    Optional<u32> screen_index;
+    if (screen >= 0)
+        screen_index = (u32)screen;
+    dbgln("getting screenshot...");
+    auto shared_bitmap = GUI::WindowServerConnection::the().get_screen_bitmap({}, screen_index);
+    dbgln("got screenshot");
 
     auto* bitmap = shared_bitmap.bitmap();
     if (!bitmap) {
@@ -53,7 +60,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    auto file_or_error = Core::File::open(output_path, Core::IODevice::ReadWrite);
+    auto file_or_error = Core::File::open(output_path, Core::OpenMode::ReadWrite);
     if (file_or_error.is_error()) {
         warnln("Could not open '{}' for writing: {}", output_path, file_or_error.error());
         return 1;

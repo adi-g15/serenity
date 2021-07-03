@@ -21,10 +21,10 @@ public:
 
     virtual HitTestResult hit_test(const Gfx::IntPoint&, HitTestType) const override;
 
-    BlockBox* previous_sibling() { return downcast<BlockBox>(Node::previous_sibling()); }
-    const BlockBox* previous_sibling() const { return downcast<BlockBox>(Node::previous_sibling()); }
-    BlockBox* next_sibling() { return downcast<BlockBox>(Node::next_sibling()); }
-    const BlockBox* next_sibling() const { return downcast<BlockBox>(Node::next_sibling()); }
+    BlockBox* previous_sibling() { return verify_cast<BlockBox>(Node::previous_sibling()); }
+    const BlockBox* previous_sibling() const { return verify_cast<BlockBox>(Node::previous_sibling()); }
+    BlockBox* next_sibling() { return verify_cast<BlockBox>(Node::next_sibling()); }
+    const BlockBox* next_sibling() const { return verify_cast<BlockBox>(Node::next_sibling()); }
 
     template<typename Callback>
     void for_each_fragment(Callback);
@@ -39,7 +39,7 @@ public:
 
 private:
     virtual bool is_block_box() const final { return true; }
-    virtual bool wants_mouse_events() const override { return true; }
+    virtual bool wants_mouse_events() const override { return false; }
     virtual bool handle_mousewheel(Badge<EventHandler>, const Gfx::IntPoint&, unsigned buttons, unsigned modifiers, int wheel_delta) override;
 
     bool should_clip_overflow() const;

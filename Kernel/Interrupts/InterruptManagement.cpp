@@ -6,15 +6,18 @@
 
 #include <Kernel/ACPI/MultiProcessorParser.h>
 #include <Kernel/API/Syscall.h>
-#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/Arch/x86/InterruptDisabler.h>
+#include <Kernel/Arch/x86/Interrupts.h>
 #include <Kernel/CommandLine.h>
 #include <Kernel/IO.h>
 #include <Kernel/Interrupts/APIC.h>
 #include <Kernel/Interrupts/IOAPIC.h>
 #include <Kernel/Interrupts/InterruptManagement.h>
 #include <Kernel/Interrupts/PIC.h>
+#include <Kernel/Interrupts/SharedIRQHandler.h>
 #include <Kernel/Interrupts/SpuriousInterruptHandler.h>
 #include <Kernel/Interrupts/UnhandledInterruptHandler.h>
+#include <Kernel/Sections.h>
 #include <Kernel/VM/TypedMapping.h>
 
 #define PCAT_COMPAT_FLAG 0x1
@@ -49,6 +52,10 @@ void InterruptManagement::enumerate_interrupt_handlers(Function<void(GenericInte
 {
     for (int i = 0; i < GENERIC_INTERRUPT_HANDLERS_COUNT; i++) {
         auto& handler = get_interrupt_handler(i);
+        if (handler.type() == HandlerType::SharedIRQHandler) {
+            static_cast<SharedIRQHandler&>(handler).enumerate_handlers(callback);
+            continue;
+        }
         if (handler.type() != HandlerType::UnhandledInterruptHandler)
             callback(handler);
     }

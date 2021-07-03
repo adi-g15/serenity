@@ -10,6 +10,7 @@
 #include <AK/GenericLexer.h>
 #include <AK/HashMap.h>
 #include <AK/LexicalPath.h>
+#include <AK/OwnPtr.h>
 #include <AK/SourceGenerator.h>
 #include <AK/StringBuilder.h>
 #include <LibCore/ArgsParser.h>
@@ -89,7 +90,7 @@ struct Parameter {
     Type type;
     String name;
     bool optional { false };
-    String optional_default_value {};
+    Optional<String> optional_default_value;
     HashMap<String, String> extended_attributes;
 };
 
@@ -394,14 +395,14 @@ int main(int argc, char** argv)
     args_parser.add_positional_argument(path, "IDL file", "idl-file");
     args_parser.parse(argc, argv);
 
-    auto file_or_error = Core::File::open(path, Core::IODevice::ReadOnly);
+    auto file_or_error = Core::File::open(path, Core::OpenMode::ReadOnly);
     if (file_or_error.is_error()) {
-        fprintf(stderr, "Cannot open %s\n", path);
+        warnln("Failed to open {}: {}", path, file_or_error.error());
         return 1;
     }
 
     LexicalPath lexical_path(path);
-    auto namespace_ = lexical_path.parts().at(lexical_path.parts().size() - 2);
+    auto& namespace_ = lexical_path.parts_view().at(lexical_path.parts_view().size() - 2);
 
     auto data = file_or_error.value()->read_all();
     auto interface = IDL::parse_interface(path, data);
@@ -507,7 +508,7 @@ static bool is_wrappable_type(const IDL::Type& type)
 }
 
 template<typename ParameterType>
-static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter, const String& js_name, const String& js_suffix, const String& cpp_name, bool return_void = false, bool legacy_null_to_empty_string = false, bool optional = false, String optional_default_value = {})
+static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter, const String& js_name, const String& js_suffix, const String& cpp_name, bool return_void = false, bool legacy_null_to_empty_string = false, bool optional = false, Optional<String> optional_default_value = {})
 {
     auto scoped_generator = generator.fork();
     scoped_generator.set("cpp_name", make_input_acceptable_cpp(cpp_name));
@@ -516,8 +517,8 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
     scoped_generator.set("legacy_null_to_empty_string", legacy_null_to_empty_string ? "true" : "false");
     scoped_generator.set("parameter.type.name", parameter.type.name);
 
-    if (!optional_default_value.is_null())
-        scoped_generator.set("parameter.optional_default_value", optional_default_value);
+    if (optional_default_value.has_value())
+        scoped_generator.set("parameter.optional_default_value", *optional_default_value);
 
     if (return_void)
         scoped_generator.set("return_statement", "return;");
@@ -540,7 +541,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         if (vm.exception())
             @return_statement@
     })~~~");
-            if (!optional_default_value.is_null()) {
+            if (optional_default_value.has_value()) {
                 scoped_generator.append(R"~~~( else {
         @cpp_name@ = @parameter.optional_default_value@;
     }
@@ -592,7 +593,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
         @return_statement@
 )~~~");
         } else {
-            if (!optional_default_value.is_null()) {
+            if (optional_default_value.has_value()) {
                 scoped_generator.append(R"~~~(
     double @cpp_name@;
 )~~~");
@@ -608,7 +609,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
             @return_statement@
     }
 )~~~");
-            if (!optional_default_value.is_null()) {
+            if (optional_default_value.has_value()) {
                 scoped_generator.append(R"~~~(
     else
         @cpp_name@ = @parameter.optional_default_value@;
@@ -624,7 +625,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
     bool @cpp_name@ = @js_name@@js_suffix@.to_boolean();
 )~~~");
         } else {
-            if (!optional_default_value.is_null()) {
+            if (optional_default_value.has_value()) {
                 scoped_generator.append(R"~~~(
     bool @cpp_name@;
 )~~~");
@@ -636,7 +637,7 @@ static void generate_to_cpp(SourceGenerator& generator, ParameterType& parameter
             scoped_generator.append(R"~~~(
     if (!@js_name@@js_suffix@.is_undefined())
         @cpp_name@ = @js_name@@js_suffix@.to_boolean();)~~~");
-            if (!optional_default_value.is_null()) {
+            if (optional_default_value.has_value()) {
                 scoped_generator.append(R"~~~(
     else
         @cpp_name@ = @parameter.optional_default_value@;
@@ -785,12 +786,12 @@ public:
 
     if (interface.extended_attributes.contains("CustomGet")) {
         generator.append(R"~~~(
-    virtual JS::Value get(const JS::PropertyName&, JS::Value receiver = {}, bool without_side_effects = false) const override;
+    virtual JS::Value get(const JS::PropertyName&, JS::Value receiver = {}, JS::AllowSideEffects = JS::AllowSideEffects::Yes) const override;
 )~~~");
     }
     if (interface.extended_attributes.contains("CustomGetByIndex")) {
         generator.append(R"~~~(
-    virtual JS::Value get_by_index(u32 property_index) const override;
+    virtual JS::Value get_by_index(u32 property_index, JS::AllowSideEffects = JS::AllowSideEffects::Yes) const override;
 )~~~");
     }
     if (interface.extended_attributes.contains("CustomPut")) {
@@ -853,9 +854,9 @@ void generate_implementation(const IDL::Interface& interface)
 #include <AK/FlyString.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
-#include <LibJS/Runtime/Function.h>
+#include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/Uint8ClampedArray.h>
+#include <LibJS/Runtime/TypedArray.h>
 #include <LibJS/Runtime/Value.h>
 #include <LibWeb/Bindings/@prototype_class@.h>
 #include <LibWeb/Bindings/@wrapper_class@.h>
@@ -967,7 +968,7 @@ public:
     virtual ~@constructor_class@() override;
 
     virtual JS::Value call() override;
-    virtual JS::Value construct(JS::Function& new_target) override;
+    virtual JS::Value construct(JS::FunctionObject& new_target) override;
 
 private:
     virtual bool has_constructor() const override { return true; }
@@ -1039,7 +1040,7 @@ JS::Value @constructor_class@::call()
     return {};
 }
 
-JS::Value @constructor_class@::construct(Function&)
+JS::Value @constructor_class@::construct(FunctionObject&)
 {
 )~~~");
 
@@ -1197,9 +1198,9 @@ void generate_prototype_implementation(const IDL::Interface& interface)
 #include <AK/Function.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
-#include <LibJS/Runtime/Function.h>
+#include <LibJS/Runtime/FunctionObject.h>
 #include <LibJS/Runtime/GlobalObject.h>
-#include <LibJS/Runtime/Uint8ClampedArray.h>
+#include <LibJS/Runtime/TypedArray.h>
 #include <LibWeb/Bindings/@prototype_class@.h>
 #include <LibWeb/Bindings/@wrapper_class@.h>
 #include <LibWeb/Bindings/CSSStyleDeclarationWrapper.h>

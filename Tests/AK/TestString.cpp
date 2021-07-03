@@ -168,6 +168,26 @@ TEST_CASE(replace)
     EXPECT(test_string == "111._.|||._.|||");
 }
 
+TEST_CASE(count)
+{
+    String test_string = "Well, hello Friends!";
+    u32 count = test_string.count("Friends");
+    EXPECT(count == 1);
+
+    count = test_string.count("ell");
+    EXPECT(count == 2);
+
+    count = test_string.count("!");
+    EXPECT(count == 1);
+
+    test_string = String("111._.111._.111");
+    count = test_string.count("111");
+    EXPECT(count == 3);
+
+    count = test_string.count("._.");
+    EXPECT(count == 2);
+}
+
 TEST_CASE(substring)
 {
     String test = "abcdef";
@@ -234,4 +254,31 @@ TEST_CASE(sprintf)
 
     EXPECT_EQ(String(buf1), String("+12"));
     EXPECT_EQ(String(buf2), String("-12"));
+}
+
+TEST_CASE(find)
+{
+    String a = "foobarbar";
+    EXPECT_EQ(a.find("bar"sv), Optional<size_t> { 3 });
+    EXPECT_EQ(a.find("baz"sv), Optional<size_t> {});
+    EXPECT_EQ(a.find("bar"sv, 4), Optional<size_t> { 6 });
+    EXPECT_EQ(a.find("bar"sv, 9), Optional<size_t> {});
+
+    EXPECT_EQ(a.find('f'), Optional<size_t> { 0 });
+    EXPECT_EQ(a.find('x'), Optional<size_t> {});
+    EXPECT_EQ(a.find('f', 1), Optional<size_t> {});
+    EXPECT_EQ(a.find('b'), Optional<size_t> { 3 });
+    EXPECT_EQ(a.find('b', 4), Optional<size_t> { 6 });
+    EXPECT_EQ(a.find('b', 9), Optional<size_t> {});
+}
+
+TEST_CASE(find_with_empty_needle)
+{
+    String string = "";
+    EXPECT_EQ(string.find(""sv), 0u);
+    EXPECT_EQ(string.find_all(""sv), (Vector<size_t> { 0u }));
+
+    string = "abc";
+    EXPECT_EQ(string.find(""sv), 0u);
+    EXPECT_EQ(string.find_all(""sv), (Vector<size_t> { 0u, 1u, 2u, 3u }));
 }

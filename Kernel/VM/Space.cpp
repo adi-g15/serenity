@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/QuickSort.h>
+#include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
 #include <Kernel/SpinLock.h>
 #include <Kernel/VM/AnonymousVMObject.h>
@@ -20,7 +20,9 @@ OwnPtr<Space> Space::create(Process& process, const Space* parent)
     auto page_directory = PageDirectory::create_for_userspace(parent ? &parent->page_directory().range_allocator() : nullptr);
     if (!page_directory)
         return {};
-    auto space = adopt_own(*new Space(process, page_directory.release_nonnull()));
+    auto space = adopt_own_if_nonnull(new (nothrow) Space(process, page_directory.release_nonnull()));
+    if (!space)
+        return {};
     space->page_directory().set_space({}, *space);
     return space;
 }
@@ -35,6 +37,103 @@ Space::~Space()
 {
 }
 
+KResult Space::unmap_mmap_range(VirtualAddress addr, size_t size)
+{
+    if (!size)
+        return EINVAL;
+
+    auto range_or_error = Range::expand_to_page_boundaries(addr.get(), size);
+    if (range_or_error.is_error())
+        return range_or_error.error();
+
+    auto range_to_unmap = range_or_error.value();
+
+    if (!is_user_range(range_to_unmap))
+        return EFAULT;
+
+    if (auto* whole_region = find_region_from_range(range_to_unmap)) {
+        if (!whole_region->is_mmap())
+            return EPERM;
+
+        PerformanceManager::add_unmap_perf_event(*Process::current(), whole_region->range());
+
+        bool success = deallocate_region(*whole_region);
+        VERIFY(success);
+        return KSuccess;
+    }
+
+    if (auto* old_region = find_region_containing(range_to_unmap)) {
+        if (!old_region->is_mmap())
+            return EPERM;
+
+        // Remove the old region from our regions tree, since were going to add another region
+        // with the exact same start address, but dont deallocate it yet
+        auto region = take_region(*old_region);
+        VERIFY(region);
+
+        // We manually unmap the old region here, specifying that we *don't* want the VM deallocated.
+        region->unmap(Region::ShouldDeallocateVirtualMemoryRange::No);
+
+        auto new_regions = split_region_around_range(*region, range_to_unmap);
+
+        // Instead we give back the unwanted VM manually.
+        page_directory().range_allocator().deallocate(range_to_unmap);
+
+        // And finally we map the new region(s) using our page directory (they were just allocated and don't have one).
+        for (auto* new_region : new_regions) {
+            new_region->map(page_directory());
+        }
+
+        PerformanceManager::add_unmap_perf_event(*Process::current(), range_to_unmap);
+
+        return KSuccess;
+    }
+
+    // Try again while checkin multiple regions at a time
+    // slow: without caching
+    const auto& regions = find_regions_intersecting(range_to_unmap);
+
+    // Check if any of the regions is not mmapped, to not accidentally
+    // error-out with just half a region map left
+    for (auto* region : regions) {
+        if (!region->is_mmap())
+            return EPERM;
+    }
+
+    Vector<Region*, 2> new_regions;
+
+    for (auto* old_region : regions) {
+        // if it's a full match we can delete the complete old region
+        if (old_region->range().intersect(range_to_unmap).size() == old_region->size()) {
+            bool res = deallocate_region(*old_region);
+            VERIFY(res);
+            continue;
+        }
+
+        // Remove the old region from our regions tree, since were going to add another region
+        // with the exact same start address, but dont deallocate it yet
+        auto region = take_region(*old_region);
+        VERIFY(region);
+
+        // We manually unmap the old region here, specifying that we *don't* want the VM deallocated.
+        region->unmap(Region::ShouldDeallocateVirtualMemoryRange::No);
+
+        // Otherwise just split the regions and collect them for future mapping
+        if (new_regions.try_extend(split_region_around_range(*region, range_to_unmap)))
+            return ENOMEM;
+    }
+    // Instead we give back the unwanted VM manually at the end.
+    page_directory().range_allocator().deallocate(range_to_unmap);
+    // And finally we map the new region(s) using our page directory (they were just allocated and don't have one).
+    for (auto* new_region : new_regions) {
+        new_region->map(page_directory());
+    }
+
+    PerformanceManager::add_unmap_perf_event(*Process::current(), range_to_unmap);
+
+    return KSuccess;
+}
+
 Optional<Range> Space::allocate_range(VirtualAddress vaddr, size_t size, size_t alignment)
 {
     vaddr.mask(PAGE_MASK);
@@ -47,7 +146,7 @@ Optional<Range> Space::allocate_range(VirtualAddress vaddr, size_t size, size_t 
 Region& Space::allocate_split_region(const Region& source_region, const Range& range, size_t offset_in_vmobject)
 {
     auto& region = add_region(Region::create_user_accessible(
-        m_process, range, source_region.vmobject(), offset_in_vmobject, source_region.name(), source_region.access(), source_region.is_cacheable() ? Region::Cacheable::Yes : Region::Cacheable::No, source_region.is_shared()));
+        m_process, range, source_region.vmobject(), offset_in_vmobject, KString::try_create(source_region.name()), source_region.access(), source_region.is_cacheable() ? Region::Cacheable::Yes : Region::Cacheable::No, source_region.is_shared()));
     region.set_syscall_region(source_region.is_syscall_region());
     region.set_mmap(source_region.is_mmap());
     region.set_stack(source_region.is_stack());
@@ -59,19 +158,19 @@ Region& Space::allocate_split_region(const Region& source_region, const Range& r
     return region;
 }
 
-KResultOr<Region*> Space::allocate_region(const Range& range, const String& name, int prot, AllocationStrategy strategy)
+KResultOr<Region*> Space::allocate_region(Range const& range, StringView name, int prot, AllocationStrategy strategy)
 {
     VERIFY(range.is_valid());
     auto vmobject = AnonymousVMObject::create_with_size(range.size(), strategy);
     if (!vmobject)
         return ENOMEM;
-    auto region = Region::create_user_accessible(m_process, range, vmobject.release_nonnull(), 0, name, prot_to_region_access_flags(prot), Region::Cacheable::Yes, false);
+    auto region = Region::create_user_accessible(m_process, range, vmobject.release_nonnull(), 0, KString::try_create(name), prot_to_region_access_flags(prot), Region::Cacheable::Yes, false);
     if (!region->map(page_directory()))
         return ENOMEM;
     return &add_region(move(region));
 }
 
-KResultOr<Region*> Space::allocate_region_with_vmobject(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, const String& name, int prot, bool shared)
+KResultOr<Region*> Space::allocate_region_with_vmobject(Range const& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, StringView name, int prot, bool shared)
 {
     VERIFY(range.is_valid());
     size_t end_in_vmobject = offset_in_vmobject + range.size();
@@ -88,7 +187,7 @@ KResultOr<Region*> Space::allocate_region_with_vmobject(const Range& range, Nonn
         return EINVAL;
     }
     offset_in_vmobject &= PAGE_MASK;
-    auto& region = add_region(Region::create_user_accessible(m_process, range, move(vmobject), offset_in_vmobject, name, prot_to_region_access_flags(prot), Region::Cacheable::Yes, shared));
+    auto& region = add_region(Region::create_user_accessible(m_process, range, move(vmobject), offset_in_vmobject, KString::try_create(name), prot_to_region_access_flags(prot), Region::Cacheable::Yes, shared));
     if (!region.map(page_directory())) {
         // FIXME: What is an appropriate error code here, really?
         return ENOMEM;

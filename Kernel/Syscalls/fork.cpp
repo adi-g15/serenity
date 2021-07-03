@@ -7,18 +7,19 @@
 #include <Kernel/Debug.h>
 #include <Kernel/FileSystem/Custody.h>
 #include <Kernel/FileSystem/FileDescription.h>
+#include <Kernel/Panic.h>
 #include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
 #include <Kernel/VM/Region.h>
 
 namespace Kernel {
 
-KResultOr<pid_t> Process::sys$fork(RegisterState& regs)
+KResultOr<FlatPtr> Process::sys$fork(RegisterState& regs)
 {
     REQUIRE_PROMISE(proc);
     RefPtr<Thread> child_first_thread;
-    auto child = adopt_ref(*new Process(child_first_thread, m_name, uid(), gid(), pid(), m_is_kernel_process, m_cwd, m_executable, m_tty, this));
-    if (!child_first_thread)
+    auto child = Process::create(child_first_thread, m_name, uid(), gid(), pid(), m_is_kernel_process, m_cwd, m_executable, m_tty, this);
+    if (!child || !child_first_thread)
         return ENOMEM;
     child->m_root_directory = m_root_directory;
     child->m_root_directory_relative_to_global_root = m_root_directory_relative_to_global_root;
@@ -43,25 +44,52 @@ KResultOr<pid_t> Process::sys$fork(RegisterState& regs)
     dbgln_if(FORK_DEBUG, "fork: child={}", child);
     child->space().set_enforces_syscall_regions(space().enforces_syscall_regions());
 
-    auto& child_tss = child_first_thread->m_tss;
-    child_tss.eax = 0; // fork() returns 0 in the child :^)
-    child_tss.ebx = regs.ebx;
-    child_tss.ecx = regs.ecx;
-    child_tss.edx = regs.edx;
-    child_tss.ebp = regs.ebp;
-    child_tss.esp = regs.userspace_esp;
-    child_tss.esi = regs.esi;
-    child_tss.edi = regs.edi;
-    child_tss.eflags = regs.eflags;
-    child_tss.eip = regs.eip;
-    child_tss.cs = regs.cs;
-    child_tss.ds = regs.ds;
-    child_tss.es = regs.es;
-    child_tss.fs = regs.fs;
-    child_tss.gs = regs.gs;
-    child_tss.ss = regs.userspace_ss;
+#if ARCH(I386)
+    auto& child_regs = child_first_thread->m_regs;
+    child_regs.eax = 0; // fork() returns 0 in the child :^)
+    child_regs.ebx = regs.ebx;
+    child_regs.ecx = regs.ecx;
+    child_regs.edx = regs.edx;
+    child_regs.ebp = regs.ebp;
+    child_regs.esp = regs.userspace_esp;
+    child_regs.esi = regs.esi;
+    child_regs.edi = regs.edi;
+    child_regs.eflags = regs.eflags;
+    child_regs.eip = regs.eip;
+    child_regs.cs = regs.cs;
+    child_regs.ds = regs.ds;
+    child_regs.es = regs.es;
+    child_regs.fs = regs.fs;
+    child_regs.gs = regs.gs;
+    child_regs.ss = regs.userspace_ss;
 
-    dbgln_if(FORK_DEBUG, "fork: child will begin executing at {:04x}:{:08x} with stack {:04x}:{:08x}, kstack {:04x}:{:08x}", child_tss.cs, child_tss.eip, child_tss.ss, child_tss.esp, child_tss.ss0, child_tss.esp0);
+    dbgln_if(FORK_DEBUG, "fork: child will begin executing at {:04x}:{:08x} with stack {:04x}:{:08x}, kstack {:04x}:{:08x}",
+        child_regs.cs, child_regs.eip, child_regs.ss, child_regs.esp, child_regs.ss0, child_regs.esp0);
+#else
+    auto& child_regs = child_first_thread->m_regs;
+    child_regs.rax = 0; // fork() returns 0 in the child :^)
+    child_regs.rbx = regs.rbx;
+    child_regs.rcx = regs.rcx;
+    child_regs.rdx = regs.rdx;
+    child_regs.rbp = regs.rbp;
+    child_regs.rsp = regs.userspace_rsp;
+    child_regs.rsi = regs.rsi;
+    child_regs.rdi = regs.rdi;
+    child_regs.r8 = regs.r8;
+    child_regs.r9 = regs.r9;
+    child_regs.r10 = regs.r10;
+    child_regs.r11 = regs.r11;
+    child_regs.r12 = regs.r12;
+    child_regs.r13 = regs.r13;
+    child_regs.r14 = regs.r14;
+    child_regs.r15 = regs.r15;
+    child_regs.rflags = regs.rflags;
+    child_regs.rip = regs.rip;
+    child_regs.cs = regs.cs;
+
+    dbgln_if(FORK_DEBUG, "fork: child will begin executing at {:04x}:{:16x} with stack {:08x}, kstack {:08x}",
+        child_regs.cs, child_regs.rip, child_regs.rsp, child_regs.rsp0);
+#endif
 
     {
         ScopedSpinLock lock(space().get_lock());
@@ -81,8 +109,7 @@ KResultOr<pid_t> Process::sys$fork(RegisterState& regs)
                 child->m_master_tls_region = child_region;
         }
 
-        ScopedSpinLock processes_lock(g_processes_lock);
-        g_processes->prepend(child);
+        Process::register_new(*child);
     }
 
     PerformanceManager::add_process_created_event(*child);

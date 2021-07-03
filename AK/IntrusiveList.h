@@ -46,13 +46,15 @@ private:
 template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
 class IntrusiveList {
 public:
-    IntrusiveList();
+    IntrusiveList() = default;
     ~IntrusiveList();
 
     void clear();
     [[nodiscard]] bool is_empty() const;
+    [[nodiscard]] size_t size_slow() const;
     void append(T& n);
     void prepend(T& n);
+    void insert_before(T&, T&);
     void remove(T& n);
     [[nodiscard]] bool contains(const T&) const;
     [[nodiscard]] Container first() const;
@@ -89,6 +91,34 @@ public:
     Iterator begin();
     Iterator end() { return Iterator {}; }
 
+    class ReverseIterator {
+    public:
+        ReverseIterator() = default;
+        ReverseIterator(T* value)
+            : m_value(move(value))
+        {
+        }
+
+        const T& operator*() const { return *m_value; }
+        auto operator->() const { return m_value; }
+        T& operator*() { return *m_value; }
+        auto operator->() { return m_value; }
+        bool operator==(const ReverseIterator& other) const { return other.m_value == m_value; }
+        bool operator!=(const ReverseIterator& other) const { return !(*this == other); }
+        ReverseIterator& operator++()
+        {
+            m_value = IntrusiveList<T, Container, member>::prev(m_value);
+            return *this;
+        }
+        ReverseIterator& erase();
+
+    private:
+        T* m_value { nullptr };
+    };
+
+    ReverseIterator rbegin();
+    ReverseIterator rend() { return ReverseIterator {}; }
+
     class ConstIterator {
     public:
         ConstIterator() = default;
@@ -116,7 +146,9 @@ public:
 
 private:
     static T* next(T* current);
+    static T* prev(T* current);
     static const T* next(const T* current);
+    static const T* prev(const T* current);
     static T* node_to_value(IntrusiveListNode<T, Container>& node);
     IntrusiveListStorage<T, Container> m_storage;
 };
@@ -166,11 +198,6 @@ inline typename IntrusiveList<T, Container, member>::Iterator& IntrusiveList<T, 
 }
 
 template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
-inline IntrusiveList<T, Container, member>::IntrusiveList()
-{
-}
-
-template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
 inline IntrusiveList<T, Container, member>::~IntrusiveList()
 {
     clear();
@@ -187,6 +214,17 @@ template<class T, typename Container, IntrusiveListNode<T, Container> T::*member
 inline bool IntrusiveList<T, Container, member>::is_empty() const
 {
     return m_storage.m_first == nullptr;
+}
+
+template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
+inline size_t IntrusiveList<T, Container, member>::size_slow() const
+{
+    size_t size = 0;
+    auto it_end = end();
+    for (auto it = begin(); it != it_end; ++it) {
+        ++size;
+    }
+    return size;
 }
 
 template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
@@ -211,10 +249,9 @@ inline void IntrusiveList<T, Container, member>::append(T& n)
 template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
 inline void IntrusiveList<T, Container, member>::prepend(T& n)
 {
-    auto& nnode = n.*member;
-    if (nnode.m_storage)
-        nnode.remove();
+    remove(n);
 
+    auto& nnode = n.*member;
     nnode.m_storage = &m_storage;
     nnode.m_prev = nullptr;
     nnode.m_next = m_storage.m_first;
@@ -226,6 +263,28 @@ inline void IntrusiveList<T, Container, member>::prepend(T& n)
     m_storage.m_first = &nnode;
     if (!m_storage.m_last)
         m_storage.m_last = &nnode;
+}
+
+template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
+inline void IntrusiveList<T, Container, member>::insert_before(T& bn, T& n)
+{
+    remove(n);
+
+    auto& new_node = n.*member;
+    auto& before_node = bn.*member;
+    new_node.m_storage = &m_storage;
+    new_node.m_next = &before_node;
+    new_node.m_prev = before_node.m_prev;
+    if (before_node.m_prev)
+        before_node.m_prev->m_next = &new_node;
+    before_node.m_prev = &new_node;
+
+    if (m_storage.m_first == &before_node) {
+        m_storage.m_first = &new_node;
+    }
+
+    if constexpr (!RemoveReference<decltype(new_node)>::IsRaw)
+        new_node.m_self.reference = &n;
 }
 
 template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
@@ -284,6 +343,14 @@ inline const T* IntrusiveList<T, Container, member>::next(const T* current)
 }
 
 template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
+inline const T* IntrusiveList<T, Container, member>::prev(const T* current)
+{
+    auto& prevnode = (current->*member).m_prev;
+    const T* prevstruct = prevnode ? node_to_value(*prevnode) : nullptr;
+    return prevstruct;
+}
+
+template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
 inline T* IntrusiveList<T, Container, member>::next(T* current)
 {
     auto& nextnode = (current->*member).m_next;
@@ -292,9 +359,23 @@ inline T* IntrusiveList<T, Container, member>::next(T* current)
 }
 
 template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
+inline T* IntrusiveList<T, Container, member>::prev(T* current)
+{
+    auto& prevnode = (current->*member).m_prev;
+    T* prevstruct = prevnode ? node_to_value(*prevnode) : nullptr;
+    return prevstruct;
+}
+
+template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
 inline typename IntrusiveList<T, Container, member>::Iterator IntrusiveList<T, Container, member>::begin()
 {
     return m_storage.m_first ? Iterator(node_to_value(*m_storage.m_first)) : Iterator();
+}
+
+template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
+inline typename IntrusiveList<T, Container, member>::ReverseIterator IntrusiveList<T, Container, member>::rbegin()
+{
+    return m_storage.m_last ? ReverseIterator(node_to_value(*m_storage.m_last)) : ReverseIterator();
 }
 
 template<class T, typename Container, IntrusiveListNode<T, Container> T::*member>
@@ -320,8 +401,7 @@ namespace Detail {
 template<typename T, typename Container>
 inline IntrusiveListNode<T, Container>::~IntrusiveListNode()
 {
-    if (m_storage)
-        remove();
+    VERIFY(!is_in_list());
 }
 
 template<typename T, typename Container>

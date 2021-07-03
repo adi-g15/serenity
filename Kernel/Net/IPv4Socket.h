@@ -21,6 +21,11 @@ class NetworkAdapter;
 class TCPPacket;
 class TCPSocket;
 
+struct PortAllocationResult {
+    KResultOr<u16> error_or_port;
+    bool did_allocate;
+};
+
 class IPv4Socket : public Socket {
 public:
     static KResultOr<NonnullRefPtr<Socket>> create(int type, int protocol);
@@ -43,7 +48,7 @@ public:
 
     virtual int ioctl(FileDescription&, unsigned request, FlatPtr arg) override;
 
-    bool did_receive(const IPv4Address& peer_address, u16 peer_port, KBuffer&&, const Time&);
+    bool did_receive(const IPv4Address& peer_address, u16 peer_port, ReadonlyBytes, const Time&);
 
     const IPv4Address& local_address() const { return m_local_address; }
     u16 local_port() const { return m_local_port; }
@@ -72,10 +77,10 @@ protected:
     IPv4Socket(int type, int protocol);
     virtual const char* class_name() const override { return "IPv4Socket"; }
 
-    KResultOr<u16> allocate_local_port_if_needed();
+    PortAllocationResult allocate_local_port_if_needed();
 
     virtual KResult protocol_bind() { return KSuccess; }
-    virtual KResult protocol_listen() { return KSuccess; }
+    virtual KResult protocol_listen([[maybe_unused]] bool did_allocate_port) { return KSuccess; }
     virtual KResultOr<size_t> protocol_receive(ReadonlyBytes /* raw_ipv4_packet */, UserOrKernelBuffer&, size_t, int) { return ENOTIMPL; }
     virtual KResultOr<size_t> protocol_send(const UserOrKernelBuffer&, size_t) { return ENOTIMPL; }
     virtual KResult protocol_connect(FileDescription&, ShouldBlock) { return KSuccess; }
@@ -110,7 +115,7 @@ private:
 
     SinglyLinkedListWithCount<ReceivedPacket> m_receive_queue;
 
-    DoubleBuffer m_receive_buffer;
+    DoubleBuffer m_receive_buffer { 256 * KiB };
 
     u16 m_local_port { 0 };
     u16 m_peer_port { 0 };

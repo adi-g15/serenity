@@ -37,7 +37,7 @@ Optional<String> FilePicker::get_open_filepath(Window* parent_window, const Stri
         picker->set_title(window_title);
 
     if (picker->exec() == Dialog::ExecOK) {
-        String file_path = picker->selected_file().string();
+        String file_path = picker->selected_file();
 
         if (file_path.is_null())
             return {};
@@ -52,7 +52,7 @@ Optional<String> FilePicker::get_save_filepath(Window* parent_window, const Stri
     auto picker = FilePicker::construct(parent_window, Mode::Save, String::formatted("{}.{}", title, extension), path);
 
     if (picker->exec() == Dialog::ExecOK) {
-        String file_path = picker->selected_file().string();
+        String file_path = picker->selected_file();
 
         if (file_path.is_null())
             return {};
@@ -226,7 +226,7 @@ FilePicker::FilePicker(Window* parent_window, Mode mode, const StringView& filen
         button.set_fixed_height(22);
         button.set_checkable(true);
         button.set_exclusive(true);
-        button.on_click = [this, path] {
+        button.on_click = [this, path](auto) {
             set_path(path);
         };
         m_common_location_buttons.append({ path, button });
@@ -247,9 +247,19 @@ void FilePicker::model_did_update(unsigned)
 
 void FilePicker::on_file_return()
 {
-    LexicalPath path(String::formatted("{}/{}", m_model->root_path(), m_filename_textbox->text()));
+    auto path = m_filename_textbox->text();
+    if (!path.starts_with('/')) {
+        path = LexicalPath::join(m_model->root_path(), path).string();
+    }
 
-    if (Core::File::exists(path.string()) && m_mode == Mode::Save) {
+    bool file_exists = Core::File::exists(path);
+
+    if (!file_exists && (m_mode == Mode::Open || m_mode == Mode::OpenFolder)) {
+        MessageBox::show(this, String::formatted("No such file or directory: {}", m_filename_textbox->text()), "File not found", MessageBox::Type::Error, MessageBox::InputType::OK);
+        return;
+    }
+
+    if (file_exists && m_mode == Mode::Save) {
         auto result = MessageBox::show(this, "File already exists. Overwrite?", "Existing File", MessageBox::Type::Warning, MessageBox::InputType::OKCancel);
         if (result == MessageBox::ExecCancel)
             return;

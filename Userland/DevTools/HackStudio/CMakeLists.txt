@@ -1,3 +1,10 @@
+serenity_component(
+    HackStudio
+    RECOMMENDED
+    TARGETS HackStudio
+    DEPENDS CppLanguageServer ShellLanguageServer
+)
+
 add_subdirectory(LanguageServers)
 add_subdirectory(LanguageClients)
 
@@ -36,6 +43,8 @@ set(SOURCES
     ProjectFile.cpp
     ProjectTemplate.cpp
     TerminalWrapper.cpp
+    ToDoEntries.cpp
+    ToDoEntriesWidget.cpp
     main.cpp
 )
 

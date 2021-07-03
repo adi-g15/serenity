@@ -149,12 +149,12 @@ void Object::stop_timer()
 void Object::dump_tree(int indent)
 {
     for (int i = 0; i < indent; ++i) {
-        printf(" ");
+        out(" ");
     }
-    printf("%s{%p}", class_name(), this);
+    out("{}{{{:p}}}", class_name(), this);
     if (!name().is_null())
-        printf(" %s", name().characters());
-    printf("\n");
+        out(" {}", name());
+    outln();
 
     for_each_child([&](auto& child) {
         child.dump_tree(indent + 2);
@@ -226,14 +226,14 @@ bool Object::is_visible_for_timer_purposes() const
     return true;
 }
 
-void Object::increment_inspector_count(Badge<RPCClient>)
+void Object::increment_inspector_count(Badge<InspectorServerConnection>)
 {
     ++m_inspector_count;
     if (m_inspector_count == 1)
         did_begin_inspection();
 }
 
-void Object::decrement_inspector_count(Badge<RPCClient>)
+void Object::decrement_inspector_count(Badge<InspectorServerConnection>)
 {
     --m_inspector_count;
     if (!m_inspector_count)

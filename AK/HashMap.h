@@ -19,7 +19,7 @@
 
 namespace AK {
 
-template<typename K, typename V, typename KeyTraits>
+template<typename K, typename V, typename KeyTraits, bool IsOrdered>
 class HashMap {
 private:
     struct Entry {
@@ -33,6 +33,9 @@ private:
     };
 
 public:
+    using KeyType = K;
+    using ValueType = V;
+
     HashMap() = default;
 
 #ifndef SERENITY_LIBC_BUILD
@@ -65,7 +68,7 @@ public:
     }
     void remove_one_randomly() { m_table.remove(m_table.begin()); }
 
-    using HashTableType = HashTable<Entry, EntryTraits>;
+    using HashTableType = HashTable<Entry, EntryTraits, IsOrdered>;
     using IteratorType = typename HashTableType::Iterator;
     using ConstIteratorType = typename HashTableType::ConstIterator;
 
@@ -153,3 +156,4 @@ private:
 }
 
 using AK::HashMap;
+using AK::OrderedHashMap;

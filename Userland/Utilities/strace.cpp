@@ -40,9 +40,10 @@ int main(int argc, char** argv)
     Vector<const char*> child_argv;
 
     const char* output_filename = nullptr;
-    auto trace_file = Core::File::standard_output();
+    auto trace_file = Core::File::standard_error();
 
     Core::ArgsParser parser;
+    parser.set_stop_on_first_non_option(true);
     parser.set_general_help(
         "Trace all syscalls and their result.");
     parser.add_option(g_pid, "Trace the given PID", "pid", 'p', "pid");
@@ -52,7 +53,7 @@ int main(int argc, char** argv)
     parser.parse(argc, argv);
 
     if (output_filename != nullptr) {
-        auto open_result = Core::File::open(output_filename, Core::IODevice::OpenMode::WriteOnly);
+        auto open_result = Core::File::open(output_filename, Core::OpenMode::WriteOnly);
         if (open_result.is_error()) {
             outln(stderr, "Failed to open output file: {}", open_result.error());
             return 1;
@@ -68,7 +69,7 @@ int main(int argc, char** argv)
     int status;
     if (g_pid == -1) {
         if (child_argv.is_empty()) {
-            outln(stderr, "strace: Expected either a pid or some arguments\n");
+            warnln("strace: Expected either a pid or some arguments");
             return 1;
         }
 
@@ -127,10 +128,17 @@ int main(int argc, char** argv)
             perror("getregs");
             return 1;
         }
+#if ARCH(I386)
         u32 syscall_index = regs.eax;
         u32 arg1 = regs.edx;
         u32 arg2 = regs.ecx;
         u32 arg3 = regs.ebx;
+#else
+        u64 syscall_index = regs.rax;
+        u64 arg1 = regs.rdx;
+        u64 arg2 = regs.rcx;
+        u64 arg3 = regs.rbx;
+#endif
 
         if (ptrace(PT_SYSCALL, g_pid, 0, 0) == -1) {
             perror("syscall");
@@ -146,7 +154,11 @@ int main(int argc, char** argv)
             return 1;
         }
 
+#if ARCH(I386)
         u32 res = regs.eax;
+#else
+        u64 res = regs.rax;
+#endif
 
         auto string = String::formatted("{}({:#08x}, {:#08x}, {:#08x})\t={}\n",
             Syscall::to_string((Syscall::Function)syscall_index),

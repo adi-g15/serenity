@@ -6,13 +6,15 @@
 
 #pragma once
 
-#include <AK/InlineLinkedList.h>
+#include <AK/IntrusiveList.h>
 #include <AK/Types.h>
 
 #define MAGIC_PAGE_HEADER 0x42657274     // 'Bert'
 #define MAGIC_BIGALLOC_HEADER 0x42697267 // 'Birg'
 #define MALLOC_SCRUB_BYTE 0xdc
 #define FREE_SCRUB_BYTE 0xed
+
+#define PAGE_ROUND_UP(x) ((((size_t)(x)) + PAGE_SIZE - 1) & (~(PAGE_SIZE - 1)))
 
 static constexpr unsigned short size_classes[] = { 8, 16, 32, 64, 128, 256, 504, 1016, 2032, 4088, 8184, 16376, 32752, 0 };
 static constexpr size_t num_size_classes = (sizeof(size_classes) / sizeof(unsigned short)) - 1;
@@ -45,9 +47,7 @@ struct FreelistEntry {
     FreelistEntry* next;
 };
 
-struct ChunkedBlock
-    : public CommonHeader
-    , public InlineLinkedListNode<ChunkedBlock> {
+struct ChunkedBlock : public CommonHeader {
 
     static constexpr size_t block_size = 64 * KiB;
     static constexpr size_t block_mask = ~(block_size - 1);
@@ -59,8 +59,7 @@ struct ChunkedBlock
         m_free_chunks = chunk_capacity();
     }
 
-    ChunkedBlock* m_prev { nullptr };
-    ChunkedBlock* m_next { nullptr };
+    IntrusiveListNode<ChunkedBlock> m_list_node;
     size_t m_next_lazy_freelist_index { 0 };
     FreelistEntry* m_freelist { nullptr };
     size_t m_free_chunks { 0 };
@@ -75,4 +74,6 @@ struct ChunkedBlock
     size_t free_chunks() const { return m_free_chunks; }
     size_t used_chunks() const { return chunk_capacity() - m_free_chunks; }
     size_t chunk_capacity() const { return (block_size - sizeof(ChunkedBlock)) / m_size; }
+
+    using List = IntrusiveList<ChunkedBlock, RawPtr<ChunkedBlock>, &ChunkedBlock::m_list_node>;
 };

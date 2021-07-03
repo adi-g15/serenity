@@ -6,6 +6,7 @@
 
 #include <AK/LexicalPath.h>
 #include <AK/MappedFile.h>
+#include <Kernel/API/InodeWatcherEvent.h>
 #include <LibCompress/Gzip.h>
 #include <LibCore/File.h>
 #include <LibCore/FileWatcher.h>
@@ -46,7 +47,7 @@ static bool compress_coredump(const String& coredump_path)
         return false;
     }
     auto output_path = String::formatted("{}.gz", coredump_path);
-    auto output_file_or_error = Core::File::open(output_path, Core::File::WriteOnly);
+    auto output_file_or_error = Core::File::open(output_path, Core::OpenMode::WriteOnly);
     if (output_file_or_error.is_error()) {
         dbgln("Could not open '{}' for writing: {}", output_path, output_file_or_error.error());
         return false;
@@ -73,8 +74,20 @@ static void print_backtrace(const String& coredump_path)
         if (thread_index > 0)
             dbgln();
         dbgln("--- Backtrace for thread #{} (TID {}) ---", thread_index, thread_info.tid);
-        for (auto& entry : backtrace.entries())
+        for (auto& entry : backtrace.entries()) {
+#ifndef BACKTRACE_DEBUG
             dbgln("{}", entry.to_string(true));
+#else
+            auto region = coredump->region_containing(entry.eip);
+            String name;
+            u32 base_addr { 0 };
+            if (region) {
+                name = region->region_name;
+                base_addr = region->region_start;
+            }
+            dbgln("{} ({} base: {:p}, offset: {:p})", entry.to_string(true), name, base_addr, entry.eip - base_addr);
+#endif
+        }
         ++thread_index;
         return IterationDecision::Continue;
     });
@@ -83,7 +96,15 @@ static void print_backtrace(const String& coredump_path)
 static void launch_crash_reporter(const String& coredump_path, bool unlink_after_use)
 {
     pid_t child;
-    const char* argv[] = { "CrashReporter", coredump_path.characters(), unlink_after_use ? "--unlink" : nullptr, nullptr, nullptr };
+    const char* argv[4] = { "CrashReporter" };
+    if (unlink_after_use) {
+        argv[1] = "--unlink";
+        argv[2] = coredump_path.characters();
+        argv[3] = nullptr;
+    } else {
+        argv[1] = coredump_path.characters();
+        argv[2] = nullptr;
+    }
     if ((errno = posix_spawn(&child, "/bin/CrashReporter", nullptr, nullptr, const_cast<char**>(argv), environ))) {
         perror("posix_spawn");
     } else {
@@ -99,13 +120,19 @@ int main()
         return 1;
     }
 
-    Core::BlockingFileWatcher watcher { "/tmp/coredump" };
+    Core::BlockingFileWatcher watcher;
+    auto watch_result = watcher.add_watch("/tmp/coredump", Core::FileWatcherEvent::Type::ChildCreated);
+    if (watch_result.is_error()) {
+        warnln("Failed to watch the coredump directory: {}", watch_result.error());
+        VERIFY_NOT_REACHED();
+    }
+
     while (true) {
         auto event = watcher.wait_for_event();
         VERIFY(event.has_value());
-        if (event.value().type != Core::FileWatcherEvent::Type::ChildAdded)
+        if (event.value().type != Core::FileWatcherEvent::Type::ChildCreated)
             continue;
-        auto coredump_path = event.value().child_path;
+        auto& coredump_path = event.value().event_path;
         if (coredump_path.ends_with(".gz"))
             continue; // stops compress_coredump from accidentally triggering us
         dbgln("New coredump file: {}", coredump_path);

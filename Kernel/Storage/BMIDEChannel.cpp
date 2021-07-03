@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/Sections.h>
 #include <Kernel/Storage/ATA.h>
 #include <Kernel/Storage/BMIDEChannel.h>
 #include <Kernel/Storage/IDEController.h>
@@ -63,7 +64,7 @@ static void print_ide_status(u8 status)
         (status & ATA_SR_ERR) != 0);
 }
 
-void BMIDEChannel::handle_irq(const RegisterState&)
+bool BMIDEChannel::handle_irq(const RegisterState&)
 {
     u8 status = m_io_group.io_base().offset(ATA_REG_STATUS).in<u8>();
 
@@ -74,7 +75,7 @@ void BMIDEChannel::handle_irq(const RegisterState&)
     if (!(bstatus & 0x4)) {
         // interrupt not from this device, ignore
         dbgln_if(PATA_DEBUG, "BMIDEChannel: ignore interrupt");
-        return;
+        return false;
     }
     // clear bus master interrupt status
     m_io_group.bus_master_base().value().offset(2).out<u8>(m_io_group.bus_master_base().value().offset(2).in<u8>() | 4);
@@ -87,7 +88,7 @@ void BMIDEChannel::handle_irq(const RegisterState&)
 
     if (!m_current_request) {
         dbgln("BMIDEChannel: IRQ but no pending request!");
-        return;
+        return false;
     }
 
     if (status & ATA_SR_ERR) {
@@ -96,10 +97,11 @@ void BMIDEChannel::handle_irq(const RegisterState&)
         dbgln("BMIDEChannel: Error {:#02x}!", (u8)m_device_error);
         try_disambiguate_error();
         complete_current_request(AsyncDeviceRequest::Failure);
-        return;
+        return true;
     }
     m_device_error = 0;
     complete_current_request(AsyncDeviceRequest::Success);
+    return true;
 }
 
 void BMIDEChannel::complete_current_request(AsyncDeviceRequest::RequestResult result)
@@ -210,7 +212,7 @@ void BMIDEChannel::ata_read_sectors(bool slave_request, u16 capabilities)
     m_io_group.bus_master_base().value().out<u8>(0);
 
     // Write the PRDT location
-    m_io_group.bus_master_base().value().offset(4).out(m_prdt_page->paddr().get());
+    m_io_group.bus_master_base().value().offset(4).out<u32>(m_prdt_page->paddr().get());
 
     // Set transfer direction
     m_io_group.bus_master_base().value().out<u8>(0x8);

@@ -7,6 +7,30 @@
 #pragma once
 
 namespace SQL {
+class BTree;
+class BTreeIterator;
+class ColumnDef;
+class Database;
+class HashBucket;
+class HashDirectoryNode;
+class HashIndex;
+class HashIndexIterator;
+class Heap;
+class Index;
+class IndexNode;
+class IndexDef;
+class Key;
+class KeyPartDef;
+class Row;
+class TableDef;
+class TreeNode;
+class Tuple;
+class TupleDescriptor;
+struct TupleElement;
+class Value;
+}
+
+namespace SQL::AST {
 class AddColumn;
 class AlterTable;
 class ASTNode;

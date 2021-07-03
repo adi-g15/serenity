@@ -8,50 +8,50 @@
 
 namespace Cpp {
 
-static void print_indent(int indent)
+static void print_indent(FILE* output, int indent)
 {
     for (int i = 0; i < indent * 2; ++i)
-        out(" ");
+        out(output, " ");
 }
 
-void ASTNode::dump(size_t indent) const
+void ASTNode::dump(FILE* output, size_t indent) const
 {
-    print_indent(indent);
-    outln("{}[{}:{}->{}:{}]", class_name(), start().line, start().column, end().line, end().column);
+    print_indent(output, indent);
+    outln(output, "{}[{}:{}->{}:{}]", class_name(), start().line, start().column, end().line, end().column);
 }
 
-void TranslationUnit::dump(size_t indent) const
+void TranslationUnit::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     for (const auto& child : m_declarations) {
-        child.dump(indent + 1);
+        child.dump(output, indent + 1);
     }
 }
 
-void FunctionDeclaration::dump(size_t indent) const
+void FunctionDeclaration::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
 
     String qualifiers_string;
     if (!m_qualifiers.is_empty()) {
-        print_indent(indent + 1);
-        outln("[{}]", String::join(" ", m_qualifiers));
+        print_indent(output, indent + 1);
+        outln(output, "[{}]", String::join(" ", m_qualifiers));
     }
 
-    m_return_type->dump(indent + 1);
+    m_return_type->dump(output, indent + 1);
     if (!m_name.is_null()) {
-        print_indent(indent + 1);
-        outln("{}", m_name);
+        print_indent(output, indent + 1);
+        outln(output, "{}", m_name);
     }
-    print_indent(indent + 1);
-    outln("(");
+    print_indent(output, indent + 1);
+    outln(output, "(");
     for (const auto& arg : m_parameters) {
-        arg.dump(indent + 1);
+        arg.dump(output, indent + 1);
     }
-    print_indent(indent + 1);
-    outln(")");
+    print_indent(output, indent + 1);
+    outln(output, ")");
     if (!m_definition.is_null()) {
-        m_definition->dump(indent + 1);
+        m_definition->dump(output, indent + 1);
     }
 }
 
@@ -61,22 +61,33 @@ NonnullRefPtrVector<Declaration> FunctionDeclaration::declarations() const
     for (auto& arg : m_parameters) {
         declarations.append(arg);
     }
+
+    if (m_definition)
+        declarations.extend(m_definition->declarations());
+
     return declarations;
 }
 
-void Type::dump(size_t indent) const
+void Type::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent + 1);
-    outln("{}", to_string());
+    ASTNode::dump(output, indent);
+    print_indent(output, indent + 1);
+    outln(output, "{}", to_string());
 }
 
-String Type::to_string() const
+String NamedType::to_string() const
 {
     String qualifiers_string;
     if (!m_qualifiers.is_empty())
         qualifiers_string = String::formatted("[{}] ", String::join(" ", m_qualifiers));
-    return String::formatted("{}{}", qualifiers_string, m_name.is_null() ? "" : m_name->full_name());
+
+    String name;
+    if (m_is_auto)
+        name = "auto";
+    else
+        name = m_name.is_null() ? "" : m_name->full_name();
+
+    return String::formatted("{}{}", qualifiers_string, name);
 }
 
 String Pointer::to_string() const
@@ -89,70 +100,70 @@ String Pointer::to_string() const
     return builder.to_string();
 }
 
-void Parameter::dump(size_t indent) const
+void Parameter::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     if (m_is_ellipsis) {
-        print_indent(indent + 1);
-        outln("...");
+        print_indent(output, indent + 1);
+        outln(output, "...");
     }
     if (!m_name.is_null()) {
-        print_indent(indent);
-        outln("{}", m_name);
+        print_indent(output, indent);
+        outln(output, "{}", m_name);
     }
     if (m_type)
-        m_type->dump(indent + 1);
+        m_type->dump(output, indent + 1);
 }
 
-void FunctionDefinition::dump(size_t indent) const
+void FunctionDefinition::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent);
-    outln("{{");
+    ASTNode::dump(output, indent);
+    print_indent(output, indent);
+    outln(output, "{{");
     for (const auto& statement : m_statements) {
-        statement.dump(indent + 1);
+        statement.dump(output, indent + 1);
     }
-    print_indent(indent);
-    outln("}}");
+    print_indent(output, indent);
+    outln(output, "}}");
 }
 
 NonnullRefPtrVector<Declaration> FunctionDefinition::declarations() const
 {
     NonnullRefPtrVector<Declaration> declarations;
     for (auto& statement : m_statements) {
-        declarations.append(statement.declarations());
+        declarations.extend(statement.declarations());
     }
     return declarations;
 }
 
-void VariableDeclaration::dump(size_t indent) const
+void VariableDeclaration::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     if (m_type)
-        m_type->dump(indent + 1);
-    print_indent(indent + 1);
-    outln("{}", m_name);
+        m_type->dump(output, indent + 1);
+    print_indent(output, indent + 1);
+    outln(output, "{}", m_name);
     if (m_initial_value)
-        m_initial_value->dump(indent + 1);
+        m_initial_value->dump(output, indent + 1);
 }
 
-void Identifier::dump(size_t indent) const
+void Identifier::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent);
-    outln("{}", m_name);
+    ASTNode::dump(output, indent);
+    print_indent(output, indent);
+    outln(output, "{}", m_name);
 }
 
-void NumericLiteral::dump(size_t indent) const
+void NumericLiteral::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent);
-    outln("{}", m_value);
+    ASTNode::dump(output, indent);
+    print_indent(output, indent);
+    outln(output, "{}", m_value);
 }
 
-void BinaryExpression::dump(size_t indent) const
+void BinaryExpression::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
 
     const char* op_string = nullptr;
     switch (m_op) {
@@ -215,16 +226,16 @@ void BinaryExpression::dump(size_t indent) const
         break;
     }
 
-    m_lhs->dump(indent + 1);
-    print_indent(indent + 1);
+    m_lhs->dump(output, indent + 1);
+    print_indent(output, indent + 1);
     VERIFY(op_string);
-    outln("{}", op_string);
-    m_rhs->dump(indent + 1);
+    outln(output, "{}", op_string);
+    m_rhs->dump(output, indent + 1);
 }
 
-void AssignmentExpression::dump(size_t indent) const
+void AssignmentExpression::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
 
     const char* op_string = nullptr;
     switch (m_op) {
@@ -239,54 +250,54 @@ void AssignmentExpression::dump(size_t indent) const
         break;
     }
 
-    m_lhs->dump(indent + 1);
-    print_indent(indent + 1);
+    m_lhs->dump(output, indent + 1);
+    print_indent(output, indent + 1);
     VERIFY(op_string);
-    outln("{}", op_string);
-    m_rhs->dump(indent + 1);
+    outln(output, "{}", op_string);
+    m_rhs->dump(output, indent + 1);
 }
 
-void FunctionCall::dump(size_t indent) const
+void FunctionCall::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    m_callee->dump(indent + 1);
+    ASTNode::dump(output, indent);
+    m_callee->dump(output, indent + 1);
     for (const auto& arg : m_arguments) {
-        arg.dump(indent + 1);
+        arg.dump(output, indent + 1);
     }
 }
 
-void StringLiteral::dump(size_t indent) const
+void StringLiteral::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent + 1);
-    outln("{}", m_value);
+    ASTNode::dump(output, indent);
+    print_indent(output, indent + 1);
+    outln(output, "{}", m_value);
 }
 
-void ReturnStatement::dump(size_t indent) const
+void ReturnStatement::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     if (m_value)
-        m_value->dump(indent + 1);
+        m_value->dump(output, indent + 1);
 }
 
-void EnumDeclaration::dump(size_t indent) const
+void EnumDeclaration::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent);
-    outln("{}", m_name);
+    ASTNode::dump(output, indent);
+    print_indent(output, indent);
+    outln(output, "{}", m_name);
     for (auto& entry : m_entries) {
-        print_indent(indent + 1);
-        outln("{}", entry);
+        print_indent(output, indent + 1);
+        outln(output, "{}", entry);
     }
 }
 
-void StructOrClassDeclaration::dump(size_t indent) const
+void StructOrClassDeclaration::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent);
-    outln("{}", m_name);
+    ASTNode::dump(output, indent);
+    print_indent(output, indent);
+    outln(output, "{}", m_name);
     for (auto& member : m_members) {
-        member.dump(indent + 1);
+        member.dump(output, indent + 1);
     }
 }
 NonnullRefPtrVector<Declaration> StructOrClassDeclaration::declarations() const
@@ -297,20 +308,9 @@ NonnullRefPtrVector<Declaration> StructOrClassDeclaration::declarations() const
     return declarations;
 }
 
-void MemberDeclaration::dump(size_t indent) const
+void UnaryExpression::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    m_type->dump(indent + 1);
-    print_indent(indent + 1);
-    outln("{}", m_name);
-    if (m_initial_value) {
-        m_initial_value->dump(indent + 2);
-    }
-}
-
-void UnaryExpression::dump(size_t indent) const
-{
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
 
     const char* op_string = nullptr;
     switch (m_op) {
@@ -337,52 +337,52 @@ void UnaryExpression::dump(size_t indent) const
     }
 
     VERIFY(op_string);
-    print_indent(indent + 1);
-    outln("{}", op_string);
-    m_lhs->dump(indent + 1);
+    print_indent(output, indent + 1);
+    outln(output, "{}", op_string);
+    m_lhs->dump(output, indent + 1);
 }
 
-void BooleanLiteral::dump(size_t indent) const
+void BooleanLiteral::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent + 1);
-    outln("{}", m_value ? "true" : "false");
+    ASTNode::dump(output, indent);
+    print_indent(output, indent + 1);
+    outln(output, "{}", m_value ? "true" : "false");
 }
 
-void Pointer::dump(size_t indent) const
+void Pointer::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     if (!m_pointee.is_null()) {
-        m_pointee->dump(indent + 1);
+        m_pointee->dump(output, indent + 1);
     }
 }
 
-void MemberExpression::dump(size_t indent) const
+void MemberExpression::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    m_object->dump(indent + 1);
-    m_property->dump(indent + 1);
+    ASTNode::dump(output, indent);
+    m_object->dump(output, indent + 1);
+    m_property->dump(output, indent + 1);
 }
 
-void BlockStatement::dump(size_t indent) const
+void BlockStatement::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     for (auto& statement : m_statements) {
-        statement.dump(indent + 1);
+        statement.dump(output, indent + 1);
     }
 }
 
-void ForStatement::dump(size_t indent) const
+void ForStatement::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     if (m_init)
-        m_init->dump(indent + 1);
+        m_init->dump(output, indent + 1);
     if (m_test)
-        m_test->dump(indent + 1);
+        m_test->dump(output, indent + 1);
     if (m_update)
-        m_update->dump(indent + 1);
+        m_update->dump(output, indent + 1);
     if (m_body)
-        m_body->dump(indent + 1);
+        m_body->dump(output, indent + 1);
 }
 
 NonnullRefPtrVector<Declaration> Statement::declarations() const
@@ -400,9 +400,9 @@ NonnullRefPtrVector<Declaration> ForStatement::declarations() const
 {
     NonnullRefPtrVector<Declaration> declarations;
     if (m_init)
-        declarations.append(m_init->declarations());
+        declarations.extend(m_init->declarations());
     if (m_body)
-        declarations.append(m_body->declarations());
+        declarations.extend(m_body->declarations());
     return declarations;
 }
 
@@ -410,28 +410,28 @@ NonnullRefPtrVector<Declaration> BlockStatement::declarations() const
 {
     NonnullRefPtrVector<Declaration> declarations;
     for (auto& statement : m_statements) {
-        declarations.append(statement.declarations());
+        declarations.extend(statement.declarations());
     }
     return declarations;
 }
 
-void IfStatement::dump(size_t indent) const
+void IfStatement::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     if (m_predicate) {
-        print_indent(indent + 1);
-        outln("Predicate:");
-        m_predicate->dump(indent + 1);
+        print_indent(output, indent + 1);
+        outln(output, "Predicate:");
+        m_predicate->dump(output, indent + 1);
     }
     if (m_then) {
-        print_indent(indent + 1);
-        outln("Then:");
-        m_then->dump(indent + 1);
+        print_indent(output, indent + 1);
+        outln(output, "Then:");
+        m_then->dump(output, indent + 1);
     }
     if (m_else) {
-        print_indent(indent + 1);
-        outln("Else:");
-        m_else->dump(indent + 1);
+        print_indent(output, indent + 1);
+        outln(output, "Else:");
+        m_else->dump(output, indent + 1);
     }
 }
 
@@ -439,33 +439,33 @@ NonnullRefPtrVector<Declaration> IfStatement::declarations() const
 {
     NonnullRefPtrVector<Declaration> declarations;
     if (m_predicate)
-        declarations.append(m_predicate->declarations());
+        declarations.extend(m_predicate->declarations());
     if (m_then)
-        declarations.append(m_then->declarations());
+        declarations.extend(m_then->declarations());
     if (m_else)
-        declarations.append(m_else->declarations());
+        declarations.extend(m_else->declarations());
     return declarations;
 }
 
-void NamespaceDeclaration::dump(size_t indent) const
+void NamespaceDeclaration::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent + 1);
-    outln("{}", m_name);
+    ASTNode::dump(output, indent);
+    print_indent(output, indent + 1);
+    outln(output, "{}", m_name);
     for (auto& decl : m_declarations)
-        decl.dump(indent + 1);
+        decl.dump(output, indent + 1);
 }
 
-void NullPointerLiteral::dump(size_t indent) const
+void NullPointerLiteral::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
 }
 
-void Name::dump(size_t indent) const
+void Name::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
-    print_indent(indent);
-    outln("{}", full_name());
+    ASTNode::dump(output, indent);
+    print_indent(output, indent);
+    outln(output, "{}", full_name());
 }
 
 String Name::full_name() const
@@ -491,46 +491,78 @@ String TemplatizedName::full_name() const
     return name.to_string();
 }
 
-void CppCastExpression::dump(size_t indent) const
+void CppCastExpression::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
 
-    print_indent(indent);
-    outln("{}", m_cast_type);
+    print_indent(output, indent);
+    outln(output, "{}", m_cast_type);
 
-    print_indent(indent + 1);
-    outln("<");
+    print_indent(output, indent + 1);
+    outln(output, "<");
     if (m_type)
-        m_type->dump(indent + 1);
-    print_indent(indent + 1);
-    outln(">");
+        m_type->dump(output, indent + 1);
+    print_indent(output, indent + 1);
+    outln(output, ">");
 
     if (m_expression)
-        m_expression->dump(indent + 1);
+        m_expression->dump(output, indent + 1);
 }
 
-void SizeofExpression::dump(size_t indent) const
+void SizeofExpression::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     if (m_type)
-        m_type->dump(indent + 1);
+        m_type->dump(output, indent + 1);
 }
 
-void BracedInitList::dump(size_t indent) const
+void BracedInitList::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     for (auto& exp : m_expressions) {
-        exp.dump(indent + 1);
+        exp.dump(output, indent + 1);
     }
 }
 
-void CStyleCastExpression::dump(size_t indent) const
+void CStyleCastExpression::dump(FILE* output, size_t indent) const
 {
-    ASTNode::dump(indent);
+    ASTNode::dump(output, indent);
     if (m_type)
-        m_type->dump(indent + 1);
+        m_type->dump(output, indent + 1);
     if (m_expression)
-        m_expression->dump(indent + 1);
+        m_expression->dump(output, indent + 1);
+}
+
+void Constructor::dump(FILE* output, size_t indent) const
+{
+    print_indent(output, indent);
+    outln(output, "C'tor");
+    print_indent(output, indent + 1);
+    outln(output, "(");
+    for (const auto& arg : m_parameters) {
+        arg.dump(output, indent + 1);
+    }
+    print_indent(output, indent + 1);
+    outln(output, ")");
+    if (!m_definition.is_null()) {
+        m_definition->dump(output, indent + 1);
+    }
+}
+
+void Destructor::dump(FILE* output, size_t indent) const
+{
+    print_indent(output, indent);
+    outln(output, "D'tor");
+    print_indent(output, indent + 1);
+    outln(output, "(");
+    for (const auto& arg : m_parameters) {
+        arg.dump(output, indent + 1);
+    }
+    print_indent(output, indent + 1);
+    outln(output, ")");
+    if (!m_definition.is_null()) {
+        m_definition->dump(output, indent + 1);
+    }
 }
 
 }

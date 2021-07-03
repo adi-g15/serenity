@@ -9,7 +9,6 @@
 #include "RemoteObjectPropertyModel.h"
 #include "RemoteProcess.h"
 #include <AK/URL.h>
-#include <LibCore/ProcessStatisticsReader.h>
 #include <LibDesktop/Launcher.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/BoxLayout.h>
@@ -23,6 +22,7 @@
 #include <LibGUI/TreeView.h>
 #include <LibGUI/Window.h>
 #include <stdio.h>
+#include <unistd.h>
 
 using namespace Inspector;
 
@@ -34,7 +34,7 @@ using namespace Inspector;
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio recvfd sendfd rpath accept unix cpath fattr", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd rpath unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -66,11 +66,13 @@ int main(int argc, char** argv)
 
     unveil(nullptr, nullptr);
 
+    bool gui_mode = argc != 2;
     pid_t pid;
 
     auto app = GUI::Application::construct(argc, argv);
     auto app_icon = GUI::Icon::default_icon("app-inspector");
-    if (argc != 2) {
+    if (gui_mode) {
+    choose_pid:
         auto process_chooser = GUI::ProcessChooser::construct("Inspector", "Inspect", app_icon.bitmap_for_size(16));
         if (process_chooser->exec() == GUI::Dialog::ExecCancel)
             return 0;
@@ -84,6 +86,21 @@ int main(int argc, char** argv)
 
     auto window = GUI::Window::construct();
 
+    if (pid == getpid()) {
+        GUI::MessageBox::show(window, "Cannot inspect Inspector itself!", "Error", GUI::MessageBox::Type::Error);
+        return 1;
+    }
+
+    RemoteProcess remote_process(pid);
+    if (!remote_process.is_inspectable()) {
+        GUI::MessageBox::show(window, String::formatted("Process pid={} is not inspectable", remote_process.pid()), "Error", GUI::MessageBox::Type::Error);
+        if (gui_mode) {
+            goto choose_pid;
+        } else {
+            return 1;
+        }
+    }
+
     if (!Desktop::Launcher::add_allowed_handler_with_only_specific_urls(
             "/bin/Help",
             { URL::create_with_file_protocol("/usr/share/man/man1/Inspector.md") })
@@ -92,33 +109,16 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (pid == getpid()) {
-        GUI::MessageBox::show(window, "Cannot inspect Inspector itself!", "Error", GUI::MessageBox::Type::Error);
-        return 1;
-    }
-
-    auto all_processes = Core::ProcessStatisticsReader::get_all();
-    for (auto& it : all_processes.value()) {
-        if (it.value.pid != pid)
-            continue;
-        if (it.value.pledge.is_empty())
-            break;
-        if (!it.value.pledge.contains("accept")) {
-            GUI::MessageBox::show(window, String::formatted("{} ({}) has not pledged accept!", it.value.name, pid), "Error", GUI::MessageBox::Type::Error);
-            return 1;
-        }
-        break;
-    }
-
     window->set_title("Inspector");
     window->resize(685, 500);
     window->set_icon(app_icon.bitmap_for_size(16));
 
     auto menubar = GUI::Menubar::construct();
+
     auto& file_menu = menubar->add_menu("&File");
     file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_help_action([](auto&) {
         Desktop::Launcher::open(URL::create_with_file_protocol("/usr/share/man/man1/Inspector.md"), "/bin/Help");
     }));
@@ -129,8 +129,6 @@ int main(int argc, char** argv)
     widget.set_layout<GUI::VerticalBoxLayout>();
 
     auto& splitter = widget.add<GUI::HorizontalSplitter>();
-
-    RemoteProcess remote_process(pid);
 
     remote_process.on_update = [&] {
         if (!remote_process.process_name().is_null())
@@ -178,7 +176,7 @@ int main(int argc, char** argv)
     window->show();
     remote_process.update();
 
-    if (pledge("stdio recvfd sendfd rpath accept unix", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd rpath", nullptr) < 0) {
         perror("pledge");
         return 1;
     }

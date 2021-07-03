@@ -5,13 +5,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include "WavLoader.h"
+#include "Buffer.h"
 #include <AK/Debug.h>
 #include <AK/NumericLimits.h>
 #include <AK/OwnPtr.h>
-#include <LibAudio/Buffer.h>
-#include <LibAudio/WavLoader.h>
 #include <LibCore/File.h>
-#include <LibCore/IODeviceStreamReader.h>
+#include <LibCore/FileStream.h>
 
 namespace Audio {
 
@@ -20,16 +20,17 @@ static constexpr size_t maximum_wav_size = 1 * GiB; // FIXME: is there a more ap
 WavLoaderPlugin::WavLoaderPlugin(const StringView& path)
     : m_file(Core::File::construct(path))
 {
-    if (!m_file->open(Core::IODevice::ReadOnly)) {
+    if (!m_file->open(Core::OpenMode::ReadOnly)) {
         m_error_string = String::formatted("Can't open file: {}", m_file->error_string());
         return;
     }
+    m_stream = make<Core::InputFileStream>(*m_file);
 
     valid = parse_header();
     if (!valid)
         return;
 
-    m_resampler = make<ResampleHelper>(m_sample_rate, 44100);
+    m_resampler = make<ResampleHelper<double>>(m_sample_rate, m_device_sample_rate);
 }
 
 WavLoaderPlugin::WavLoaderPlugin(const ByteBuffer& buffer)
@@ -39,108 +40,107 @@ WavLoaderPlugin::WavLoaderPlugin(const ByteBuffer& buffer)
         m_error_string = String::formatted("Can't open memory stream");
         return;
     }
+    m_memory_stream = static_cast<InputMemoryStream*>(m_stream.ptr());
 
     valid = parse_header();
     if (!valid)
         return;
 
-    m_resampler = make<ResampleHelper>(m_sample_rate, 44100);
-}
-
-bool WavLoaderPlugin::sniff()
-{
-    return valid;
+    m_resampler = make<ResampleHelper<double>>(m_sample_rate, m_device_sample_rate);
 }
 
 RefPtr<Buffer> WavLoaderPlugin::get_more_samples(size_t max_bytes_to_read_from_input)
 {
+    if (!m_stream)
+        return nullptr;
+
+    int remaining_samples = m_total_samples - m_loaded_samples;
+    if (remaining_samples <= 0) {
+        return nullptr;
+    }
+
+    // One "sample" contains data from all channels.
+    // In the Wave spec, this is also called a block.
+    size_t bytes_per_sample = m_num_channels * pcm_bits_per_sample(m_sample_format) / 8;
+
+    // Might truncate if not evenly divisible by the sample size
+    int max_samples_to_read = static_cast<int>(max_bytes_to_read_from_input) / bytes_per_sample;
+    int samples_to_read = min(max_samples_to_read, remaining_samples);
+    size_t bytes_to_read = samples_to_read * bytes_per_sample;
+
     dbgln_if(AWAVLOADER_DEBUG, "Read {} bytes WAV with num_channels {} sample rate {}, "
                                "bits per sample {}, sample format {}",
-        max_bytes_to_read_from_input, m_num_channels,
-        m_sample_rate, pcm_bits_per_sample(m_sample_format), sample_format_name(m_sample_format));
-    size_t samples_to_read = static_cast<int>(max_bytes_to_read_from_input) / (m_num_channels * (pcm_bits_per_sample(m_sample_format) / 8));
-    RefPtr<Buffer> buffer;
-    if (m_file) {
-        auto raw_samples = m_file->read(max_bytes_to_read_from_input);
-        if (raw_samples.is_empty()) {
-            return nullptr;
-        }
-        buffer = Buffer::from_pcm_data(raw_samples, *m_resampler, m_num_channels, m_sample_format);
-    } else {
-        buffer = Buffer::from_pcm_stream(*m_stream, *m_resampler, m_num_channels, m_sample_format, samples_to_read);
+        bytes_to_read, m_num_channels, m_sample_rate,
+        pcm_bits_per_sample(m_sample_format), sample_format_name(m_sample_format));
+
+    ByteBuffer sample_data = ByteBuffer::create_zeroed(bytes_to_read);
+    m_stream->read_or_error(sample_data.bytes());
+    if (m_stream->handle_any_error()) {
+        return nullptr;
     }
-    //Buffer contains normalized samples, but m_loaded_samples should contain the amount of actually loaded samples
+
+    RefPtr<Buffer> buffer = Buffer::from_pcm_data(
+        sample_data.bytes(),
+        *m_resampler,
+        m_num_channels,
+        m_sample_format);
+
+    // m_loaded_samples should contain the amount of actually loaded samples
     m_loaded_samples += samples_to_read;
-    m_loaded_samples = min(m_total_samples, m_loaded_samples);
     return buffer;
 }
 
-void WavLoaderPlugin::seek(const int position)
+void WavLoaderPlugin::seek(const int sample_index)
 {
-    if (position < 0 || position > m_total_samples)
+    dbgln_if(AWAVLOADER_DEBUG, "seek sample_index {}", sample_index);
+    if (sample_index < 0 || sample_index >= m_total_samples)
         return;
 
-    m_loaded_samples = position;
-    size_t byte_position = position * m_num_channels * (pcm_bits_per_sample(m_sample_format) / 8);
+    size_t sample_offset = m_byte_offset_of_data_samples + (sample_index * m_num_channels * (pcm_bits_per_sample(m_sample_format) / 8));
 
-    if (m_file)
-        m_file->seek(byte_position);
-    else
-        m_stream->seek(byte_position);
+    // AK::InputStream does not define seek, hence the special-cases for file and stream.
+    if (m_file) {
+        m_file->seek(sample_offset);
+    } else {
+        m_memory_stream->seek(sample_offset);
+    }
+
+    m_loaded_samples = sample_index;
 }
 
-void WavLoaderPlugin::reset()
-{
-    seek(0);
-}
-
+// Specification reference: http://www-mmsp.ece.mcgill.ca/Documents/AudioFormats/WAVE/WAVE.html
 bool WavLoaderPlugin::parse_header()
 {
-    OwnPtr<Core::IODeviceStreamReader> file_stream;
-    bool ok = true;
+    if (!m_stream)
+        return false;
 
-    if (m_file)
-        file_stream = make<Core::IODeviceStreamReader>(*m_file);
+    bool ok = true;
+    size_t bytes_read = 0;
 
     auto read_u8 = [&]() -> u8 {
         u8 value;
-        if (m_file) {
-            *file_stream >> value;
-            if (file_stream->handle_read_failure())
-                ok = false;
-        } else {
-            *m_stream >> value;
-            if (m_stream->handle_any_error())
-                ok = false;
-        }
+        *m_stream >> value;
+        if (m_stream->handle_any_error())
+            ok = false;
+        bytes_read += 1;
         return value;
     };
 
     auto read_u16 = [&]() -> u16 {
         u16 value;
-        if (m_file) {
-            *file_stream >> value;
-            if (file_stream->handle_read_failure())
-                ok = false;
-        } else {
-            *m_stream >> value;
-            if (m_stream->handle_any_error())
-                ok = false;
-        }
+        *m_stream >> value;
+        if (m_stream->handle_any_error())
+            ok = false;
+        bytes_read += 2;
         return value;
     };
 
     auto read_u32 = [&]() -> u32 {
         u32 value;
-        if (m_file) {
-            *file_stream >> value;
-            if (file_stream->handle_read_failure())
-                ok = false;
-        } else {
-            *m_stream >> value;
-            if (m_stream->handle_any_error())
-                ok = false;
-        }
+        *m_stream >> value;
+        if (m_stream->handle_any_error())
+            ok = false;
+        bytes_read += 4;
         return value;
     };
 
@@ -148,6 +148,7 @@ bool WavLoaderPlugin::parse_header()
     do {                                                                   \
         if (!ok) {                                                         \
             m_error_string = String::formatted("Parsing failed: {}", msg); \
+            dbgln_if(AWAVLOADER_DEBUG, m_error_string);                    \
             return {};                                                     \
         }                                                                  \
     } while (0)
@@ -157,7 +158,7 @@ bool WavLoaderPlugin::parse_header()
     CHECK_OK("RIFF header");
 
     u32 sz = read_u32();
-    ok = ok && sz < 1024 * 1024 * 1024; // arbitrary
+    ok = ok && sz < maximum_wav_size;
     CHECK_OK("File size");
 
     u32 wave = read_u32();
@@ -165,16 +166,16 @@ bool WavLoaderPlugin::parse_header()
     CHECK_OK("WAVE header");
 
     u32 fmt_id = read_u32();
-    ok = ok && fmt_id == 0x20746D66; // "FMT"
+    ok = ok && fmt_id == 0x20746D66; // "fmt "
     CHECK_OK("FMT header");
 
     u32 fmt_size = read_u32();
-    ok = ok && fmt_size == 16;
+    ok = ok && (fmt_size == 16 || fmt_size == 18 || fmt_size == 40);
     CHECK_OK("FMT size");
 
     u16 audio_format = read_u16();
     CHECK_OK("Audio format"); // incomplete read check
-    ok = ok && (audio_format == WAVE_FORMAT_PCM || audio_format == WAVE_FORMAT_IEEE_FLOAT);
+    ok = ok && (audio_format == WAVE_FORMAT_PCM || audio_format == WAVE_FORMAT_IEEE_FLOAT || audio_format == WAVE_FORMAT_EXTENSIBLE);
     CHECK_OK("Audio format PCM/Float"); // value check
 
     m_num_channels = read_u16();
@@ -187,11 +188,30 @@ bool WavLoaderPlugin::parse_header()
     read_u32();
     CHECK_OK("Data rate");
 
-    read_u16();
+    u16 block_size_bytes = read_u16();
     CHECK_OK("Block size");
 
     u16 bits_per_sample = read_u16();
-    CHECK_OK("Bits per sample"); // incomplete read check
+    CHECK_OK("Bits per sample");
+
+    if (audio_format == WAVE_FORMAT_EXTENSIBLE) {
+        ok = ok && (fmt_size == 40);
+        CHECK_OK("Extensible fmt size"); // value check
+
+        // Discard everything until the GUID.
+        // We've already read 16 bytes from the stream. The GUID starts in another 8 bytes.
+        read_u32();
+        read_u32();
+        CHECK_OK("Discard until GUID");
+
+        // Get the underlying audio format from the first two bytes of GUID
+        u16 guid_subformat = read_u16();
+        ok = ok && (guid_subformat == WAVE_FORMAT_PCM || guid_subformat == WAVE_FORMAT_IEEE_FLOAT);
+        CHECK_OK("GUID SubFormat");
+
+        audio_format = guid_subformat;
+    }
+
     if (audio_format == WAVE_FORMAT_PCM) {
         ok = ok && (bits_per_sample == 8 || bits_per_sample == 16 || bits_per_sample == 24);
         CHECK_OK("Bits per sample (PCM)"); // value check
@@ -215,6 +235,9 @@ bool WavLoaderPlugin::parse_header()
             m_sample_format = PcmSampleFormat::Float64;
         }
     }
+
+    ok = ok && (block_size_bytes == (m_num_channels * (bits_per_sample / 8)));
+    CHECK_OK("Block size sanity check");
 
     dbgln_if(AWAVLOADER_DEBUG, "WAV format {} at {} bit, {} channels, rate {}Hz ",
         sample_format_name(m_sample_format), pcm_bits_per_sample(m_sample_format), m_num_channels, m_sample_rate);
@@ -250,34 +273,15 @@ bool WavLoaderPlugin::parse_header()
     ok = ok && data_sz < maximum_wav_size;
     CHECK_OK("Data was too large");
 
-    int bytes_per_sample = (bits_per_sample / 8) * m_num_channels;
-    m_total_samples = data_sz / bytes_per_sample;
+    m_total_samples = data_sz / block_size_bytes;
 
+    dbgln_if(AWAVLOADER_DEBUG, "WAV data size {}, bytes per sample {}, total samples {}",
+        data_sz,
+        block_size_bytes,
+        m_total_samples);
+
+    m_byte_offset_of_data_samples = bytes_read;
     return true;
-}
-
-ResampleHelper::ResampleHelper(double source, double target)
-    : m_ratio(source / target)
-{
-}
-
-void ResampleHelper::process_sample(double sample_l, double sample_r)
-{
-    m_last_sample_l = sample_l;
-    m_last_sample_r = sample_r;
-    m_current_ratio += 1;
-}
-
-bool ResampleHelper::read_sample(double& next_l, double& next_r)
-{
-    if (m_current_ratio > 0) {
-        m_current_ratio -= m_ratio;
-        next_l = m_last_sample_l;
-        next_r = m_last_sample_r;
-        return true;
-    }
-
-    return false;
 }
 
 }

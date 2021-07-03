@@ -4,10 +4,12 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/QuickSort.h>
 #include <AK/URL.h>
 #include <Applications/Terminal/TerminalSettingsWindowGML.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/ConfigFile.h>
+#include <LibCore/DirIterator.h>
 #include <LibCore/File.h>
 #include <LibDesktop/Launcher.h>
 #include <LibGUI/Action.h>
@@ -16,10 +18,11 @@
 #include <LibGUI/BoxLayout.h>
 #include <LibGUI/Button.h>
 #include <LibGUI/CheckBox.h>
+#include <LibGUI/ComboBox.h>
 #include <LibGUI/Event.h>
 #include <LibGUI/FontPicker.h>
-#include <LibGUI/GroupBox.h>
 #include <LibGUI/Icon.h>
+#include <LibGUI/ItemListModel.h>
 #include <LibGUI/Menu.h>
 #include <LibGUI/Menubar.h>
 #include <LibGUI/OpacitySlider.h>
@@ -28,12 +31,10 @@
 #include <LibGUI/TextBox.h>
 #include <LibGUI/Widget.h>
 #include <LibGUI/Window.h>
-#include <LibGfx/Font.h>
 #include <LibGfx/Palette.h>
 #include <LibVT/TerminalWidget.h>
 #include <assert.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <pty.h>
 #include <pwd.h>
 #include <serenity.h>
@@ -43,7 +44,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
-#include <sys/select.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -109,7 +109,7 @@ static RefPtr<GUI::Window> create_settings_window(VT::TerminalWidget& terminal)
     window->set_window_type(GUI::WindowType::ToolWindow);
     window->set_title("Terminal settings");
     window->set_resizable(false);
-    window->resize(200, 210);
+    window->resize(200, 240);
     window->center_within(*terminal.window());
 
     auto& settings = window->set_main_widget<GUI::Widget>();
@@ -153,6 +153,25 @@ static RefPtr<GUI::Window> create_settings_window(VT::TerminalWidget& terminal)
         terminal.set_max_history_size(value);
     };
 
+    // The settings window takes a reference to this vector, so it needs to outlive this scope.
+    // As long as we ensure that only one settings window may be open at a time (which we do),
+    // this should cause no problems.
+    static Vector<String> color_scheme_names;
+    color_scheme_names.clear();
+    Core::DirIterator iterator("/res/terminal-colors", Core::DirIterator::SkipParentAndBaseDir);
+    while (iterator.has_next()) {
+        auto path = iterator.next_path();
+        path.replace(".ini", "");
+        color_scheme_names.append(path);
+    }
+    quick_sort(color_scheme_names);
+    auto& color_scheme_combo = *settings.find_descendant_of_type_named<GUI::ComboBox>("color_scheme_combo");
+    color_scheme_combo.set_only_allow_values_from_model(true);
+    color_scheme_combo.set_model(*GUI::ItemListModel<String>::create(color_scheme_names));
+    color_scheme_combo.set_selected_index(color_scheme_names.find_first_index(terminal.color_scheme_name()).value());
+    color_scheme_combo.on_change = [&](auto&, const GUI::ModelIndex& index) {
+        terminal.set_color_scheme(index.data().as_string());
+    };
     return window;
 }
 
@@ -194,6 +213,10 @@ static RefPtr<GUI::Window> create_find_window(VT::TerminalWidget& terminal)
         find_backwards.click();
     };
 
+    find_textbox.on_shift_return_pressed = [&]() {
+        find_forwards.click();
+    };
+
     auto& match_case = search.add<GUI::CheckBox>("Case sensitive");
     auto& wrap_around = search.add<GUI::CheckBox>("Wrap around");
 
@@ -229,7 +252,7 @@ static RefPtr<GUI::Window> create_find_window(VT::TerminalWidget& terminal)
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio tty rpath accept cpath wpath recvfd sendfd proc exec unix fattr sigaction", nullptr) < 0) {
+    if (pledge("stdio tty rpath cpath wpath recvfd sendfd proc exec unix sigaction", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -246,7 +269,7 @@ int main(int argc, char** argv)
 
     auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio tty rpath accept cpath wpath recvfd sendfd proc exec unix", nullptr) < 0) {
+    if (pledge("stdio tty rpath cpath wpath recvfd sendfd proc exec unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -297,7 +320,6 @@ int main(int argc, char** argv)
         window->resize(size);
     };
     terminal.apply_size_increments_to_window(*window);
-    window->show();
     window->set_icon(app_icon.bitmap_for_size(16));
 
     auto bell = config->read_entry("Window", "Bell", "Visible");
@@ -328,7 +350,7 @@ int main(int argc, char** argv)
         });
 
     terminal.context_menu().add_separator();
-    auto pick_font_action = GUI::Action::create("Terminal &Font...", Gfx::Bitmap::load_from_file("/res/icons/16x16/app-font-editor.png"),
+    auto pick_font_action = GUI::Action::create("&Terminal Font...", Gfx::Bitmap::load_from_file("/res/icons/16x16/app-font-editor.png"),
         [&](auto&) {
             auto picker = GUI::FontPicker::construct(window, &terminal.font(), true);
             if (picker->exec() == GUI::Dialog::ExecOK) {
@@ -393,6 +415,13 @@ int main(int argc, char** argv)
 
     window->set_menubar(menubar);
 
+    window->on_close = [&]() {
+        if (find_window)
+            find_window->close();
+        if (settings_window)
+            settings_window->close();
+    };
+
     if (unveil("/res", "r") < 0) {
         perror("unveil");
         return 1;
@@ -430,6 +459,7 @@ int main(int argc, char** argv)
 
     unveil(nullptr, nullptr);
 
+    window->show();
     config->sync();
     int result = app->exec();
     dbgln("Exiting terminal, updating utmp");

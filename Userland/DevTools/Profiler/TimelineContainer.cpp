@@ -12,6 +12,7 @@ namespace Profiler {
 
 TimelineContainer::TimelineContainer(GUI::Widget& header_container, TimelineView& timeline_view)
 {
+    set_should_hide_unnecessary_scrollbars(true);
     m_header_container = header_container;
     m_timeline_view = timeline_view;
     add_child(header_container);
@@ -20,6 +21,11 @@ TimelineContainer::TimelineContainer(GUI::Widget& header_container, TimelineView
     timeline_view.move_to_back();
     update_widget_sizes();
     update_widget_positions();
+
+    m_timeline_view->on_scale_change = [this] {
+        update_widget_positions();
+        update_widget_sizes();
+    };
 }
 
 TimelineContainer::~TimelineContainer()
@@ -51,6 +57,7 @@ void TimelineContainer::update_widget_sizes()
         m_header_container->do_layout();
         auto preferred_size = m_header_container->layout()->preferred_size();
         m_header_container->resize(preferred_size);
+        set_size_occupied_by_fixed_elements({ preferred_size.width(), 0 });
     }
 }
 

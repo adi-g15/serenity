@@ -10,23 +10,22 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 
 static void print_usage_and_exit()
 {
-    printf("usage: killall [-signal] process_name\n");
+    warnln("usage: killall [-signal] process_name");
     exit(1);
 }
 
 static int kill_all(const String& process_name, const unsigned signum)
 {
-    auto processes = Core::ProcessStatisticsReader().get_all();
+    auto processes = Core::ProcessStatisticsReader::get_all();
     if (!processes.has_value())
         return 1;
 
-    for (auto& it : processes.value()) {
-        if (it.value.name == process_name) {
-            int ret = kill(it.value.pid, signum);
+    for (auto& process : processes.value()) {
+        if (process.name == process_name) {
+            int ret = kill(process.pid, signum);
             if (ret < 0)
                 perror("kill");
         }
@@ -61,7 +60,7 @@ int main(int argc, char** argv)
             number = String(&argv[1][1]).to_uint();
 
         if (!number.has_value()) {
-            printf("'%s' is not a valid signal name or number\n", &argv[1][1]);
+            warnln("'{}' is not a valid signal name or number", &argv[1][1]);
             return 2;
         }
         signum = number.value();

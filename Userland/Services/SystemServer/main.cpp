@@ -50,17 +50,26 @@ static void sigchld_handler(int)
 static void parse_boot_mode()
 {
     auto f = Core::File::construct("/proc/cmdline");
-    if (!f->open(Core::IODevice::ReadOnly)) {
+    if (!f->open(Core::OpenMode::ReadOnly)) {
         dbgln("Failed to read command line: {}", f->error_string());
         return;
     }
     const String cmdline = String::copy(f->read_all(), Chomp);
     dbgln("Read command line: {}", cmdline);
 
-    for (auto& part : cmdline.split_view(' ')) {
-        auto pair = part.split_view('=', 2);
-        if (pair.size() == 2 && pair[0] == "boot_mode")
-            g_boot_mode = pair[1];
+    // FIXME: Support more than one framebuffer detection
+    struct stat file_state;
+    int rc = lstat("/dev/fb0", &file_state);
+    if (rc < 0) {
+        for (auto& part : cmdline.split_view(' ')) {
+            auto pair = part.split_view('=', 2);
+            if (pair.size() == 2 && pair[0] == "boot_mode")
+                g_boot_mode = pair[1];
+        }
+        // We could boot into self-test which is not graphical too.
+        if (g_boot_mode == "self-test")
+            return;
+        g_boot_mode = "text";
     }
     dbgln("Booting in {} mode", g_boot_mode);
 }
@@ -78,6 +87,11 @@ static void prepare_devfs()
     // FIXME: Find a better way to all of this stuff, without hardcoding all of this!
 
     int rc = mount(-1, "/dev", "dev", 0);
+    if (rc != 0) {
+        VERIFY_NOT_REACHED();
+    }
+
+    rc = mount(-1, "/sys", "sys", 0);
     if (rc != 0) {
         VERIFY_NOT_REACHED();
     }
@@ -154,18 +168,6 @@ static void mount_all_filesystems()
     }
 }
 
-static void create_tmp_rpc_directory()
-{
-    dbgln("Creating /tmp/rpc directory");
-    auto old_umask = umask(0);
-    auto rc = mkdir("/tmp/rpc", 01777);
-    if (rc < 0) {
-        perror("mkdir(/tmp/rpc)");
-        VERIFY_NOT_REACHED();
-    }
-    umask(old_umask);
-}
-
 static void create_tmp_coredump_directory()
 {
     dbgln("Creating /tmp/coredump directory");
@@ -189,7 +191,6 @@ int main(int, char**)
     }
 
     mount_all_filesystems();
-    create_tmp_rpc_directory();
     create_tmp_coredump_directory();
     parse_boot_mode();
 

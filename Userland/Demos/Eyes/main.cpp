@@ -30,14 +30,14 @@ int main(int argc, char* argv[])
     args_parser.add_option(grid_columns, "Number of columns in grid (incompatible with --number)", "grid-cols", 'c', "number");
     args_parser.parse(argc, argv);
 
-    if (pledge("stdio recvfd sendfd accept rpath unix cpath wpath fattr thread", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd rpath unix cpath wpath thread", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio recvfd sendfd accept rpath cpath wpath thread", nullptr) < 0) {
+    if (pledge("stdio recvfd sendfd rpath cpath wpath thread", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -83,7 +83,7 @@ int main(int argc, char* argv[])
     auto& file_menu = menubar->add_menu("&File");
     file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("Eyes Demo", app_icon, window));
 
     window->set_menubar(move(menubar));

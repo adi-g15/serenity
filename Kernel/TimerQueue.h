@@ -7,7 +7,7 @@
 #pragma once
 
 #include <AK/Function.h>
-#include <AK/InlineLinkedList.h>
+#include <AK/IntrusiveList.h>
 #include <AK/NonnullRefPtr.h>
 #include <AK/OwnPtr.h>
 #include <AK/RefCounted.h>
@@ -18,18 +18,18 @@ namespace Kernel {
 
 TYPEDEF_DISTINCT_ORDERED_ID(u64, TimerId);
 
-class Timer : public RefCounted<Timer>
-    , public InlineLinkedListNode<Timer> {
+class Timer : public RefCounted<Timer> {
     friend class TimerQueue;
-    friend class InlineLinkedListNode<Timer>;
 
 public:
-    Timer(clockid_t clock_id, Time expires, Function<void()>&& callback)
-        : m_clock_id(clock_id)
-        , m_expires(expires)
-        , m_callback(move(callback))
+    void setup(clockid_t clock_id, Time expires, Function<void()>&& callback)
     {
+        VERIFY(!is_queued());
+        m_clock_id = clock_id;
+        m_expires = expires;
+        m_callback = move(callback);
     }
+
     ~Timer()
     {
         VERIFY(!is_queued());
@@ -43,8 +43,6 @@ private:
     Time m_expires;
     Time m_remaining {};
     Function<void()> m_callback;
-    Timer* m_next { nullptr };
-    Timer* m_prev { nullptr };
     Atomic<bool, AK::MemoryOrder::memory_order_relaxed> m_queued { false };
 
     bool operator<(const Timer& rhs) const
@@ -62,6 +60,10 @@ private:
     bool is_queued() const { return m_queued; }
     void set_queued(bool queued) { m_queued = queued; }
     Time now(bool) const;
+
+public:
+    IntrusiveListNode<Timer> m_list_node;
+    using List = IntrusiveList<Timer, RawPtr<Timer>, &Timer::m_list_node>;
 };
 
 class TimerQueue {
@@ -72,7 +74,7 @@ public:
     static TimerQueue& the();
 
     TimerId add_timer(NonnullRefPtr<Timer>&&);
-    RefPtr<Timer> add_timer_without_id(clockid_t, const Time&, Function<void()>&&);
+    bool add_timer_without_id(NonnullRefPtr<Timer>, clockid_t, const Time&, Function<void()>&&);
     TimerId add_timer(clockid_t, const Time& timeout, Function<void()>&& callback);
     bool cancel_timer(TimerId id);
     bool cancel_timer(Timer&);
@@ -84,7 +86,7 @@ public:
 
 private:
     struct Queue {
-        InlineLinkedList<Timer> list;
+        Timer::List list;
         Time next_timer_due {};
     };
     void remove_timer_locked(Queue&, Timer&);
@@ -110,7 +112,7 @@ private:
     u64 m_ticks_per_second { 0 };
     Queue m_timer_queue_monotonic;
     Queue m_timer_queue_realtime;
-    InlineLinkedList<Timer> m_timers_executing;
+    Timer::List m_timers_executing;
 };
 
 }

@@ -16,7 +16,7 @@
 #include <AK/Vector.h>
 #include <LibC/bits/pthread_integration.h>
 #include <LibC/link.h>
-#include <LibC/mman.h>
+#include <LibC/sys/mman.h>
 #include <LibC/unistd.h>
 #include <LibDl/dlfcn.h>
 #include <LibDl/dlfcn_integration.h>
@@ -54,6 +54,7 @@ static bool s_do_breakpoint_trap_before_entry { false };
 static Result<void, DlErrorMessage> __dlclose(void* handle);
 static Result<void*, DlErrorMessage> __dlopen(const char* filename, int flags);
 static Result<void*, DlErrorMessage> __dlsym(void* handle, const char* symbol_name);
+static Result<void, DlErrorMessage> __dladdr(void* addr, Dl_info* info);
 
 Optional<DynamicObject::SymbolLookupResult> DynamicLinker::lookup_global_symbol(const StringView& name)
 {
@@ -76,7 +77,7 @@ Optional<DynamicObject::SymbolLookupResult> DynamicLinker::lookup_global_symbol(
 
 static String get_library_name(String path)
 {
-    return LexicalPath(move(path)).basename();
+    return LexicalPath::basename(move(path));
 }
 
 static Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> map_library(const String& filename, int fd)
@@ -98,7 +99,7 @@ static Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> map_library(const St
 
 static Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> map_library(const String& name)
 {
-    if (name.contains("/")) {
+    if (name.contains("/"sv)) {
         int fd = open(name.characters(), O_RDONLY);
         if (fd < 0)
             return DlErrorMessage { String::formatted("Could not open shared library: {}", name) };
@@ -125,9 +126,8 @@ static Vector<String> get_dependencies(const String& name)
 
     lib->for_each_needed_library([&dependencies, &name](auto needed_name) {
         if (name == needed_name)
-            return IterationDecision::Continue;
+            return;
         dependencies.append(needed_name);
-        return IterationDecision::Continue;
     });
     return dependencies;
 }
@@ -238,6 +238,10 @@ static void initialize_libc(DynamicObject& libc)
     VERIFY(res.has_value());
     *((DlSymFunction*)res.value().address.as_ptr()) = __dlsym;
 
+    res = libc.lookup_symbol("__dladdr"sv);
+    VERIFY(res.has_value());
+    *((DlAddrFunction*)res.value().address.as_ptr()) = __dladdr;
+
     res = libc.lookup_symbol("__libc_init"sv);
     VERIFY(res.has_value());
     typedef void libc_init_func();
@@ -296,13 +300,13 @@ static Result<NonnullRefPtr<DynamicLoader>, DlErrorMessage> load_main_library(co
         VERIFY(!result.is_error());
         auto& object = result.value();
 
-        if (loader.filename() == "libsystem.so") {
+        if (loader.filename() == "libsystem.so"sv) {
             if (syscall(SC_msyscall, object->base_address().as_ptr())) {
                 VERIFY_NOT_REACHED();
             }
         }
 
-        if (loader.filename() == "libc.so") {
+        if (loader.filename() == "libc.so"sv) {
             initialize_libc(*object);
         }
     }
@@ -431,10 +435,52 @@ static Result<void*, DlErrorMessage> __dlsym(void* handle, const char* symbol_na
     return symbol.value().address.as_ptr();
 }
 
+static Result<void, DlErrorMessage> __dladdr(void* addr, Dl_info* info)
+{
+    VirtualAddress user_addr { addr };
+    __pthread_mutex_lock(&s_loader_lock);
+    ScopeGuard unlock_guard = [] { __pthread_mutex_unlock(&s_loader_lock); };
+
+    RefPtr<DynamicObject> best_matching_library;
+    VirtualAddress best_library_offset;
+    for (auto& lib : s_global_objects) {
+        if (user_addr < lib.value->base_address())
+            continue;
+        auto offset = user_addr - lib.value->base_address();
+        if (!best_matching_library || offset < best_library_offset) {
+            best_matching_library = lib.value;
+            best_library_offset = offset;
+        }
+    }
+
+    if (!best_matching_library) {
+        return DlErrorMessage { "No library found which contains the specified address" };
+    }
+
+    Optional<DynamicObject::Symbol> best_matching_symbol;
+    best_matching_library->for_each_symbol([&](auto const& symbol) {
+        if (user_addr < symbol.address() || user_addr > symbol.address().offset(symbol.size()))
+            return;
+        best_matching_symbol = symbol;
+    });
+
+    info->dli_fbase = best_matching_library->base_address().as_ptr();
+    // This works because we don't support unloading objects.
+    info->dli_fname = best_matching_library->filename().characters();
+    if (best_matching_symbol.has_value()) {
+        info->dli_saddr = best_matching_symbol.value().address().as_ptr();
+        info->dli_sname = best_matching_symbol.value().raw_name();
+    } else {
+        info->dli_saddr = nullptr;
+        info->dli_sname = nullptr;
+    }
+    return {};
+}
+
 static void read_environment_variables()
 {
     for (char** env = s_envp; *env; ++env) {
-        if (StringView { *env } == "_LOADER_BREAKPOINT=1") {
+        if (StringView { *env } == "_LOADER_BREAKPOINT=1"sv) {
             s_do_breakpoint_trap_before_entry = true;
         }
     }

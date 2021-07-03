@@ -25,7 +25,7 @@
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio rpath accept cpath wpath recvfd sendfd unix fattr proc exec", nullptr) < 0) {
+    if (pledge("stdio rpath cpath wpath recvfd sendfd unix proc exec", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -33,7 +33,7 @@ int main(int argc, char** argv)
     // If there is no command line parameter go for GUI.
     auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio rpath accept recvfd sendfd proc exec", nullptr) < 0) {
+    if (pledge("stdio rpath recvfd sendfd proc exec", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -61,7 +61,7 @@ int main(int argc, char** argv)
     auto app_icon = GUI::Icon::default_icon("app-keyboard-settings");
 
     auto proc_keymap = Core::File::construct("/proc/keymap");
-    if (!proc_keymap->open(Core::IODevice::OpenMode::ReadOnly))
+    if (!proc_keymap->open(Core::OpenMode::ReadOnly))
         VERIFY_NOT_REACHED();
 
     auto json = JsonValue::from_string(proc_keymap->read_all());
@@ -168,10 +168,10 @@ int main(int argc, char** argv)
 
     auto menubar = GUI::Menubar::construct();
 
-    auto& file_menu = menubar->add_menu("File");
+    auto& file_menu = menubar->add_menu("&File");
     file_menu.add_action(quit_action);
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("Keyboard Settings", app_icon, window));
 
     window->set_menubar(move(menubar));

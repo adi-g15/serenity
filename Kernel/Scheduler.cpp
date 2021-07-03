@@ -4,16 +4,18 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/QuickSort.h>
 #include <AK/ScopeGuard.h>
 #include <AK/TemporaryChange.h>
 #include <AK/Time.h>
+#include <Kernel/Arch/x86/InterruptDisabler.h>
+#include <Kernel/Arch/x86/TrapFrame.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Panic.h>
 #include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
 #include <Kernel/RTC.h>
 #include <Kernel/Scheduler.h>
+#include <Kernel/Sections.h>
 #include <Kernel/Time/TimeManagement.h>
 #include <Kernel/TimerQueue.h>
 
@@ -176,8 +178,6 @@ bool Scheduler::pick_next()
 {
     VERIFY_INTERRUPTS_DISABLED();
 
-    auto current_thread = Thread::current();
-
     // Set the m_in_scheduler flag before acquiring the spinlock. This
     // prevents a recursive call into Scheduler::invoke_async upon
     // leaving the scheduler lock.
@@ -195,19 +195,10 @@ bool Scheduler::pick_next()
 
     ScopedSpinLock lock(g_scheduler_lock);
 
-    if (current_thread->should_die() && current_thread->state() == Thread::Running) {
-        // Rather than immediately killing threads, yanking the kernel stack
-        // away from them (which can lead to e.g. reference leaks), we always
-        // allow Thread::wait_on to return. This allows the kernel stack to
-        // clean up and eventually we'll get here shortly before transitioning
-        // back to user mode (from Processor::exit_trap). At this point we
-        // no longer want to schedule this thread. We can't wait until
-        // Scheduler::enter_current because we don't want to allow it to
-        // transition back to user mode.
-
-        if constexpr (SCHEDULER_DEBUG)
-            dbgln("Scheduler[{}]: Thread {} is dying", Processor::id(), *current_thread);
-
+    auto current_thread = Thread::current();
+    if (current_thread->should_die() && current_thread->may_die_immediately()) {
+        // Ordinarily the thread would die on syscall exit, however if the thread
+        // doesn't perform any syscalls we still need to mark it for termination here.
         current_thread->set_state(Thread::Dying);
     }
 
@@ -237,10 +228,14 @@ bool Scheduler::pick_next()
 
     auto& thread_to_schedule = pull_next_runnable_thread();
     if constexpr (SCHEDULER_DEBUG) {
+#if ARCH(I386)
         dbgln("Scheduler[{}]: Switch to {} @ {:04x}:{:08x}",
             Processor::id(),
             thread_to_schedule,
-            thread_to_schedule.tss().cs, thread_to_schedule.tss().eip);
+            thread_to_schedule.regs().cs, thread_to_schedule.regs().eip);
+#else
+        PANIC("Scheduler::pick_next() not implemented");
+#endif
     }
 
     // We need to leave our first critical section before switching context,
@@ -342,6 +337,10 @@ bool Scheduler::donate_to(RefPtr<Thread>& beneficiary, const char* reason)
 
 bool Scheduler::context_switch(Thread* thread)
 {
+    if (s_mm_lock.own_lock()) {
+        PANIC("In context switch while holding s_mm_lock");
+    }
+
     thread->did_schedule();
 
     auto from_thread = Thread::current();
@@ -355,7 +354,13 @@ bool Scheduler::context_switch(Thread* thread)
             from_thread->set_state(Thread::Runnable);
 
 #ifdef LOG_EVERY_CONTEXT_SWITCH
-        dbgln("Scheduler[{}]: {} -> {} [prio={}] {:04x}:{:08x}", Processor::id(), from_thread->tid().value(), thread->tid().value(), thread->priority(), thread->tss().cs, thread->tss().eip);
+#    if ARCH(I386)
+        dbgln("Scheduler[{}]: {} -> {} [prio={}] {:04x}:{:08x}", Processor::id(), from_thread->tid().value(),
+            thread->tid().value(), thread->priority(), thread->regs().cs, thread->regs().eip);
+#    else
+        dbgln("Scheduler[{}]: {} -> {} [prio={}] {:04x}:{:16x}", Processor::id(), from_thread->tid().value(),
+            thread->tid().value(), thread->priority(), thread->regs().cs, thread->regs().rip);
+#    endif
 #endif
     }
 
@@ -366,6 +371,8 @@ bool Scheduler::context_switch(Thread* thread)
     }
     thread->set_state(Thread::Running);
 
+    PerformanceManager::add_context_switch_perf_event(*from_thread, *thread);
+
     proc.switch_context(from_thread, thread);
 
     // NOTE: from_thread at this point reflects the thread we were
@@ -373,14 +380,19 @@ bool Scheduler::context_switch(Thread* thread)
     enter_current(*from_thread, false);
     VERIFY(thread == Thread::current());
 
-#if ARCH(I386)
     if (thread->process().is_user_process()) {
-        auto iopl = get_iopl_from_eflags(Thread::current()->get_register_dump_from_stack().eflags);
+        FlatPtr flags;
+        auto& regs = Thread::current()->get_register_dump_from_stack();
+#if ARCH(I386)
+        flags = regs.eflags;
+#else
+        flags = regs.rflags;
+#endif
+        auto iopl = get_iopl_from_eflags(flags);
         if (iopl != 0) {
             PANIC("Switched to thread {} with non-zero IOPL={}", Thread::current()->tid().value(), iopl);
         }
     }
-#endif
 
     return true;
 }
@@ -448,7 +460,7 @@ Process* Scheduler::colonel()
 
 UNMAP_AFTER_INIT void Scheduler::initialize()
 {
-    VERIFY(&Processor::current() != nullptr); // sanity check
+    VERIFY(Processor::is_initialized()); // sanity check
 
     RefPtr<Thread> idle_thread;
     g_finalizer_wait_queue = new WaitQueue;
@@ -500,8 +512,6 @@ void Scheduler::timer_tick(const RegisterState& regs)
     if (!Processor::is_bootstrap_processor())
         return; // TODO: This prevents scheduling on other CPUs!
 #endif
-
-    PerformanceManager::add_cpu_sample_event(*current_thread, regs);
 
     if (current_thread->tick())
         return;
@@ -571,26 +581,38 @@ void Scheduler::dump_scheduler_state()
     dump_thread_list();
 }
 
+bool Scheduler::is_initialized()
+{
+    // The scheduler is initialized iff the idle thread exists
+    return Processor::idle_thread() != nullptr;
+}
+
 void dump_thread_list()
 {
     dbgln("Scheduler thread list for processor {}:", Processor::id());
 
     auto get_cs = [](Thread& thread) -> u16 {
         if (!thread.current_trap())
-            return thread.tss().cs;
+            return thread.regs().cs;
         return thread.get_register_dump_from_stack().cs;
     };
 
     auto get_eip = [](Thread& thread) -> u32 {
+#if ARCH(I386)
         if (!thread.current_trap())
-            return thread.tss().eip;
+            return thread.regs().eip;
         return thread.get_register_dump_from_stack().eip;
+#else
+        if (!thread.current_trap())
+            return thread.regs().rip;
+        return thread.get_register_dump_from_stack().rip;
+#endif
     };
 
-    Thread::for_each([&](Thread& thread) -> IterationDecision {
+    Thread::for_each([&](Thread& thread) {
         switch (thread.state()) {
         case Thread::Dying:
-            dbgln("  {:14} {:30} @ {:04x}:{:08x} Finalizable: {}, (nsched: {})",
+            dmesgln("  {:14} {:30} @ {:04x}:{:08x} Finalizable: {}, (nsched: {})",
                 thread.state_string(),
                 thread,
                 get_cs(thread),
@@ -599,7 +621,7 @@ void dump_thread_list()
                 thread.times_scheduled());
             break;
         default:
-            dbgln("  {:14} Pr:{:2} {:30} @ {:04x}:{:08x} (nsched: {})",
+            dmesgln("  {:14} Pr:{:2} {:30} @ {:04x}:{:08x} (nsched: {})",
                 thread.state_string(),
                 thread.priority(),
                 thread,
@@ -608,8 +630,6 @@ void dump_thread_list()
                 thread.times_scheduled());
             break;
         }
-
-        return IterationDecision::Continue;
     });
 }
 

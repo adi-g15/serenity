@@ -17,6 +17,7 @@
 #include <LibJS/Runtime/NativeFunction.h>
 #include <LibJS/Runtime/NativeProperty.h>
 #include <LibJS/Runtime/Object.h>
+#include <LibJS/Runtime/ProxyObject.h>
 #include <LibJS/Runtime/Shape.h>
 #include <LibJS/Runtime/StringObject.h>
 #include <LibJS/Runtime/TemporaryClearException.h>
@@ -56,17 +57,29 @@ PropertyDescriptor PropertyDescriptor::from_dictionary(VM& vm, const Object& obj
         return {};
     if (getter.is_function())
         descriptor.getter = &getter.as_function();
+    if (!getter.is_empty())
+        descriptor.attributes.set_has_getter();
+
     auto setter = object.get(vm.names.set);
     if (vm.exception())
         return {};
     if (setter.is_function())
         descriptor.setter = &setter.as_function();
+    if (!setter.is_empty())
+        descriptor.attributes.set_has_setter();
+
     return descriptor;
 }
 
-Object* Object::create_empty(GlobalObject& global_object)
+// 10.1.12 OrdinaryObjectCreate ( proto [ , additionalInternalSlotsList ] ), https://tc39.es/ecma262/#sec-ordinaryobjectcreate
+Object* Object::create(GlobalObject& global_object, Object* prototype)
 {
-    return global_object.heap().allocate<Object>(global_object, *global_object.new_object_shape());
+    if (!prototype)
+        return global_object.heap().allocate<Object>(global_object, *global_object.empty_object_shape());
+    else if (prototype == global_object.object_prototype())
+        return global_object.heap().allocate<Object>(global_object, *global_object.new_object_shape());
+    else
+        return global_object.heap().allocate<Object>(global_object, *prototype);
 }
 
 Object::Object(GlobalObjectTag)
@@ -110,17 +123,32 @@ const Object* Object::prototype() const
     return shape().prototype();
 }
 
+// 10.1.2.1 OrdinarySetPrototypeOf ( O, V ), https://tc39.es/ecma262/#sec-ordinarysetprototypeof
 bool Object::set_prototype(Object* new_prototype)
 {
     if (prototype() == new_prototype)
         return true;
     if (!m_is_extensible)
         return false;
-    if (shape().is_unique()) {
-        shape().set_prototype_without_transition(new_prototype);
-        return true;
+    auto* prototype = new_prototype;
+    while (prototype) {
+        if (prototype == this)
+            return false;
+        // NOTE: This is a best-effort implementation of the following step:
+        // "If p.[[GetPrototypeOf]] is not the ordinary object internal method defined in 10.1.1,
+        // set done to true."
+        // We don't have a good way of detecting whether certain virtual Object methods have been
+        // overridden by a given object, but as ProxyObject is the only one doing that, this check
+        // does the trick.
+        if (is<ProxyObject>(prototype))
+            break;
+        prototype = prototype->prototype();
     }
-    m_shape = m_shape->create_prototype_transition(new_prototype);
+    auto& shape = this->shape();
+    if (shape.is_unique())
+        shape.set_prototype_without_transition(new_prototype);
+    else
+        m_shape = shape.create_prototype_transition(new_prototype);
     return true;
 }
 
@@ -141,16 +169,16 @@ bool Object::prevent_extensions()
     return true;
 }
 
-// 7.3.15 SetIntegrityLevel, https://tc39.es/ecma262/#sec-setintegritylevel
+// 7.3.15 SetIntegrityLevel ( O, level ), https://tc39.es/ecma262/#sec-setintegritylevel
 bool Object::set_integrity_level(IntegrityLevel level)
 {
     // FIXME: This feels clunky and should get nicer abstractions.
     auto update_property = [this](auto& property_name, auto new_attributes) {
         if (property_name.is_number()) {
-            auto value_and_attributes = m_indexed_properties.get(nullptr, property_name.as_number(), false).value();
+            auto value_and_attributes = m_indexed_properties.get(nullptr, property_name.as_number(), AllowSideEffects::No).value();
             auto value = value_and_attributes.value;
             auto attributes = value_and_attributes.attributes.bits() & new_attributes;
-            m_indexed_properties.put(nullptr, property_name.as_number(), value, attributes, false);
+            m_indexed_properties.put(nullptr, property_name.as_number(), value, attributes, AllowSideEffects::No);
         } else {
             auto metadata = shape().lookup(property_name.to_string_or_symbol()).value();
             auto attributes = metadata.attributes.bits() & new_attributes;
@@ -174,11 +202,6 @@ bool Object::set_integrity_level(IntegrityLevel level)
     case IntegrityLevel::Sealed:
         for (auto& key : keys) {
             auto property_name = PropertyName::from_value(global_object(), key);
-            if (property_name.is_string()) {
-                i32 property_index = property_name.as_string().to_int().value_or(-1);
-                if (property_index >= 0)
-                    property_name = property_index;
-            }
             update_property(property_name, ~Attribute::Configurable);
             if (vm.exception())
                 return {};
@@ -187,13 +210,9 @@ bool Object::set_integrity_level(IntegrityLevel level)
     case IntegrityLevel::Frozen:
         for (auto& key : keys) {
             auto property_name = PropertyName::from_value(global_object(), key);
-            if (property_name.is_string()) {
-                i32 property_index = property_name.as_string().to_int().value_or(-1);
-                if (property_index >= 0)
-                    property_name = property_index;
-            }
             auto property_descriptor = get_own_property_descriptor(property_name);
-            VERIFY(property_descriptor.has_value());
+            if (!property_descriptor.has_value())
+                continue;
             u8 attributes = property_descriptor->is_accessor_descriptor()
                 ? ~Attribute::Configurable
                 : ~Attribute::Configurable & ~Attribute::Writable;
@@ -208,7 +227,7 @@ bool Object::set_integrity_level(IntegrityLevel level)
     return true;
 }
 
-// 7.3.16 TestIntegrityLevel, https://tc39.es/ecma262/#sec-testintegritylevel
+// 7.3.16 TestIntegrityLevel ( O, level ), https://tc39.es/ecma262/#sec-testintegritylevel
 bool Object::test_integrity_level(IntegrityLevel level)
 {
     auto& vm = this->vm();
@@ -223,7 +242,8 @@ bool Object::test_integrity_level(IntegrityLevel level)
     for (auto& key : keys) {
         auto property_name = PropertyName::from_value(global_object(), key);
         auto property_descriptor = get_own_property_descriptor(property_name);
-        VERIFY(property_descriptor.has_value());
+        if (!property_descriptor.has_value())
+            continue;
         if (property_descriptor->attributes.is_configurable())
             return false;
         if (level == IntegrityLevel::Frozen && property_descriptor->is_data_descriptor()) {
@@ -234,15 +254,14 @@ bool Object::test_integrity_level(IntegrityLevel level)
     return true;
 }
 
-Value Object::get_own_property(const PropertyName& property_name, Value receiver, bool without_side_effects) const
+Value Object::get_own_property(const PropertyName& property_name, Value receiver, AllowSideEffects allow_side_effects) const
 {
     VERIFY(property_name.is_valid());
-    VERIFY(!receiver.is_empty());
 
     Value value_here;
 
     if (property_name.is_number()) {
-        auto existing_property = m_indexed_properties.get(nullptr, property_name.as_number(), false);
+        auto existing_property = m_indexed_properties.get(nullptr, property_name.as_number(), AllowSideEffects::No);
         if (!existing_property.has_value())
             return {};
         value_here = existing_property.value().value.value_or(js_undefined());
@@ -254,7 +273,8 @@ Value Object::get_own_property(const PropertyName& property_name, Value receiver
     }
 
     VERIFY(!value_here.is_empty());
-    if (!without_side_effects) {
+    if (allow_side_effects == AllowSideEffects::Yes) {
+        VERIFY(!receiver.is_empty());
         if (value_here.is_accessor())
             return value_here.as_accessor().call_getter(receiver);
         if (value_here.is_native_property())
@@ -285,38 +305,45 @@ MarkedValueList Object::get_own_properties(PropertyKind kind, bool only_enumerab
             if (vm().exception())
                 return MarkedValueList { heap() };
         }
-
-        return properties;
     }
 
-    for (auto& entry : m_indexed_properties) {
-        auto value_and_attributes = entry.value_and_attributes(const_cast<Object*>(this));
-        if (only_enumerable_properties && !value_and_attributes.attributes.is_enumerable())
-            continue;
+    if (return_type != GetOwnPropertyReturnType::SymbolOnly) {
+        for (auto& entry : m_indexed_properties) {
+            auto value_and_attributes = entry.value_and_attributes(const_cast<Object*>(this));
+            if (only_enumerable_properties && !value_and_attributes.attributes.is_enumerable())
+                continue;
 
-        if (kind == PropertyKind::Key) {
-            properties.append(js_string(vm(), String::number(entry.index())));
-        } else if (kind == PropertyKind::Value) {
-            properties.append(value_and_attributes.value);
-        } else {
-            auto* entry_array = Array::create(global_object());
-            entry_array->define_property(0, js_string(vm(), String::number(entry.index())));
-            entry_array->define_property(1, value_and_attributes.value);
-            properties.append(entry_array);
+            if (kind == PropertyKind::Key) {
+                properties.append(js_string(vm(), String::number(entry.index())));
+            } else if (kind == PropertyKind::Value) {
+                properties.append(value_and_attributes.value);
+            } else {
+                auto* entry_array = Array::create(global_object());
+                entry_array->define_property(0, js_string(vm(), String::number(entry.index())));
+                entry_array->define_property(1, value_and_attributes.value);
+                properties.append(entry_array);
+            }
+            if (vm().exception())
+                return MarkedValueList { heap() };
         }
-        if (vm().exception())
-            return MarkedValueList { heap() };
     }
 
     auto add_property_to_results = [&](auto& property) {
         if (kind == PropertyKind::Key) {
             properties.append(property.key.to_value(vm()));
         } else if (kind == PropertyKind::Value) {
-            properties.append(get(property.key));
+            Value v = get(property.key);
+            // Value may just have been deleted
+            if (!v.is_empty())
+                properties.append(v);
         } else {
+            Value val = get(property.key);
+            if (val.is_empty())
+                return;
+
             auto* entry_array = Array::create(global_object());
             entry_array->define_property(0, property.key.to_value(vm()));
-            entry_array->define_property(1, get(property.key));
+            entry_array->define_property(1, val);
             properties.append(entry_array);
         }
     };
@@ -349,7 +376,7 @@ MarkedValueList Object::get_own_properties(PropertyKind kind, bool only_enumerab
     return properties;
 }
 
-// 7.3.23 EnumerableOwnPropertyNames, https://tc39.es/ecma262/#sec-enumerableownpropertynames
+// 7.3.23 EnumerableOwnPropertyNames ( O, kind ), https://tc39.es/ecma262/#sec-enumerableownpropertynames
 MarkedValueList Object::get_enumerable_own_property_names(PropertyKind kind) const
 {
     return get_own_properties(kind, true, Object::GetOwnPropertyReturnType::StringOnly);
@@ -363,17 +390,12 @@ Optional<PropertyDescriptor> Object::get_own_property_descriptor(const PropertyN
     PropertyAttributes attributes;
 
     if (property_name.is_number()) {
-        auto existing_value = m_indexed_properties.get(nullptr, property_name.as_number(), false);
+        auto existing_value = m_indexed_properties.get(nullptr, property_name.as_number(), AllowSideEffects::No);
         if (!existing_value.has_value())
             return {};
         value = existing_value.value().value;
         attributes = existing_value.value().attributes;
     } else {
-        if (property_name.is_string()) {
-            i32 property_index = property_name.as_string().to_int().value_or(-1);
-            if (property_index >= 0)
-                return get_own_property_descriptor(property_index);
-        }
         auto metadata = shape().lookup(property_name.to_string_or_symbol());
         if (!metadata.has_value())
             return {};
@@ -398,42 +420,33 @@ Optional<PropertyDescriptor> Object::get_own_property_descriptor(const PropertyN
     return descriptor;
 }
 
+// Equivalent to:
+// 6.2.5.4 FromPropertyDescriptor ( Desc ), https://tc39.es/ecma262/#sec-frompropertydescriptor
 Value Object::get_own_property_descriptor_object(const PropertyName& property_name) const
 {
     VERIFY(property_name.is_valid());
 
     auto& vm = this->vm();
+    auto& global_object = this->global_object();
+
     auto descriptor_opt = get_own_property_descriptor(property_name);
     if (!descriptor_opt.has_value())
         return js_undefined();
     auto descriptor = descriptor_opt.value();
 
-    auto* descriptor_object = Object::create_empty(global_object());
-    descriptor_object->define_property(vm.names.enumerable, Value(descriptor.attributes.is_enumerable()));
-    if (vm.exception())
-        return {};
-    descriptor_object->define_property(vm.names.configurable, Value(descriptor.attributes.is_configurable()));
-    if (vm.exception())
-        return {};
+    auto* descriptor_object = Object::create(global_object, global_object.object_prototype());
     if (descriptor.is_data_descriptor()) {
         descriptor_object->define_property(vm.names.value, descriptor.value.value_or(js_undefined()));
-        if (vm.exception())
-            return {};
         descriptor_object->define_property(vm.names.writable, Value(descriptor.attributes.is_writable()));
-        if (vm.exception())
-            return {};
-    } else if (descriptor.is_accessor_descriptor()) {
-        if (descriptor.getter) {
-            descriptor_object->define_property(vm.names.get, Value(descriptor.getter));
-            if (vm.exception())
-                return {};
-        }
-        if (descriptor.setter) {
-            descriptor_object->define_property(vm.names.set, Value(descriptor.setter));
-            if (vm.exception())
-                return {};
-        }
     }
+
+    if (descriptor.is_accessor_descriptor()) {
+        descriptor_object->define_property(vm.names.get, descriptor.getter ? Value(descriptor.getter) : js_undefined());
+        descriptor_object->define_property(vm.names.set, descriptor.setter ? Value(descriptor.setter) : js_undefined());
+    }
+
+    descriptor_object->define_property(vm.names.enumerable, Value(descriptor.attributes.is_enumerable()));
+    descriptor_object->define_property(vm.names.configurable, Value(descriptor.attributes.is_configurable()));
     return descriptor_object;
 }
 
@@ -477,14 +490,20 @@ bool Object::define_property(const StringOrSymbol& property_name, const Object& 
         if (vm.exception())
             return {};
 
-        Function* getter_function { nullptr };
-        Function* setter_function { nullptr };
+        FunctionObject* getter_function { nullptr };
+        FunctionObject* setter_function { nullptr };
+
+        // We should only take previous getters for our own object not from any prototype
+        auto existing_property = get_own_property(property_name, {}, AllowSideEffects::No).value_or(js_undefined());
 
         if (getter.is_function()) {
             getter_function = &getter.as_function();
         } else if (!getter.is_undefined()) {
             vm.throw_exception<TypeError>(global_object(), ErrorType::AccessorBadField, "get");
             return false;
+        } else if (existing_property.is_accessor()) {
+            // FIXME: This is a hack, since we store Accessor as a getter & setter tuple value, instead of as separate entries in the property
+            getter_function = existing_property.as_accessor().getter();
         }
 
         if (setter.is_function()) {
@@ -492,6 +511,9 @@ bool Object::define_property(const StringOrSymbol& property_name, const Object& 
         } else if (!setter.is_undefined()) {
             vm.throw_exception<TypeError>(global_object(), ErrorType::AccessorBadField, "set");
             return false;
+        } else if (existing_property.is_accessor()) {
+            // FIXME: See above
+            setter_function = existing_property.as_accessor().setter();
         }
 
         dbgln_if(OBJECT_DEBUG, "Defining new property {} with accessor descriptor {{ attributes={}, getter={}, setter={} }}", property_name.to_display_string(), attributes, getter, setter);
@@ -530,25 +552,49 @@ bool Object::define_property(const PropertyName& property_name, Value value, Pro
     if (property_name.is_number())
         return put_own_property_by_index(property_name.as_number(), value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
 
-    if (property_name.is_string()) {
-        i32 property_index = property_name.as_string().to_int().value_or(-1);
-        if (property_index >= 0)
-            return put_own_property_by_index(property_index, value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
-    }
     return put_own_property(property_name.to_string_or_symbol(), value, attributes, PutOwnPropertyMode::DefineProperty, throw_exceptions);
 }
 
-bool Object::define_accessor(const PropertyName& property_name, Function* getter, Function* setter, PropertyAttributes attributes, bool throw_exceptions)
+bool Object::define_native_accessor(PropertyName const& property_name, Function<Value(VM&, GlobalObject&)> getter, Function<Value(VM&, GlobalObject&)> setter, PropertyAttributes attribute)
+{
+    auto& vm = this->vm();
+    String formatted_property_name;
+    if (property_name.is_string()) {
+        formatted_property_name = property_name.as_string();
+    } else {
+        formatted_property_name = String::formatted("[{}]", property_name.as_symbol()->description());
+    }
+    FunctionObject* getter_function = nullptr;
+    if (getter) {
+        auto name = String::formatted("get {}", formatted_property_name);
+        getter_function = NativeFunction::create(global_object(), name, move(getter));
+        getter_function->define_property_without_transition(vm.names.length, Value(0), Attribute::Configurable);
+        if (vm.exception())
+            return {};
+        getter_function->define_property_without_transition(vm.names.name, js_string(vm.heap(), name), Attribute::Configurable);
+        if (vm.exception())
+            return {};
+    }
+    FunctionObject* setter_function = nullptr;
+    if (setter) {
+        auto name = String::formatted("set {}", formatted_property_name);
+        setter_function = NativeFunction::create(global_object(), name, move(setter));
+        setter_function->define_property_without_transition(vm.names.length, Value(1), Attribute::Configurable);
+        if (vm.exception())
+            return {};
+        setter_function->define_property_without_transition(vm.names.name, js_string(vm.heap(), name), Attribute::Configurable);
+        if (vm.exception())
+            return {};
+    }
+    return define_accessor(property_name, getter_function, setter_function, attribute);
+}
+
+bool Object::define_accessor(const PropertyName& property_name, FunctionObject* getter, FunctionObject* setter, PropertyAttributes attributes, bool throw_exceptions)
 {
     VERIFY(property_name.is_valid());
 
-    Accessor* accessor { nullptr };
-    auto property_metadata = shape().lookup(property_name.to_string_or_symbol());
-    if (property_metadata.has_value()) {
-        auto existing_property = get_direct(property_metadata.value().offset);
-        if (existing_property.is_accessor())
-            accessor = &existing_property.as_accessor();
-    }
+    auto existing_property = get_own_property(property_name, this, AllowSideEffects::No);
+    auto* accessor = existing_property.is_accessor() ? &existing_property.as_accessor() : nullptr;
     if (!accessor) {
         accessor = Accessor::create(vm(), getter, setter);
         bool definition_success = define_property(property_name, accessor, attributes, throw_exceptions);
@@ -591,7 +637,7 @@ bool Object::put_own_property(const StringOrSymbol& property_name, Value value, 
 
     if (!is_extensible() && new_property) {
         dbgln_if(OBJECT_DEBUG, "Disallow define_property of non-extensible object");
-        if (throw_exceptions && vm().in_strict_mode())
+        if (throw_exceptions)
             vm().throw_exception<TypeError>(global_object(), ErrorType::NonExtensibleDefine, property_name.to_display_string());
         return false;
     }
@@ -616,11 +662,49 @@ bool Object::put_own_property(const StringOrSymbol& property_name, Value value, 
         VERIFY(metadata.has_value());
     }
 
-    if (!new_property && mode == PutOwnPropertyMode::DefineProperty && !metadata.value().attributes.is_configurable() && attributes != metadata.value().attributes) {
-        dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
-        if (throw_exceptions)
-            vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_name.to_display_string());
-        return false;
+    auto value_here = m_storage[metadata.value().offset];
+    if (!new_property && mode == PutOwnPropertyMode::DefineProperty && !metadata.value().attributes.is_configurable()) {
+        if ((attributes.has_configurable() && attributes.is_configurable()) || (attributes.has_enumerable() && attributes.is_enumerable() != metadata.value().attributes.is_enumerable())) {
+            dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_name.to_display_string());
+            return false;
+        }
+
+        if (value_here.is_accessor() != value.is_accessor()) {
+            dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_name.to_display_string());
+            return false;
+        }
+
+        if (!value_here.is_accessor() && !metadata.value().attributes.is_writable() && ((attributes.has_writable() && attributes.is_writable()) || (!value.is_empty() && !same_value(value, value_here)))) {
+            dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_name.to_display_string());
+            return false;
+        }
+
+        if (value_here.is_accessor() && ((attributes.has_setter() && value.as_accessor().setter() != value_here.as_accessor().setter()) || (attributes.has_getter() && value.as_accessor().getter() != value_here.as_accessor().getter()))) {
+            dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_name.to_display_string());
+            return false;
+        }
+    }
+
+    // FIXME: Instead of adding back existing attributes we should just stop overwriting them
+    if (!attributes.has_configurable() && metadata.value().attributes.is_configurable()) {
+        attributes.set_has_configurable();
+        attributes.set_configurable();
+    }
+    if (!attributes.has_enumerable() && metadata.value().attributes.is_enumerable()) {
+        attributes.set_has_enumerable();
+        attributes.set_enumerable();
+    }
+    if (!value.is_accessor() && !attributes.has_writable() && metadata.value().attributes.is_writable()) {
+        attributes.set_has_writable();
+        attributes.set_writable();
     }
 
     if (mode == PutOwnPropertyMode::DefineProperty && attributes != metadata.value().attributes) {
@@ -634,9 +718,10 @@ bool Object::put_own_property(const StringOrSymbol& property_name, Value value, 
         dbgln_if(OBJECT_DEBUG, "Reconfigured property {}, new shape says offset is {} and my storage capacity is {}", property_name.to_display_string(), metadata.value().offset, m_storage.size());
     }
 
-    auto value_here = m_storage[metadata.value().offset];
     if (!new_property && mode == PutOwnPropertyMode::Put && !value_here.is_accessor() && !metadata.value().attributes.is_writable()) {
         dbgln_if(OBJECT_DEBUG, "Disallow write to non-writable property");
+        if (throw_exceptions && vm().in_strict_mode())
+            vm().throw_exception<TypeError>(global_object(), ErrorType::DescWriteNonWritable, property_name.to_display_string());
         return false;
     }
 
@@ -655,12 +740,12 @@ bool Object::put_own_property_by_index(u32 property_index, Value value, Property
 {
     VERIFY(!(mode == PutOwnPropertyMode::Put && value.is_accessor()));
 
-    auto existing_property = m_indexed_properties.get(nullptr, property_index, false);
+    auto existing_property = m_indexed_properties.get(nullptr, property_index, AllowSideEffects::No);
     auto new_property = !existing_property.has_value();
 
     if (!is_extensible() && new_property) {
         dbgln_if(OBJECT_DEBUG, "Disallow define_property of non-extensible object");
-        if (throw_exceptions && vm().in_strict_mode())
+        if (throw_exceptions)
             vm().throw_exception<TypeError>(global_object(), ErrorType::NonExtensibleDefine, property_index);
         return false;
     }
@@ -673,50 +758,102 @@ bool Object::put_own_property_by_index(u32 property_index, Value value, Property
             attributes.set_has_setter();
     }
 
-    PropertyAttributes existing_attributes = new_property ? 0 : existing_property.value().attributes;
+    if (new_property) {
+        if (!is_extensible()) {
+            dbgln_if(OBJECT_DEBUG, "Disallow define_property of non-extensible object");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::NonExtensibleDefine, property_index);
+            return false;
+        }
 
-    if (!new_property && mode == PutOwnPropertyMode::DefineProperty && !existing_attributes.is_configurable() && attributes != existing_attributes) {
-        dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
-        if (throw_exceptions)
-            vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_index);
-        return false;
-    }
+        m_indexed_properties.put(this, property_index, value, attributes, mode == PutOwnPropertyMode::Put ? AllowSideEffects::Yes : AllowSideEffects::No);
 
-    auto value_here = new_property ? Value() : existing_property.value().value;
-    if (!new_property && mode == PutOwnPropertyMode::Put && !value_here.is_accessor() && !existing_attributes.is_writable()) {
-        dbgln_if(OBJECT_DEBUG, "Disallow write to non-writable property");
-        return false;
-    }
-
-    if (value.is_empty())
         return true;
+    }
+
+    if (attributes == 0 && value.is_empty())
+        return true;
+
+    PropertyAttributes existing_attributes = existing_property.value().attributes;
+    auto value_here = existing_property.value().value;
+
+    if (mode == PutOwnPropertyMode::DefineProperty && !existing_attributes.is_configurable()) {
+        if ((attributes.has_configurable() && attributes.is_configurable()) || (attributes.has_enumerable() && attributes.is_enumerable() != existing_attributes.is_enumerable())) {
+            dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_index);
+            return false;
+        }
+
+        if (value_here.is_accessor() != value.is_accessor()) {
+            dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_index);
+            return false;
+        }
+
+        if (!value_here.is_accessor() && !existing_attributes.is_writable() && ((attributes.has_writable() && attributes.is_writable()) || (!value.is_empty() && !same_value(value, value_here)))) {
+            dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_index);
+            return false;
+        }
+
+        if (value_here.is_accessor() && ((attributes.has_setter() && value.as_accessor().setter() != value_here.as_accessor().setter()) || (attributes.has_getter() && value.as_accessor().getter() != value_here.as_accessor().getter()))) {
+            dbgln_if(OBJECT_DEBUG, "Disallow reconfig of non-configurable property");
+            if (throw_exceptions)
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_index);
+            return false;
+        }
+    }
+
+    if (mode == PutOwnPropertyMode::Put && !value_here.is_accessor() && !existing_attributes.is_writable()) {
+        dbgln_if(OBJECT_DEBUG, "Disallow write to non-writable property");
+        if (throw_exceptions)
+            vm().throw_exception<TypeError>(global_object(), ErrorType::DescWriteNonWritable, property_index);
+        return false;
+    }
+
+    PropertyAttributes combined_attributes = existing_attributes.overwrite(attributes);
+
+    if (value.is_empty()) {
+        if (combined_attributes == existing_attributes) {
+            return true;
+        }
+        value = value_here.value_or(js_undefined());
+    }
+
+    attributes = combined_attributes;
 
     if (value_here.is_native_property()) {
         call_native_property_setter(value_here.as_native_property(), this, value);
     } else {
-        m_indexed_properties.put(this, property_index, value, attributes, mode == PutOwnPropertyMode::Put);
+        m_indexed_properties.put(this, property_index, value, attributes, mode == PutOwnPropertyMode::Put ? AllowSideEffects::Yes : AllowSideEffects::No);
     }
     return true;
 }
 
-bool Object::delete_property(const PropertyName& property_name)
+bool Object::delete_property(PropertyName const& property_name, bool force_throw_exception)
 {
     VERIFY(property_name.is_valid());
 
-    if (property_name.is_number())
-        return m_indexed_properties.remove(property_name.as_number());
-
-    if (property_name.is_string()) {
-        i32 property_index = property_name.as_string().to_int().value_or(-1);
-        if (property_index >= 0)
-            return m_indexed_properties.remove(property_index);
+    if (property_name.is_number()) {
+        if (!m_indexed_properties.remove(property_name.as_number())) {
+            if (force_throw_exception || vm().in_strict_mode())
+                vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_name.as_number());
+            return false;
+        }
+        return true;
     }
 
     auto metadata = shape().lookup(property_name.to_string_or_symbol());
     if (!metadata.has_value())
         return true;
-    if (!metadata.value().attributes.is_configurable())
+    if (!metadata.value().attributes.is_configurable()) {
+        if (force_throw_exception || vm().in_strict_mode())
+            vm().throw_exception<TypeError>(global_object(), ErrorType::DescChangeNonConfigurable, property_name.to_string_or_symbol().to_display_string());
         return false;
+    }
 
     size_t deleted_offset = metadata.value().offset;
 
@@ -735,7 +872,7 @@ void Object::ensure_shape_is_unique()
     m_shape = m_shape->create_unique_clone();
 }
 
-Value Object::get_by_index(u32 property_index) const
+Value Object::get_by_index(u32 property_index, AllowSideEffects allow_side_effects) const
 {
     const Object* object = this;
     while (object) {
@@ -744,7 +881,7 @@ Value Object::get_by_index(u32 property_index) const
             if (property_index < string.length())
                 return js_string(heap(), string.substring(property_index, 1));
         } else if (static_cast<size_t>(property_index) < object->m_indexed_properties.array_like_size()) {
-            auto result = object->m_indexed_properties.get(const_cast<Object*>(this), property_index);
+            auto result = object->m_indexed_properties.get(const_cast<Object*>(this), property_index, allow_side_effects);
             if (vm().exception())
                 return {};
             if (result.has_value() && !result.value().value.is_empty())
@@ -757,26 +894,19 @@ Value Object::get_by_index(u32 property_index) const
     return {};
 }
 
-Value Object::get(const PropertyName& property_name, Value receiver, bool without_side_effects) const
+Value Object::get(const PropertyName& property_name, Value receiver, AllowSideEffects allow_side_effects) const
 {
     VERIFY(property_name.is_valid());
 
     if (property_name.is_number())
-        return get_by_index(property_name.as_number());
-
-    if (property_name.is_string()) {
-        auto property_string = property_name.to_string();
-        i32 property_index = property_string.to_int().value_or(-1);
-        if (property_index >= 0)
-            return get_by_index(property_index);
-    }
+        return get_by_index(property_name.as_number(), allow_side_effects);
 
     if (receiver.is_empty())
         receiver = Value(this);
 
     const Object* object = this;
     while (object) {
-        auto value = object->get_own_property(property_name, receiver, without_side_effects);
+        auto value = object->get_own_property(property_name, receiver, allow_side_effects);
         if (vm().exception())
             return {};
         if (!value.is_empty())
@@ -791,7 +921,7 @@ Value Object::get(const PropertyName& property_name, Value receiver, bool withou
 Value Object::get_without_side_effects(const PropertyName& property_name) const
 {
     TemporaryClearException clear_exception(vm());
-    return get(property_name, {}, true);
+    return get(property_name, {}, AllowSideEffects::No);
 }
 
 bool Object::put_by_index(u32 property_index, Value value)
@@ -802,7 +932,7 @@ bool Object::put_by_index(u32 property_index, Value value)
     // Otherwise, it goes in the own property storage.
     Object* object = this;
     while (object) {
-        auto existing_value = object->m_indexed_properties.get(nullptr, property_index, false);
+        auto existing_value = object->m_indexed_properties.get(nullptr, property_index, AllowSideEffects::No);
         if (existing_value.has_value()) {
             auto value_here = existing_value.value();
             if (value_here.value.is_accessor()) {
@@ -820,7 +950,7 @@ bool Object::put_by_index(u32 property_index, Value value)
         if (vm().exception())
             return {};
     }
-    return put_own_property_by_index(property_index, value, default_attributes, PutOwnPropertyMode::Put);
+    return put_own_property_by_index(property_index, value, default_attributes, PutOwnPropertyMode::Put, vm().in_strict_mode());
 }
 
 bool Object::put(const PropertyName& property_name, Value value, Value receiver)
@@ -831,13 +961,6 @@ bool Object::put(const PropertyName& property_name, Value value, Value receiver)
         return put_by_index(property_name.as_number(), value);
 
     VERIFY(!value.is_empty());
-
-    if (property_name.is_string()) {
-        auto& property_string = property_name.as_string();
-        i32 property_index = property_string.to_int().value_or(-1);
-        if (property_index >= 0)
-            return put_by_index(property_index, value);
-    }
 
     auto string_or_symbol = property_name.to_string_or_symbol();
 
@@ -864,10 +987,10 @@ bool Object::put(const PropertyName& property_name, Value value, Value receiver)
         if (vm().exception())
             return false;
     }
-    return put_own_property(string_or_symbol, value, default_attributes, PutOwnPropertyMode::Put);
+    return put_own_property(string_or_symbol, value, default_attributes, PutOwnPropertyMode::Put, vm().in_strict_mode());
 }
 
-bool Object::define_native_function(const StringOrSymbol& property_name, AK::Function<Value(VM&, GlobalObject&)> native_function, i32 length, PropertyAttributes attribute)
+bool Object::define_native_function(PropertyName const& property_name, Function<Value(VM&, GlobalObject&)> native_function, i32 length, PropertyAttributes attribute)
 {
     auto& vm = this->vm();
     String function_name;
@@ -886,12 +1009,12 @@ bool Object::define_native_function(const StringOrSymbol& property_name, AK::Fun
     return define_property(property_name, function, attribute);
 }
 
-bool Object::define_native_property(const StringOrSymbol& property_name, AK::Function<Value(VM&, GlobalObject&)> getter, AK::Function<void(VM&, GlobalObject&, Value)> setter, PropertyAttributes attribute)
+bool Object::define_native_property(PropertyName const& property_name, Function<Value(VM&, GlobalObject&)> getter, Function<void(VM&, GlobalObject&, Value)> setter, PropertyAttributes attribute)
 {
     return define_property(property_name, heap().allocate_without_global_object<NativeProperty>(move(getter), move(setter)), attribute);
 }
 
-// 20.1.2.3.1 ObjectDefineProperties, https://tc39.es/ecma262/#sec-objectdefineproperties
+// 20.1.2.3.1 ObjectDefineProperties ( O, Properties ), https://tc39.es/ecma262/#sec-objectdefineproperties
 void Object::define_properties(Value properties)
 {
     auto& vm = this->vm();
@@ -973,12 +1096,6 @@ bool Object::has_own_property(const PropertyName& property_name) const
     if (property_name.is_number())
         return has_indexed_property(property_name.as_number());
 
-    if (property_name.is_string()) {
-        i32 property_index = property_name.as_string().to_int().value_or(-1);
-        if (property_index >= 0)
-            return has_indexed_property(property_index);
-    }
-
     return shape().lookup(property_name.to_string_or_symbol()).has_value();
 }
 
@@ -990,9 +1107,9 @@ Value Object::ordinary_to_primitive(Value::PreferredType preferred_type) const
 
     Vector<FlyString, 2> method_names;
     if (preferred_type == Value::PreferredType::String)
-        method_names = { vm.names.toString, vm.names.valueOf };
+        method_names = { vm.names.toString.as_string(), vm.names.valueOf.as_string() };
     else
-        method_names = { vm.names.valueOf, vm.names.toString };
+        method_names = { vm.names.valueOf.as_string(), vm.names.toString.as_string() };
 
     for (auto& method_name : method_names) {
         auto method = get(method_name);
@@ -1024,32 +1141,32 @@ Value Object::invoke_internal(const StringOrSymbol& property_name, Optional<Mark
 Value Object::call_native_property_getter(NativeProperty& property, Value this_value) const
 {
     auto& vm = this->vm();
-    CallFrame call_frame;
+    ExecutionContext execution_context;
     if (auto* interpreter = vm.interpreter_if_exists())
-        call_frame.current_node = interpreter->current_node();
-    call_frame.is_strict_mode = vm.in_strict_mode();
-    call_frame.this_value = this_value;
-    vm.push_call_frame(call_frame, global_object());
+        execution_context.current_node = interpreter->current_node();
+    execution_context.is_strict_mode = vm.in_strict_mode();
+    execution_context.this_value = this_value;
+    vm.push_execution_context(execution_context, global_object());
     if (vm.exception())
         return {};
     auto result = property.get(vm, global_object());
-    vm.pop_call_frame();
+    vm.pop_execution_context();
     return result;
 }
 
 void Object::call_native_property_setter(NativeProperty& property, Value this_value, Value setter_value) const
 {
     auto& vm = this->vm();
-    CallFrame call_frame;
+    ExecutionContext execution_context;
     if (auto* interpreter = vm.interpreter_if_exists())
-        call_frame.current_node = interpreter->current_node();
-    call_frame.is_strict_mode = vm.in_strict_mode();
-    call_frame.this_value = this_value;
-    vm.push_call_frame(call_frame, global_object());
+        execution_context.current_node = interpreter->current_node();
+    execution_context.is_strict_mode = vm.in_strict_mode();
+    execution_context.this_value = this_value;
+    vm.push_execution_context(execution_context, global_object());
     if (vm.exception())
         return;
     property.set(vm, global_object(), setter_value);
-    vm.pop_call_frame();
+    vm.pop_execution_context();
 }
 
 }

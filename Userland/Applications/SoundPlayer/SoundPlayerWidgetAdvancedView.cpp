@@ -47,10 +47,16 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
 
     m_visualization = m_player_view->add<BarsVisualizationWidget>();
 
+    // Set a temporary value for total samples.
+    // This value will be set properly when we load a new file.
+    const int total_samples = this->manager().total_length() * this->manager().device_sample_rate();
+
     m_playback_progress_slider = m_player_view->add<AutoSlider>(Orientation::Horizontal);
     m_playback_progress_slider->set_fixed_height(20);
+    m_playback_progress_slider->set_jump_to_cursor(true);
     m_playback_progress_slider->set_min(0);
-    m_playback_progress_slider->set_max(this->manager().total_length() * 44100); //this value should be set when we load a new file
+    m_playback_progress_slider->set_max(total_samples);
+    m_playback_progress_slider->set_page_step(total_samples / 10);
     m_playback_progress_slider->on_knob_released = [&](int value) {
         this->manager().seek(value);
     };
@@ -66,6 +72,7 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
         bool paused = this->manager().toggle_pause();
         set_paused(paused);
         m_play_button->set_icon(paused ? *m_play_icon : *m_pause_icon);
+        m_stop_button->set_enabled(has_loaded_file());
     };
 
     m_stop_button = menubar.add<GUI::Button>();
@@ -135,14 +142,20 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
     set_nonlinear_volume_slider(false);
 
     manager().on_update = [&]() {
-        //TODO: make this program support other sample rates
-        int samples_played = client_connection().get_played_samples() + this->manager().last_seek();
-        int current_second = samples_played / 44100;
+        // Determine how many of the source file samples have played.
+        int samples_played = client_connection().get_played_samples();
+        float source_to_dest_ratio = static_cast<float>(loaded_file_samplerate()) / manager().device_sample_rate();
+        samples_played *= source_to_dest_ratio;
+        samples_played += this->manager().last_seek();
+
+        int current_second = samples_played / loaded_file_samplerate();
         timestamp_label.set_text(String::formatted("Elapsed: {:02}:{:02}:{:02}", current_second / 3600, current_second / 60, current_second % 60));
-        m_playback_progress_slider->set_value(samples_played);
+        if (!m_playback_progress_slider->mouse_is_down()) {
+            m_playback_progress_slider->set_value(samples_played);
+        }
 
         dynamic_cast<Visualization*>(m_visualization.ptr())->set_buffer(this->manager().current_buffer());
-        dynamic_cast<Visualization*>(m_visualization.ptr())->set_samplerate(loaded_file_samplerate());
+        dynamic_cast<Visualization*>(m_visualization.ptr())->set_samplerate(manager().device_sample_rate());
     };
 
     manager().on_load_sample_buffer = [&](Audio::Buffer&) {
@@ -167,6 +180,8 @@ SoundPlayerWidgetAdvancedView::SoundPlayerWidgetAdvancedView(GUI::Window& window
             } else
                 open_file((it + 1)->path);
         }
+
+        m_stop_button->set_enabled(false);
     };
 }
 
@@ -189,13 +204,13 @@ void SoundPlayerWidgetAdvancedView::open_file(StringView path)
             "Filetype error", GUI::MessageBox::Type::Error);
         return;
     }
-    m_window.set_title(String::formatted("{} - SoundPlayer", loader->file()->filename()));
+    m_window.set_title(String::formatted("{} - Sound Player", loader->file()->filename()));
     m_playback_progress_slider->set_max(loader->total_samples());
+    m_playback_progress_slider->set_page_step(loader->total_samples() / 10);
     m_playback_progress_slider->set_enabled(true);
     m_play_button->set_enabled(true);
     m_play_button->set_icon(*m_pause_icon);
     m_stop_button->set_enabled(true);
-    m_playback_progress_slider->set_max(loader->total_samples());
     manager().set_loader(move(loader));
     set_has_loaded_file(true);
     set_loaded_file_samplerate(loader->sample_rate());
@@ -285,12 +300,10 @@ void SoundPlayerWidgetAdvancedView::try_fill_missing_info(Vector<M3UEntry>& entr
         }
 
         if (!entry.extended_info->track_display_title.has_value())
-            entry.extended_info->track_display_title = LexicalPath(entry.path).title();
+            entry.extended_info->track_display_title = LexicalPath::title(entry.path);
         if (!entry.extended_info->track_length_in_seconds.has_value()) {
-            if (entry_path.has_extension("wav")) {
-                auto wav_reader = Audio::Loader::create(entry.path);
-                entry.extended_info->track_length_in_seconds = wav_reader->total_samples() / wav_reader->sample_rate();
-            }
+            if (auto reader = Audio::Loader::create(entry.path); !reader->has_error())
+                entry.extended_info->track_length_in_seconds = reader->total_samples() / reader->sample_rate();
             //TODO: Implement embedded metadata extractor for other audio formats
         }
         //TODO: Implement a metadata parser for the uncomfortably numerous popular embedded metadata formats

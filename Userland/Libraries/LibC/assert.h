@@ -11,7 +11,7 @@
 __BEGIN_DECLS
 
 #ifdef DEBUG
-[[noreturn]] void __assertion_failed(const char* msg);
+__attribute__((noreturn)) void __assertion_failed(const char* msg);
 #    define __stringify_helper(x) #    x
 #    define __stringify(x) __stringify_helper(x)
 #    define assert(expr)                                                           \
@@ -19,16 +19,12 @@ __BEGIN_DECLS
             if (__builtin_expect(!(expr), 0))                                      \
                 __assertion_failed(#expr "\n" __FILE__ ":" __stringify(__LINE__)); \
         } while (0)
-#    define VERIFY_NOT_REACHED() assert(false)
 #else
 #    define assert(expr) ((void)(0))
 #    define VERIFY_NOT_REACHED() _abort()
 #endif
 
-[[noreturn]] void _abort();
-
-#define VERIFY assert
-#define TODO VERIFY_NOT_REACHED
+__attribute__((noreturn)) void _abort();
 
 #ifndef __cplusplus
 #    define static_assert _Static_assert

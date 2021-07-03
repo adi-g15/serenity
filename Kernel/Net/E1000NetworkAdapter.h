@@ -8,21 +8,22 @@
 
 #include <AK/NonnullOwnPtrVector.h>
 #include <AK/OwnPtr.h>
+#include <Kernel/Bus/PCI/Access.h>
+#include <Kernel/Bus/PCI/Device.h>
 #include <Kernel/IO.h>
 #include <Kernel/Interrupts/IRQHandler.h>
 #include <Kernel/Net/NetworkAdapter.h>
-#include <Kernel/PCI/Access.h>
-#include <Kernel/PCI/Device.h>
 #include <Kernel/Random.h>
 
 namespace Kernel {
 
-class E1000NetworkAdapter final : public NetworkAdapter
+class E1000NetworkAdapter : public NetworkAdapter
     , public PCI::Device {
 public:
-    static void detect();
+    static RefPtr<E1000NetworkAdapter> try_to_initialize(PCI::Address);
 
-    E1000NetworkAdapter(PCI::Address, u8 irq);
+    virtual bool initialize();
+
     virtual ~E1000NetworkAdapter() override;
 
     virtual void send_raw(ReadonlyBytes) override;
@@ -30,8 +31,12 @@ public:
 
     virtual const char* purpose() const override { return class_name(); }
 
-private:
-    virtual void handle_irq(const RegisterState&) override;
+protected:
+    void setup_interrupts();
+    void setup_link();
+
+    E1000NetworkAdapter(PCI::Address, u8 irq);
+    virtual bool handle_irq(const RegisterState&) override;
     virtual const char* class_name() const override { return "E1000NetworkAdapter"; }
 
     struct [[gnu::packed]] e1000_rx_desc {
@@ -53,8 +58,8 @@ private:
         volatile uint16_t special { 0 };
     };
 
-    void detect_eeprom();
-    u32 read_eeprom(u8 address);
+    virtual void detect_eeprom();
+    virtual u32 read_eeprom(u8 address);
     void read_mac_address();
 
     void write_command(u16 address, u32);
@@ -84,8 +89,8 @@ private:
     bool m_use_mmio { false };
     EntropySource m_entropy_source;
 
-    static const size_t number_of_rx_descriptors = 32;
-    static const size_t number_of_tx_descriptors = 8;
+    static constexpr size_t number_of_rx_descriptors = 32;
+    static constexpr size_t number_of_tx_descriptors = 8;
 
     WaitQueue m_wait_queue;
 };

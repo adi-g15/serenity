@@ -4,13 +4,14 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Arch/x86/SmapDisabler.h>
 #include <Kernel/Panic.h>
 #include <Kernel/Process.h>
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$sigprocmask(int how, Userspace<const sigset_t*> set, Userspace<sigset_t*> old_set)
+KResultOr<FlatPtr> Process::sys$sigprocmask(int how, Userspace<const sigset_t*> set, Userspace<sigset_t*> old_set)
 {
     REQUIRE_PROMISE(sigaction);
     auto current_thread = Thread::current();
@@ -40,7 +41,7 @@ KResultOr<int> Process::sys$sigprocmask(int how, Userspace<const sigset_t*> set,
     return 0;
 }
 
-KResultOr<int> Process::sys$sigpending(Userspace<sigset_t*> set)
+KResultOr<FlatPtr> Process::sys$sigpending(Userspace<sigset_t*> set)
 {
     REQUIRE_PROMISE(stdio);
     auto pending_signals = Thread::current()->pending_signals();
@@ -49,7 +50,7 @@ KResultOr<int> Process::sys$sigpending(Userspace<sigset_t*> set)
     return 0;
 }
 
-KResultOr<int> Process::sys$sigaction(int signum, Userspace<const sigaction*> user_act, Userspace<sigaction*> user_old_act)
+KResultOr<FlatPtr> Process::sys$sigaction(int signum, Userspace<const sigaction*> user_act, Userspace<sigaction*> user_old_act)
 {
     REQUIRE_PROMISE(sigaction);
     if (signum < 1 || signum >= 32 || signum == SIGKILL || signum == SIGSTOP)
@@ -74,7 +75,7 @@ KResultOr<int> Process::sys$sigaction(int signum, Userspace<const sigaction*> us
     return 0;
 }
 
-KResultOr<int> Process::sys$sigreturn([[maybe_unused]] RegisterState& registers)
+KResultOr<FlatPtr> Process::sys$sigreturn([[maybe_unused]] RegisterState& registers)
 {
     REQUIRE_PROMISE(stdio);
     SmapDisabler disabler;
@@ -103,7 +104,28 @@ KResultOr<int> Process::sys$sigreturn([[maybe_unused]] RegisterState& registers)
     registers.userspace_esp = registers.esp;
     return smuggled_eax;
 #else
-    PANIC("sys$sigreturn() not implemented.");
+    //Here, we restore the state pushed by dispatch signal and asm_signal_trampoline.
+    FlatPtr* stack_ptr = (FlatPtr*)registers.userspace_rsp;
+    FlatPtr smuggled_rax = *stack_ptr;
+
+    //pop the stored rax, rbp, return address, handler and signal code
+    stack_ptr += 5;
+
+    Thread::current()->m_signal_mask = *stack_ptr;
+    stack_ptr++;
+
+    //pop rdi, rsi, rbp, rsp, rbx, rdx, rcx, rax, r8, r9, r10, r11, r12, r13, r14 and r15
+    memcpy(&registers.rdi, stack_ptr, 16 * sizeof(FlatPtr));
+    stack_ptr += 16;
+
+    registers.rip = *stack_ptr;
+    stack_ptr++;
+
+    registers.rflags = (registers.rflags & ~safe_eflags_mask) | (*stack_ptr & safe_eflags_mask);
+    stack_ptr++;
+
+    registers.userspace_rsp = registers.rsp;
+    return smuggled_rax;
 #endif
 }
 

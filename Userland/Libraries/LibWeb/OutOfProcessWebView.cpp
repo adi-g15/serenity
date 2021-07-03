@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -7,7 +7,6 @@
 #include "OutOfProcessWebView.h"
 #include "WebContentClient.h"
 #include <AK/String.h>
-#include <AK/URLParser.h>
 #include <LibGUI/Application.h>
 #include <LibGUI/Desktop.h>
 #include <LibGUI/InputBox.h>
@@ -15,6 +14,7 @@
 #include <LibGUI/Painter.h>
 #include <LibGUI/Scrollbar.h>
 #include <LibGUI/Window.h>
+#include <LibGfx/FontDatabase.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
 
@@ -52,7 +52,8 @@ void OutOfProcessWebView::handle_web_content_process_crash()
         builder.appendff(" on {}", escape_html_entities(m_url.host()));
     }
     builder.append("</h1>");
-    builder.appendff("The web page <a href=\"{}\">{}</a> has crashed.<br><br>You can reload the page to try again.", escape_html_entities(m_url.to_string_encoded()), escape_html_entities(m_url.to_string()));
+    auto escaped_url = escape_html_entities(m_url.to_string());
+    builder.appendff("The web page <a href=\"{}\">{}</a> has crashed.<br><br>You can reload the page to try again.", escaped_url, escaped_url);
     builder.append("</body></html>");
     load_html(builder.to_string(), m_url);
 }
@@ -63,13 +64,14 @@ void OutOfProcessWebView::create_client()
 
     m_client_state.client = WebContentClient::construct(*this);
     m_client_state.client->on_web_content_process_crash = [this] {
-        deferred_invoke([this] {
+        deferred_invoke([this](auto&) {
             handle_web_content_process_crash();
         });
     };
 
     client().async_update_system_theme(Gfx::current_system_theme_buffer());
-    client().async_update_screen_rect(GUI::Desktop::the().rect());
+    client().async_update_system_fonts(Gfx::FontDatabase::default_font_query(), Gfx::FontDatabase::fixed_width_font_query());
+    client().async_update_screen_rects(GUI::Desktop::the().rects(), GUI::Desktop::the().main_screen_index());
 }
 
 void OutOfProcessWebView::load(const URL& url)
@@ -190,9 +192,9 @@ void OutOfProcessWebView::theme_change_event(GUI::ThemeChangeEvent& event)
     request_repaint();
 }
 
-void OutOfProcessWebView::screen_rect_change_event(GUI::ScreenRectChangeEvent& event)
+void OutOfProcessWebView::screen_rects_change_event(GUI::ScreenRectsChangeEvent& event)
 {
-    client().async_update_screen_rect(event.rect());
+    client().async_update_screen_rects(event.rects(), event.main_screen_index());
 }
 
 void OutOfProcessWebView::notify_server_did_paint(Badge<WebContentClient>, i32 bitmap_id)
@@ -333,6 +335,12 @@ void OutOfProcessWebView::notify_server_did_get_source(const URL& url, const Str
         on_get_source(url, source);
 }
 
+void OutOfProcessWebView::notify_server_did_get_dom_tree(const String& dom_tree)
+{
+    if (on_get_dom_tree)
+        on_get_dom_tree(dom_tree);
+}
+
 void OutOfProcessWebView::notify_server_did_js_console_output(const String& method, const String& line)
 {
     if (on_js_console_output)
@@ -387,6 +395,11 @@ void OutOfProcessWebView::debug_request(const String& request, const String& arg
 void OutOfProcessWebView::get_source()
 {
     client().async_get_source();
+}
+
+void OutOfProcessWebView::inspect_dom_tree()
+{
+    client().async_inspect_dom_tree();
 }
 
 void OutOfProcessWebView::js_console_initialize()

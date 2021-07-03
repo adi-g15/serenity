@@ -11,11 +11,15 @@
 #include <LibGUI/CheckBox.h>
 #include <LibGUI/Label.h>
 #include <LibGUI/SpinBox.h>
+#include <math.h>
 
-GameSizeDialog::GameSizeDialog(GUI::Window* parent)
+GameSizeDialog::GameSizeDialog(GUI::Window* parent, size_t board_size, size_t target, bool evil_ai)
     : GUI::Dialog(parent)
+    , m_board_size(board_size)
+    , m_target_tile_power(log2(target))
+    , m_evil_ai(evil_ai)
 {
-    set_rect({ 0, 0, 200, 150 });
+    set_rect({ 0, 0, 250, 150 });
     set_title("New Game");
     set_icon(parent->icon());
     set_resizable(false);
@@ -57,7 +61,11 @@ GameSizeDialog::GameSizeDialog(GUI::Window* parent)
         tile_value_label.set_text(String::number(target_tile()));
     };
 
-    auto& temp_checkbox = main_widget.add<GUI::CheckBox>("Temporary");
+    auto& evil_ai_checkbox = main_widget.add<GUI::CheckBox>("Evil AI");
+    evil_ai_checkbox.set_checked(m_evil_ai);
+    evil_ai_checkbox.on_checked = [this](auto checked) { m_evil_ai = checked; };
+
+    auto& temp_checkbox = main_widget.add<GUI::CheckBox>("Temporarily apply changes");
     temp_checkbox.set_checked(m_temporary);
     temp_checkbox.on_checked = [this](auto checked) { m_temporary = checked; };
 

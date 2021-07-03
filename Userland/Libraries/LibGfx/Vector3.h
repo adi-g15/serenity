@@ -1,11 +1,12 @@
 /*
- * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@gmx.de>
+ * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
+#include <AK/String.h>
 #include <math.h>
 
 namespace Gfx {
@@ -52,6 +53,16 @@ public:
     constexpr Vector3 operator-(const Vector3& other) const
     {
         return Vector3(m_x - other.m_x, m_y - other.m_y, m_z - other.m_z);
+    }
+
+    constexpr Vector3 operator*(const Vector3& other) const
+    {
+        return Vector3(m_x * other.m_x, m_y * other.m_y, m_z * other.m_z);
+    }
+
+    constexpr Vector3 operator/(const Vector3& other) const
+    {
+        return Vector3(m_x / other.m_x, m_y / other.m_y, m_z / other.m_z);
     }
 
     constexpr Vector3 operator*(T f) const
@@ -113,6 +124,11 @@ public:
         return sqrt(m_x * m_x + m_y * m_y + m_z * m_z);
     }
 
+    String to_string() const
+    {
+        return String::formatted("[{},{},{}]", x(), y(), z());
+    }
+
 private:
     T m_x;
     T m_y;
@@ -121,6 +137,18 @@ private:
 
 typedef Vector3<float> FloatVector3;
 typedef Vector3<double> DoubleVector3;
+
+}
+
+namespace AK {
+
+template<typename T>
+struct Formatter<Gfx::Vector3<T>> : Formatter<StringView> {
+    void format(FormatBuilder& builder, const Gfx::Vector3<T>& value)
+    {
+        Formatter<StringView>::format(builder, value.to_string());
+    }
+};
 
 }
 

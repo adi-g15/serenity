@@ -1,16 +1,32 @@
 /*
  * Copyright (c) 2020, Till Mayer <till.mayer@web.de>
+ * Copyright (c) 2021, Sam Atkins <atkinssj@gmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
 #pragma once
 
-#include "CardStack.h"
+#include <AK/Array.h>
+#include <LibCards/CardStack.h>
 #include <LibGUI/Frame.h>
 #include <LibGUI/Painter.h>
 
+using Cards::Card;
+using Cards::CardStack;
+
 namespace Solitaire {
+
+enum class Mode : u8 {
+    SingleCardDraw,
+    ThreeCardDraw,
+    __Count
+};
+
+enum class GameOverReason {
+    Victory,
+    NewGame,
+};
 
 class Game final : public GUI::Frame {
     C_OBJECT(Game)
@@ -19,11 +35,15 @@ public:
     static constexpr int height = 480;
 
     virtual ~Game() override;
-    void setup();
+
+    Mode mode() const { return m_mode; }
+    void setup(Mode);
+    void perform_undo();
 
     Function<void(uint32_t)> on_score_update;
     Function<void()> on_game_start;
-    Function<void()> on_game_end;
+    Function<void(GameOverReason, uint32_t)> on_game_end;
+    Function<void(bool)> on_undo_availability_change;
 
 private:
     Game();
@@ -81,9 +101,28 @@ private:
         bool m_dirty { false };
     };
 
+    struct WasteRecycleRules {
+        uint8_t passes_allowed_before_punishment { 0 };
+        int8_t punishment { 0 };
+    };
+
+    struct LastMove {
+        enum class Type {
+            Invalid,
+            MoveCards,
+            FlipCard
+        };
+
+        Type type { Type::Invalid };
+        CardStack* from { nullptr };
+        NonnullRefPtrVector<Card> cards;
+        CardStack* to { nullptr };
+    };
+
     enum StackLocation {
         Stock,
         Waste,
+        Play,
         Foundation1,
         Foundation2,
         Foundation3,
@@ -98,14 +137,42 @@ private:
         __Count
     };
     static constexpr Array piles = { Pile1, Pile2, Pile3, Pile4, Pile5, Pile6, Pile7 };
+    static constexpr Array foundations = { Foundation1, Foundation2, Foundation3, Foundation4 };
+
+    ALWAYS_INLINE const WasteRecycleRules& recycle_rules()
+    {
+        static constexpr Array<WasteRecycleRules, 2> rules { {
+            { 0, -100 },
+            { 2, -20 },
+        } };
+
+        switch (m_mode) {
+        case Mode::SingleCardDraw:
+            return rules[0];
+        case Mode::ThreeCardDraw:
+            return rules[1];
+        default:
+            VERIFY_NOT_REACHED();
+        }
+    }
 
     void mark_intersecting_stacks_dirty(Card& intersecting_card);
+    void score_move(CardStack& from, CardStack& to, bool inverse = false);
+    void score_flip(bool inverse = false);
+    void remember_move_for_undo(CardStack& from, CardStack& to, NonnullRefPtrVector<Card> moved_cards);
+    void remember_flip_for_undo(Card& card);
     void update_score(int to_add);
-    void move_card(CardStack& from, CardStack& to);
+    void draw_cards();
+    void pop_waste_to_play_stack();
+    bool attempt_to_move_card_to_foundations(CardStack& from);
+    void auto_move_eligible_cards_to_foundations();
+    void start_timer_if_necessary();
     void start_game_over_animation();
     void stop_game_over_animation();
     void create_new_animation_card();
+    void set_background_fill_enabled(bool);
     void check_for_game_over();
+    void dump_layout() const;
 
     ALWAYS_INLINE CardStack& stack(StackLocation location)
     {
@@ -120,22 +187,27 @@ private:
     virtual void keydown_event(GUI::KeyEvent&) override;
     virtual void timer_event(Core::TimerEvent&) override;
 
+    Mode m_mode { Mode::SingleCardDraw };
+
+    LastMove m_last_move;
     NonnullRefPtrVector<Card> m_focused_cards;
     NonnullRefPtrVector<Card> m_new_deck;
-    CardStack m_stacks[StackLocation::__Count];
+    NonnullRefPtrVector<CardStack> m_stacks;
     CardStack* m_focused_stack { nullptr };
     Gfx::IntPoint m_mouse_down_location;
 
     bool m_mouse_down { false };
 
     Animation m_animation;
+    bool m_start_game_over_animation_next_frame { false };
     bool m_game_over_animation { false };
-
+    bool m_waiting_for_new_game { true };
     bool m_new_game_animation { false };
     uint8_t m_new_game_animation_pile { 0 };
     uint8_t m_new_game_animation_delay { 0 };
 
     uint32_t m_score { 0 };
+    uint8_t m_passes_left_before_punishment { 0 };
 };
 
 }

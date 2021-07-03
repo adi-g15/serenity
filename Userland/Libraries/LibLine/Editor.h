@@ -11,8 +11,7 @@
 #include <AK/ByteBuffer.h>
 #include <AK/Function.h>
 #include <AK/HashMap.h>
-#include <AK/NonnullOwnPtr.h>
-#include <AK/QuickSort.h>
+#include <AK/OwnPtr.h>
 #include <AK/Result.h>
 #include <AK/String.h>
 #include <AK/Traits.h>
@@ -61,6 +60,11 @@ struct Configuration {
         NoSignalHandlers,
     };
 
+    enum Flags : u32 {
+        None = 0,
+        BracketedPaste = 1,
+    };
+
     struct DefaultTextEditor {
         String command;
     };
@@ -81,6 +85,10 @@ struct Configuration {
     void set(SignalHandler mode) { m_signal_mode = mode; }
     void set(const KeyBinding& binding) { keybindings.append(binding); }
     void set(DefaultTextEditor editor) { m_default_text_editor = move(editor.command); }
+    void set(Flags flags)
+    {
+        enable_bracketed_paste = flags & Flags::BracketedPaste;
+    }
 
     static Configuration from_config(const StringView& libname = "line");
 
@@ -89,6 +97,7 @@ struct Configuration {
     OperationMode operation_mode { OperationMode::Unset };
     Vector<KeyBinding> keybindings;
     String m_default_text_editor {};
+    bool enable_bracketed_paste { false };
 };
 
 #define ENUMERATE_EDITOR_INTERNAL_FUNCTIONS(M) \
@@ -138,10 +147,13 @@ public:
 
     void initialize();
 
+    void refetch_default_termios();
+
     void add_to_history(const String& line);
     bool load_history(const String& path);
     bool save_history(const String& path);
     const auto& history() const { return m_history; }
+    bool is_history_dirty() const { return m_history_dirty; }
 
     void register_key_input_callback(const KeyBinding&);
     void register_key_input_callback(Vector<Key> keys, Function<bool(Editor&)> callback) { m_callback_machine.register_key_input_callback(move(keys), move(callback)); }
@@ -254,8 +266,11 @@ private:
     void try_update_once();
     void handle_interrupt_event();
     void handle_read_event();
+    void handle_resize_event(bool reset_origin);
 
-    Vector<size_t, 2> vt_dsr();
+    void ensure_free_lines_from_origin(size_t count);
+
+    Result<Vector<size_t, 2>, Error> vt_dsr();
     void remove_at_index(size_t);
 
     enum class ModificationKind {
@@ -346,10 +361,18 @@ private:
         return current_prompt_metrics().offset_with_addition(buffer_metrics, m_num_columns);
     }
 
-    void set_origin()
+    bool set_origin(bool quit_on_error = true)
     {
         auto position = vt_dsr();
-        set_origin(position[0], position[1]);
+        if (!position.is_error()) {
+            set_origin(position.value()[0], position.value()[1]);
+            return true;
+        }
+        if (quit_on_error && position.is_error()) {
+            m_input_error = position.error();
+            finish();
+        }
+        return false;
     }
 
     void set_origin(int row, int col)
@@ -409,6 +432,7 @@ private:
     // Exact position before our prompt in the terminal.
     size_t m_origin_row { 0 };
     size_t m_origin_column { 0 };
+    bool m_has_origin_reset_scheduled { false };
 
     OwnPtr<SuggestionDisplay> m_suggestion_display;
 
@@ -442,16 +466,19 @@ private:
     Vector<HistoryEntry> m_history;
     size_t m_history_cursor { 0 };
     size_t m_history_capacity { 1024 };
+    bool m_history_dirty { false };
 
     enum class InputState {
         Free,
         Verbatim,
+        Paste,
         GotEscape,
         CSIExpectParameter,
         CSIExpectIntermediate,
         CSIExpectFinal,
     };
     InputState m_state { InputState::Free };
+    InputState m_previous_free_state { InputState::Free };
 
     struct Spans {
         HashMap<u32, HashMap<u32, Style>> m_spans_starting;

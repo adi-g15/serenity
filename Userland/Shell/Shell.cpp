@@ -7,13 +7,16 @@
 #include "Shell.h"
 #include "Execution.h"
 #include "Formatter.h"
+#include <AK/CharacterTypes.h>
 #include <AK/Debug.h>
 #include <AK/Function.h>
 #include <AK/LexicalPath.h>
+#include <AK/QuickSort.h>
 #include <AK/ScopeGuard.h>
 #include <AK/ScopedValueRollback.h>
 #include <AK/StringBuilder.h>
 #include <AK/TemporaryChange.h>
+#include <AK/URL.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/DirIterator.h>
 #include <LibCore/Event.h>
@@ -65,7 +68,8 @@ void Shell::print_path(const String& path)
         printf("%s", path.characters());
         return;
     }
-    printf("\033]8;;file://%s%s\033\\%s\033]8;;\033\\", hostname, path.characters(), path.characters());
+    auto url = URL::create_with_file_scheme(path, {}, hostname);
+    out("\033]8;;{}\033\\{}\033]8;;\033\\", url.serialize(), path);
 }
 
 String Shell::prompt() const
@@ -265,7 +269,7 @@ Vector<String> Shell::expand_globs(Vector<StringView> path_segments, const Strin
                 if (!base.ends_with('/'))
                     builder.append('/');
                 builder.append(path);
-                result.append(expand_globs(path_segments, builder.string_view()));
+                result.extend(expand_globs(path_segments, builder.string_view()));
             }
         }
 
@@ -342,7 +346,7 @@ Shell::LocalFrame* Shell::find_frame_containing_local_variable(const String& nam
     return nullptr;
 }
 
-RefPtr<AST::Value> Shell::lookup_local_variable(const String& name)
+RefPtr<AST::Value> Shell::lookup_local_variable(const String& name) const
 {
     if (auto* frame = find_frame_containing_local_variable(name))
         return frame->local_variables.get(name).value();
@@ -353,7 +357,7 @@ RefPtr<AST::Value> Shell::lookup_local_variable(const String& name)
     return nullptr;
 }
 
-RefPtr<AST::Value> Shell::get_argument(size_t index)
+RefPtr<AST::Value> Shell::get_argument(size_t index) const
 {
     if (index == 0)
         return adopt_ref(*new AST::StringValue(current_script));
@@ -377,7 +381,7 @@ RefPtr<AST::Value> Shell::get_argument(size_t index)
     return nullptr;
 }
 
-String Shell::local_variable_or(const String& name, const String& replacement)
+String Shell::local_variable_or(const String& name, const String& replacement) const
 {
     auto value = lookup_local_variable(name);
     if (value) {
@@ -585,7 +589,7 @@ RefPtr<Job> Shell::run_command(const AST::Command& command)
 
     // If the command is empty, store the redirections and apply them to all later commands.
     if (command.argv.is_empty() && !command.should_immediately_execute_next) {
-        m_global_redirections.append(command.redirections);
+        m_global_redirections.extend(command.redirections);
         for (auto& next_in_chain : command.next_chain)
             run_tail(command, next_in_chain, last_return_code);
         return nullptr;
@@ -846,6 +850,12 @@ RefPtr<Job> Shell::run_command(const AST::Command& command)
         last_return_code = job->exit_code();
         job->disown();
 
+        if (m_editor && job->exit_code() == 0 && is_allowed_to_modify_termios(job->command())) {
+            m_editor->refetch_default_termios();
+            default_termios = m_editor->default_termios();
+            termios = m_editor->termios();
+        }
+
         run_tail(job);
     };
 
@@ -879,7 +889,7 @@ void Shell::execute_process(Vector<const char*>&& argv)
         }
         if (saved_errno == ENOENT) {
             do {
-                auto file_result = Core::File::open(argv[0], Core::IODevice::OpenMode::ReadOnly);
+                auto file_result = Core::File::open(argv[0], Core::OpenMode::ReadOnly);
                 if (file_result.is_error())
                     break;
                 auto& file = file_result.value();
@@ -1012,7 +1022,7 @@ bool Shell::run_file(const String& filename, bool explicitly_invoked)
     TemporaryChange interactive_change { m_is_interactive, false };
     TemporaryChange<Optional<SourcePosition>> source_change { m_source_position, SourcePosition { .source_file = filename, .literal_source_text = {}, .position = {} } };
 
-    auto file_result = Core::File::open(filename, Core::File::ReadOnly);
+    auto file_result = Core::File::open(filename, Core::OpenMode::ReadOnly);
     if (file_result.is_error()) {
         auto error = String::formatted("'{}': {}", escape_token_for_single_quotes(filename), file_result.error());
         if (explicitly_invoked)
@@ -1025,6 +1035,19 @@ bool Shell::run_file(const String& filename, bool explicitly_invoked)
     auto data = file->read_all();
     return run_command(data) == 0;
 }
+
+bool Shell::is_allowed_to_modify_termios(const AST::Command& command) const
+{
+    if (command.argv.is_empty())
+        return false;
+
+    auto value = lookup_local_variable("PROGRAMS_ALLOWED_TO_MODIFY_DEFAULT_TERMIOS"sv);
+    if (!value)
+        return false;
+
+    return value->resolve_as_list(*this).contains_slow(command.argv[0]);
+}
+
 void Shell::restore_ios()
 {
     if (m_is_subshell)
@@ -1166,10 +1189,8 @@ Shell::SpecialCharacterEscapeMode Shell::special_character_escape_mode(u32 code_
         return SpecialCharacterEscapeMode::QuotedAsEscape;
     default:
         // FIXME: Should instead use unicode's "graphic" property (categories L, M, N, P, S, Zs)
-        if (code_point < NumericLimits<i32>::max()) {
-            if (isascii(static_cast<i32>(code_point)))
-                return isprint(static_cast<i32>(code_point)) ? SpecialCharacterEscapeMode::Untouched : SpecialCharacterEscapeMode::QuotedAsHex;
-        }
+        if (is_ascii(code_point))
+            return is_ascii_printable(code_point) ? SpecialCharacterEscapeMode::Untouched : SpecialCharacterEscapeMode::QuotedAsHex;
         return SpecialCharacterEscapeMode::Untouched;
     }
 }
@@ -1844,6 +1865,8 @@ Shell::Shell(Line::Editor& editor, bool attempt_interactive)
 
         return EDITOR_INTERNAL_FUNCTION(finish)(editor);
     });
+
+    start_timer(3000);
 }
 
 Shell::~Shell()
@@ -1974,16 +1997,16 @@ void Shell::possibly_print_error() const
                 warn("\x1b[31m");
                 size_t length_written_so_far = 0;
                 if (line == (i64)source_position.position->start_line.line_number) {
-                    warn(StringView { "{:~>{}}" }, "", 5 + source_position.position->start_line.line_column);
+                    warn("{:~>{}}", "", 5 + source_position.position->start_line.line_column);
                     length_written_so_far += source_position.position->start_line.line_column;
                 } else {
-                    warn(StringView { "{:~>{}}" }, "", 5);
+                    warn("{:~>{}}", "", 5);
                 }
                 if (line == (i64)source_position.position->end_line.line_number) {
-                    warn(StringView { "{:^>{}}" }, "", source_position.position->end_line.line_column - length_written_so_far);
+                    warn("{:^>{}}", "", source_position.position->end_line.line_column - length_written_so_far);
                     length_written_so_far += source_position.position->start_line.line_column;
                 } else {
-                    warn(StringView { "{:^>{}}" }, "", current_line.length() - length_written_so_far);
+                    warn("{:^>{}}", "", current_line.length() - length_written_so_far);
                 }
                 warnln("\x1b[0m");
             }
@@ -1993,7 +2016,7 @@ void Shell::possibly_print_error() const
         i64 line_to_skip_to = max(source_position.position->start_line.line_number, 2ul) - 2;
 
         if (!source_position.source_file.is_null()) {
-            auto file = Core::File::open(source_position.source_file, Core::IODevice::OpenMode::ReadOnly);
+            auto file = Core::File::open(source_position.source_file, Core::OpenMode::ReadOnly);
             if (file.is_error()) {
                 warnln("Shell: Internal error while trying to display source information: {} (while reading '{}')", file.error(), source_position.source_file);
                 return;
@@ -2056,6 +2079,36 @@ Optional<int> Shell::resolve_job_spec(const String& str)
     return {};
 }
 
+void Shell::timer_event(Core::TimerEvent& event)
+{
+    event.accept();
+
+    if (m_is_subshell)
+        return;
+
+    StringView option = getenv("HISTORY_AUTOSAVE_TIME_MS");
+
+    auto time = option.to_uint();
+    if (!time.has_value() || time.value() == 0) {
+        m_history_autosave_time.clear();
+        stop_timer();
+        start_timer(3000);
+        return;
+    }
+
+    if (m_history_autosave_time != time) {
+        m_history_autosave_time = time.value();
+        stop_timer();
+        start_timer(m_history_autosave_time.value());
+    }
+
+    if (!m_history_autosave_time.has_value())
+        return;
+
+    if (m_editor && m_editor->is_history_dirty())
+        m_editor->save_history(get_history_path());
+}
+
 void FileDescriptionCollector::collect()
 {
     for (auto fd : m_fds)
@@ -2086,8 +2139,8 @@ SavedFileDescriptors::SavedFileDescriptors(const NonnullRefPtrVector<AST::Rewiri
             continue;
         }
 
-        auto flags = fcntl(new_fd, F_GETFL);
-        auto rc = fcntl(new_fd, F_SETFL, flags | FD_CLOEXEC);
+        auto flags = fcntl(new_fd, F_GETFD);
+        auto rc = fcntl(new_fd, F_SETFD, flags | FD_CLOEXEC);
         VERIFY(rc == 0);
 
         m_saves.append({ rewiring.new_fd, new_fd });

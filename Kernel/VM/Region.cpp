@@ -19,7 +19,7 @@
 
 namespace Kernel {
 
-Region::Region(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, Region::Access access, Cacheable cacheable, bool shared)
+Region::Region(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, OwnPtr<KString> name, Region::Access access, Cacheable cacheable, bool shared)
     : PurgeablePageRanges(vmobject)
     , m_range(range)
     , m_offset_in_vmobject(offset_in_vmobject)
@@ -84,7 +84,7 @@ OwnPtr<Region> Region::clone(Process& new_owner)
 
         // Create a new region backed by the same VMObject.
         auto region = Region::create_user_accessible(
-            &new_owner, m_range, m_vmobject, m_offset_in_vmobject, m_name, access(), m_cacheable ? Cacheable::Yes : Cacheable::No, m_shared);
+            &new_owner, m_range, m_vmobject, m_offset_in_vmobject, m_name ? m_name->try_clone() : OwnPtr<KString> {}, access(), m_cacheable ? Cacheable::Yes : Cacheable::No, m_shared);
         if (m_vmobject->is_anonymous())
             region->copy_purgeable_page_ranges(*this);
         region->set_mmap(m_mmap);
@@ -103,7 +103,7 @@ OwnPtr<Region> Region::clone(Process& new_owner)
     // Set up a COW region. The parent (this) region becomes COW as well!
     remap();
     auto clone_region = Region::create_user_accessible(
-        &new_owner, m_range, vmobject_clone.release_nonnull(), m_offset_in_vmobject, m_name, access(), m_cacheable ? Cacheable::Yes : Cacheable::No, m_shared);
+        &new_owner, m_range, vmobject_clone.release_nonnull(), m_offset_in_vmobject, m_name ? m_name->try_clone() : OwnPtr<KString> {}, access(), m_cacheable ? Cacheable::Yes : Cacheable::No, m_shared);
     if (m_vmobject->is_anonymous())
         clone_region->copy_purgeable_page_ranges(*this);
     if (m_stack) {
@@ -208,17 +208,18 @@ size_t Region::amount_shared() const
     return bytes;
 }
 
-NonnullOwnPtr<Region> Region::create_user_accessible(Process* owner, const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, Region::Access access, Cacheable cacheable, bool shared)
+NonnullOwnPtr<Region> Region::create_user_accessible(Process* owner, const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, OwnPtr<KString> name, Region::Access access, Cacheable cacheable, bool shared)
 {
-    auto region = adopt_own(*new Region(range, move(vmobject), offset_in_vmobject, move(name), access, cacheable, shared));
-    if (owner)
+    auto region = adopt_own_if_nonnull(new (nothrow) Region(range, move(vmobject), offset_in_vmobject, move(name), access, cacheable, shared));
+    if (region && owner)
         region->m_owner = owner->make_weak_ptr();
-    return region;
+    // FIXME: Return OwnPtr and propagate failure, currently there are too many assumptions made by down stream callers.
+    return region.release_nonnull();
 }
 
-NonnullOwnPtr<Region> Region::create_kernel_only(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, String name, Region::Access access, Cacheable cacheable)
+OwnPtr<Region> Region::create_kernel_only(const Range& range, NonnullRefPtr<VMObject> vmobject, size_t offset_in_vmobject, OwnPtr<KString> name, Region::Access access, Cacheable cacheable)
 {
-    return adopt_own(*new Region(range, move(vmobject), offset_in_vmobject, move(name), access, cacheable, false));
+    return adopt_own_if_nonnull(new (nothrow) Region(range, move(vmobject), offset_in_vmobject, move(name), access, cacheable, false));
 }
 
 bool Region::should_cow(size_t page_index) const
@@ -539,8 +540,14 @@ PageFaultResponse Region::handle_inode_fault(size_t page_index_in_region, Scoped
 
     // Reading the page may block, so release the MM lock temporarily
     mm_lock.unlock();
-    auto buffer = UserOrKernelBuffer::for_kernel_buffer(page_buffer);
-    auto result = inode.read_bytes(page_index_in_vmobject * PAGE_SIZE, PAGE_SIZE, buffer, nullptr);
+
+    KResultOr<size_t> result(KSuccess);
+    {
+        ScopedLockRelease release_paging_lock(vmobject().m_paging_lock);
+        auto buffer = UserOrKernelBuffer::for_kernel_buffer(page_buffer);
+        result = inode.read_bytes(page_index_in_vmobject * PAGE_SIZE, PAGE_SIZE, buffer, nullptr);
+    }
+
     mm_lock.lock();
 
     if (result.is_error()) {

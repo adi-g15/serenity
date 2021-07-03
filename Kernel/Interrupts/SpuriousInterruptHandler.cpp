@@ -6,6 +6,7 @@
 
 #include <Kernel/Interrupts/InterruptManagement.h>
 #include <Kernel/Interrupts/SpuriousInterruptHandler.h>
+#include <Kernel/Sections.h>
 
 namespace Kernel {
 
@@ -18,7 +19,7 @@ UNMAP_AFTER_INIT void SpuriousInterruptHandler::initialize(u8 interrupt_number)
 void SpuriousInterruptHandler::register_handler(GenericInterruptHandler& handler)
 {
     VERIFY(!m_real_handler);
-    m_real_handler = &handler;
+    m_real_handler = adopt_own_if_nonnull(&handler);
 }
 void SpuriousInterruptHandler::unregister_handler(GenericInterruptHandler&)
 {
@@ -54,16 +55,19 @@ SpuriousInterruptHandler::~SpuriousInterruptHandler()
 {
 }
 
-void SpuriousInterruptHandler::handle_interrupt(const RegisterState& state)
+bool SpuriousInterruptHandler::handle_interrupt(const RegisterState& state)
 {
     // Actually check if IRQ7 or IRQ15 are spurious, and if not, call the real handler to handle the IRQ.
     if (m_responsible_irq_controller->get_isr() & (1 << interrupt_number())) {
         m_real_irq = true; // remember that we had a real IRQ, when EOI later!
-        m_real_handler->increment_invoking_counter();
-        m_real_handler->handle_interrupt(state);
-        return;
+        if (m_real_handler->handle_interrupt(state)) {
+            m_real_handler->increment_invoking_counter();
+            return true;
+        }
+        return false;
     }
     dbgln("Spurious interrupt, vector {}", interrupt_number());
+    return true;
 }
 
 void SpuriousInterruptHandler::enable_interrupt_vector()

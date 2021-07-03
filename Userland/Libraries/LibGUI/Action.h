@@ -43,6 +43,10 @@ NonnullRefPtr<Action> make_go_home_action(Function<void(Action&)> callback, Core
 NonnullRefPtr<Action> make_reload_action(Function<void(Action&)>, Core::Object* parent = nullptr);
 NonnullRefPtr<Action> make_select_all_action(Function<void(Action&)>, Core::Object* parent = nullptr);
 NonnullRefPtr<Action> make_properties_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_zoom_in_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_zoom_out_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+NonnullRefPtr<Action> make_reset_zoom_action(Function<void(Action&)>, Core::Object* parent = nullptr);
+
 };
 
 class Action final : public Core::Object {
@@ -57,7 +61,9 @@ public:
     static NonnullRefPtr<Action> create(String text, Function<void(Action&)> callback, Core::Object* parent = nullptr);
     static NonnullRefPtr<Action> create(String text, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent = nullptr);
     static NonnullRefPtr<Action> create(String text, const Shortcut& shortcut, Function<void(Action&)> callback, Core::Object* parent = nullptr);
+    static NonnullRefPtr<Action> create(String text, const Shortcut& shortcut, const Shortcut& alternate_shortcut, Function<void(Action&)> callback, Core::Object* parent = nullptr);
     static NonnullRefPtr<Action> create(String text, const Shortcut& shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent = nullptr);
+    static NonnullRefPtr<Action> create(String text, const Shortcut& shortcut, const Shortcut& alternate_shortcut, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent = nullptr);
     static NonnullRefPtr<Action> create_checkable(String text, Function<void(Action&)> callback, Core::Object* parent = nullptr);
     static NonnullRefPtr<Action> create_checkable(String text, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> callback, Core::Object* parent = nullptr);
     static NonnullRefPtr<Action> create_checkable(String text, const Shortcut& shortcut, Function<void(Action&)> callback, Core::Object* parent = nullptr);
@@ -71,7 +77,8 @@ public:
     String const& status_tip() const { return m_status_tip; }
     void set_status_tip(String status_tip) { m_status_tip = move(status_tip); }
 
-    Shortcut shortcut() const { return m_shortcut; }
+    Shortcut const& shortcut() const { return m_shortcut; }
+    Shortcut const& alternate_shortcut() const { return m_alternate_shortcut; }
     const Gfx::Bitmap* icon() const { return m_icon.ptr(); }
     void set_icon(const Gfx::Bitmap*);
 
@@ -109,7 +116,8 @@ public:
 private:
     Action(String, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
     Action(String, const Shortcut&, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
-    Action(String, const Shortcut&, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
+    Action(String, const Shortcut&, const Shortcut&, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
+    Action(String, const Shortcut&, const Shortcut&, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
     Action(String, RefPtr<Gfx::Bitmap> icon, Function<void(Action&)> = nullptr, Core::Object* = nullptr, bool checkable = false);
 
     template<typename Callback>
@@ -121,6 +129,7 @@ private:
     String m_status_tip;
     RefPtr<Gfx::Bitmap> m_icon;
     Shortcut m_shortcut;
+    Shortcut m_alternate_shortcut;
     bool m_enabled { true };
     bool m_checkable { false };
     bool m_checked { false };

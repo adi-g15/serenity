@@ -49,6 +49,7 @@ public:
 
     const TextDocument& document() const { return *m_document; }
     TextDocument& document() { return *m_document; }
+    bool has_document() const { return !!m_document; }
 
     virtual void set_document(TextDocument&);
 
@@ -90,6 +91,9 @@ public:
     bool is_ruler_visible() const { return m_ruler_visible; }
     void set_ruler_visible(bool);
 
+    bool is_gutter_visible() const { return m_gutter_visible; }
+    void set_gutter_visible(bool);
+
     void set_icon(const Gfx::Bitmap*);
     const Gfx::Bitmap* icon() const { return m_icon; }
 
@@ -115,6 +119,7 @@ public:
     bool write_to_file(const String& path);
     bool has_selection() const { return m_selection.is_valid(); }
     String selected_text() const;
+    size_t number_of_selected_words() const;
     void set_selection(const TextRange&);
     void clear_selection();
     bool can_undo() const { return document().can_undo(); }
@@ -137,6 +142,7 @@ public:
     Function<void(bool modified)> on_modified_change;
     Function<void()> on_mousedown;
     Function<void()> on_return_pressed;
+    Function<void()> on_shift_return_pressed;
     Function<void()> on_escape_pressed;
     Function<void()> on_up_pressed;
     Function<void()> on_down_pressed;
@@ -169,6 +175,9 @@ public:
 
     bool should_autocomplete_automatically() const { return m_autocomplete_timer; }
     void set_should_autocomplete_automatically(bool);
+
+    u32 substitution_code_point() const { return m_substitution_code_point; }
+    void set_substitution_code_point(u32 code_point);
 
     bool is_in_drag_select() const { return m_in_drag_select; }
 
@@ -207,11 +216,14 @@ protected:
     virtual void theme_change_event(ThemeChangeEvent&) override;
     virtual void cursor_did_change() { }
     Gfx::IntRect ruler_content_rect(size_t line) const;
+    Gfx::IntRect gutter_content_rect(size_t line) const;
 
     TextPosition text_position_at(const Gfx::IntPoint&) const;
     bool ruler_visible() const { return m_ruler_visible; }
+    bool gutter_visible() const { return m_gutter_visible; }
     Gfx::IntRect content_rect_for_position(const TextPosition&) const;
     int ruler_width() const;
+    int gutter_width() const;
 
 private:
     friend class TextDocumentLine;
@@ -265,15 +277,19 @@ private:
         TextEditor& m_editor;
     };
 
+    int text_width_for_font(auto const& text_view, Gfx::Font const&) const;
+    Utf32View substitution_code_point_view(size_t length) const;
+
     Gfx::IntRect line_content_rect(size_t item_index) const;
     Gfx::IntRect line_widget_rect(size_t line_index) const;
     void delete_selection();
     int content_x_for_position(const TextPosition&) const;
     Gfx::IntRect ruler_rect_in_inner_coordinates() const;
+    Gfx::IntRect gutter_rect_in_inner_coordinates() const;
     Gfx::IntRect visible_text_rect_in_inner_coordinates() const;
     void recompute_all_visual_lines();
     void ensure_cursor_is_valid();
-    void flush_pending_change_notification_if_needed();
+    void rehighlight_if_needed();
 
     size_t visual_line_containing(size_t line_index, size_t column) const;
     void recompute_visual_lines(size_t line_index);
@@ -300,6 +316,8 @@ private:
     bool m_cursor_state { true };
     bool m_in_drag_select { false };
     bool m_ruler_visible { false };
+    bool m_gutter_visible { false };
+    bool m_needs_rehighlight { false };
     bool m_has_pending_change_notification { false };
     bool m_automatic_indentation_enabled { false };
     WrappingMode m_wrapping_mode { WrappingMode::NoWrap };
@@ -309,6 +327,11 @@ private:
     size_t m_soft_tab_width { 4 };
     int m_horizontal_content_padding { 3 };
     TextRange m_selection;
+
+    // NOTE: If non-zero, all glyphs will be substituted with this one.
+    u32 m_substitution_code_point { 0 };
+    mutable OwnPtr<Vector<u32>> m_substitution_string_data; // Used to avoid repeated String construction.
+
     RefPtr<Menu> m_context_menu;
     RefPtr<Action> m_undo_action;
     RefPtr<Action> m_redo_action;

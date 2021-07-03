@@ -67,18 +67,18 @@ CSVImportDialogPage::CSVImportDialogPage(StringView csv)
     m_delimiter_tab_radio->on_checked = [&](auto) { update_preview(); };
     m_delimiter_space_radio->on_checked = [&](auto) { update_preview(); };
     m_delimiter_other_radio->on_checked = [&](auto) { update_preview(); };
-    m_delimiter_other_text_box->on_change = [&](auto&) {
+    m_delimiter_other_text_box->on_change = [&] {
         if (m_delimiter_other_radio->is_checked())
             update_preview();
     };
     m_quote_single_radio->on_checked = [&](auto) { update_preview(); };
     m_quote_double_radio->on_checked = [&](auto) { update_preview(); };
     m_quote_other_radio->on_checked = [&](auto) { update_preview(); };
-    m_quote_other_text_box->on_change = [&](auto&) {
+    m_quote_other_text_box->on_change = [&] {
         if (m_quote_other_radio->is_checked())
             update_preview();
     };
-    m_quote_escape_combo_box->on_change = [&](auto&) { update_preview(); };
+    m_quote_escape_combo_box->on_change = [&](auto&, auto&) { update_preview(); };
     m_read_header_check_box->on_checked = [&](auto) { update_preview(); };
     m_trim_leading_field_spaces_check_box->on_checked = [&](auto) { update_preview(); };
     m_trim_trailing_field_spaces_check_box->on_checked = [&](auto) { update_preview(); };
@@ -147,7 +147,7 @@ auto CSVImportDialogPage::make_reader() -> Optional<Reader::XSV>
     if (should_trim_trailing)
         behaviours = behaviours | Reader::ParserBehaviour::TrimTrailingFieldSpaces;
 
-    return Reader::XSV(m_csv, traits, behaviours);
+    return Reader::XSV(m_csv, move(traits), behaviours);
 };
 
 void CSVImportDialogPage::update_preview()
@@ -195,6 +195,7 @@ Result<NonnullRefPtrVector<Sheet>, String> ImportDialog::make_and_run_for(String
             NonnullRefPtrVector<Sheet> sheets;
 
             if (reader.has_value()) {
+                reader->parse();
                 if (reader.value().has_error())
                     return String::formatted("CSV Import failed: {}", reader.value().error_string());
 
@@ -251,7 +252,7 @@ Result<NonnullRefPtrVector<Sheet>, String> ImportDialog::make_and_run_for(String
     } else {
         auto page = GUI::WizardPage::construct(
             "Import File Format",
-            String::formatted("Select the format you wish to import '{}' as", LexicalPath { file.filename() }.basename()));
+            String::formatted("Select the format you wish to import '{}' as", LexicalPath::basename(file.filename())));
 
         page->on_next_page = [] { return nullptr; };
 

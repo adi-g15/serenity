@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@gmx.de>
+ * Copyright (c) 2020, Stephan Unverwerth <s.unverwerth@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -29,6 +29,7 @@ struct FunctionNodeParseOptions {
         IsGetterFunction = 1 << 3,
         IsSetterFunction = 1 << 4,
         IsArrowFunction = 1 << 5,
+        IsGeneratorFunction = 1 << 6,
     };
 };
 
@@ -36,11 +37,17 @@ class Parser {
 public:
     explicit Parser(Lexer lexer);
 
-    NonnullRefPtr<Program> parse_program();
+    NonnullRefPtr<Program> parse_program(bool starts_in_strict_mode = false);
 
     template<typename FunctionNodeType>
     NonnullRefPtr<FunctionNodeType> parse_function_node(u8 parse_options = FunctionNodeParseOptions::CheckForFunctionAndName);
-    Vector<FunctionNode::Parameter> parse_function_parameters(int& function_length, u8 parse_options = 0);
+    Vector<FunctionNode::Parameter> parse_formal_parameters(int& function_length, u8 parse_options = 0);
+    RefPtr<BindingPattern> parse_binding_pattern();
+
+    struct PrimaryExpressionParseResult {
+        NonnullRefPtr<Expression> result;
+        bool should_continue_parsing_as_expression { true };
+    };
 
     NonnullRefPtr<Declaration> parse_declaration();
     NonnullRefPtr<Statement> parse_statement();
@@ -64,7 +71,7 @@ public:
     NonnullRefPtr<DebuggerStatement> parse_debugger_statement();
     NonnullRefPtr<ConditionalExpression> parse_conditional_expression(NonnullRefPtr<Expression> test);
     NonnullRefPtr<Expression> parse_expression(int min_precedence, Associativity associate = Associativity::Right, const Vector<TokenType>& forbidden = {});
-    NonnullRefPtr<Expression> parse_primary_expression();
+    PrimaryExpressionParseResult parse_primary_expression();
     NonnullRefPtr<Expression> parse_unary_prefixed_expression();
     NonnullRefPtr<RegExpLiteral> parse_regexp_literal();
     NonnullRefPtr<ObjectExpression> parse_object_expression();
@@ -76,8 +83,10 @@ public:
     NonnullRefPtr<NewExpression> parse_new_expression();
     NonnullRefPtr<ClassDeclaration> parse_class_declaration();
     NonnullRefPtr<ClassExpression> parse_class_expression(bool expect_class_name);
+    NonnullRefPtr<YieldExpression> parse_yield_expression();
     NonnullRefPtr<Expression> parse_property_key();
     NonnullRefPtr<AssignmentExpression> parse_assignment_expression(AssignmentOp, NonnullRefPtr<Expression> lhs, int min_precedence, Associativity);
+    NonnullRefPtr<Identifier> parse_identifier();
 
     RefPtr<FunctionExpression> try_parse_arrow_function_expression(bool expect_parens);
     RefPtr<Statement> try_parse_labelled_statement();
@@ -115,12 +124,12 @@ public:
         }
     };
 
-    bool has_errors() const { return m_parser_state.m_errors.size(); }
-    const Vector<Error>& errors() const { return m_parser_state.m_errors; }
+    bool has_errors() const { return m_state.errors.size(); }
+    const Vector<Error>& errors() const { return m_state.errors; }
     void print_errors() const
     {
-        for (auto& error : m_parser_state.m_errors) {
-            auto hint = error.source_location_hint(m_parser_state.m_lexer.source());
+        for (auto& error : m_state.errors) {
+            auto hint = error.source_location_hint(m_state.lexer.source());
             if (!hint.is_empty())
                 warnln("{}", hint);
             warnln("SyntaxError: {}", error.to_string());
@@ -188,21 +197,25 @@ private:
     [[nodiscard]] RulePosition push_start() { return { *this, position() }; }
 
     struct ParserState {
-        Lexer m_lexer;
-        Token m_current_token;
-        Vector<Error> m_errors;
-        Vector<NonnullRefPtrVector<VariableDeclaration>> m_var_scopes;
-        Vector<NonnullRefPtrVector<VariableDeclaration>> m_let_scopes;
-        Vector<NonnullRefPtrVector<FunctionDeclaration>> m_function_scopes;
-        HashTable<StringView> m_labels_in_scope;
-        bool m_strict_mode { false };
-        bool m_allow_super_property_lookup { false };
-        bool m_allow_super_constructor_call { false };
-        bool m_in_function_context { false };
-        bool m_in_arrow_function_context { false };
-        bool m_in_break_context { false };
-        bool m_in_continue_context { false };
-        bool m_string_legacy_octal_escape_sequence_in_scope { false };
+        Lexer lexer;
+        Token current_token;
+        Vector<Error> errors;
+        Vector<NonnullRefPtrVector<VariableDeclaration>> var_scopes;
+        Vector<NonnullRefPtrVector<VariableDeclaration>> let_scopes;
+        Vector<NonnullRefPtrVector<FunctionDeclaration>> function_scopes;
+
+        Vector<Vector<FunctionNode::Parameter>&> function_parameters;
+
+        HashTable<StringView> labels_in_scope;
+        bool strict_mode { false };
+        bool allow_super_property_lookup { false };
+        bool allow_super_constructor_call { false };
+        bool in_function_context { false };
+        bool in_generator_function_context { false };
+        bool in_arrow_function_context { false };
+        bool in_break_context { false };
+        bool in_continue_context { false };
+        bool string_legacy_octal_escape_sequence_in_scope { false };
 
         explicit ParserState(Lexer);
     };
@@ -221,7 +234,7 @@ private:
     };
 
     Vector<Position> m_rule_starts;
-    ParserState m_parser_state;
+    ParserState m_state;
     FlyString m_filename;
     Vector<ParserState> m_saved_state;
     HashMap<Position, TokenMemoization, PositionKeyTraits> m_token_memoizations;

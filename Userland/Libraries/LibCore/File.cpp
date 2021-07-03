@@ -26,7 +26,7 @@
 
 namespace Core {
 
-Result<NonnullRefPtr<File>, String> File::open(String filename, IODevice::OpenMode mode, mode_t permissions)
+Result<NonnullRefPtr<File>, String> File::open(String filename, OpenMode mode, mode_t permissions)
 {
     auto file = File::construct(move(filename));
     if (!file->open_impl(mode, permissions))
@@ -42,11 +42,11 @@ File::File(String filename, Object* parent)
 
 File::~File()
 {
-    if (m_should_close_file_descriptor == ShouldCloseFileDescriptor::Yes && mode() != NotOpen)
+    if (m_should_close_file_descriptor == ShouldCloseFileDescriptor::Yes && mode() != OpenMode::NotOpen)
         close();
 }
 
-bool File::open(int fd, IODevice::OpenMode mode, ShouldCloseFileDescriptor should_close)
+bool File::open(int fd, OpenMode mode, ShouldCloseFileDescriptor should_close)
 {
     set_fd(fd);
     set_mode(mode);
@@ -54,31 +54,33 @@ bool File::open(int fd, IODevice::OpenMode mode, ShouldCloseFileDescriptor shoul
     return true;
 }
 
-bool File::open(IODevice::OpenMode mode)
+bool File::open(OpenMode mode)
 {
     return open_impl(mode, 0666);
 }
 
-bool File::open_impl(IODevice::OpenMode mode, mode_t permissions)
+bool File::open_impl(OpenMode mode, mode_t permissions)
 {
     VERIFY(!m_filename.is_null());
     int flags = 0;
-    if ((mode & IODevice::ReadWrite) == IODevice::ReadWrite) {
+    if (has_flag(mode, OpenMode::ReadOnly) && has_flag(mode, OpenMode::WriteOnly)) {
         flags |= O_RDWR | O_CREAT;
-    } else if (mode & IODevice::ReadOnly) {
+    } else if (has_flag(mode, OpenMode::ReadOnly)) {
         flags |= O_RDONLY;
-    } else if (mode & IODevice::WriteOnly) {
+    } else if (has_flag(mode, OpenMode::WriteOnly)) {
         flags |= O_WRONLY | O_CREAT;
-        bool should_truncate = !((mode & IODevice::Append) || (mode & IODevice::MustBeNew));
+        bool should_truncate = !(has_flag(mode, OpenMode::Append) || has_flag(mode, OpenMode::MustBeNew));
         if (should_truncate)
             flags |= O_TRUNC;
     }
-    if (mode & IODevice::Append)
+    if (has_flag(mode, OpenMode::Append))
         flags |= O_APPEND;
-    if (mode & IODevice::Truncate)
+    if (has_flag(mode, OpenMode::Truncate))
         flags |= O_TRUNC;
-    if (mode & IODevice::MustBeNew)
+    if (has_flag(mode, OpenMode::MustBeNew))
         flags |= O_EXCL;
+    if (!has_flag(mode, OpenMode::KeepOnExec))
+        flags |= O_CLOEXEC;
     int fd = ::open(m_filename.characters(), flags, permissions);
     if (fd < 0) {
         set_error(errno);
@@ -238,7 +240,7 @@ NonnullRefPtr<File> File::standard_input()
 {
     if (!stdin_file) {
         stdin_file = File::construct();
-        stdin_file->open(STDIN_FILENO, IODevice::ReadOnly, ShouldCloseFileDescriptor::No);
+        stdin_file->open(STDIN_FILENO, OpenMode::ReadOnly, ShouldCloseFileDescriptor::No);
     }
     return *stdin_file;
 }
@@ -247,7 +249,7 @@ NonnullRefPtr<File> File::standard_output()
 {
     if (!stdout_file) {
         stdout_file = File::construct();
-        stdout_file->open(STDOUT_FILENO, IODevice::WriteOnly, ShouldCloseFileDescriptor::No);
+        stdout_file->open(STDOUT_FILENO, OpenMode::WriteOnly, ShouldCloseFileDescriptor::No);
     }
     return *stdout_file;
 }
@@ -256,7 +258,7 @@ NonnullRefPtr<File> File::standard_error()
 {
     if (!stderr_file) {
         stderr_file = File::construct();
-        stderr_file->open(STDERR_FILENO, IODevice::WriteOnly, ShouldCloseFileDescriptor::No);
+        stderr_file->open(STDERR_FILENO, OpenMode::WriteOnly, ShouldCloseFileDescriptor::No);
     }
     return *stderr_file;
 }
@@ -269,16 +271,17 @@ static String get_duplicate_name(const String& path, int duplicate_count)
     LexicalPath lexical_path(path);
     StringBuilder duplicated_name;
     duplicated_name.append('/');
-    for (size_t i = 0; i < lexical_path.parts().size() - 1; ++i) {
-        duplicated_name.appendff("{}/", lexical_path.parts()[i]);
+    auto& parts = lexical_path.parts_view();
+    for (size_t i = 0; i < parts.size() - 1; ++i) {
+        duplicated_name.appendff("{}/", parts[i]);
     }
     auto prev_duplicate_tag = String::formatted("({})", duplicate_count);
     auto title = lexical_path.title();
     if (title.ends_with(prev_duplicate_tag)) {
         // remove the previous duplicate tag "(n)" so we can add a new tag.
-        title = title.substring(0, title.length() - prev_duplicate_tag.length());
+        title = title.substring_view(0, title.length() - prev_duplicate_tag.length());
     }
-    duplicated_name.appendff("{} ({})", lexical_path.title(), duplicate_count);
+    duplicated_name.appendff("{} ({})", title, duplicate_count);
     if (!lexical_path.extension().is_empty()) {
         duplicated_name.appendff(".{}", lexical_path.extension());
     }
@@ -297,7 +300,7 @@ Result<void, File::CopyError> File::copy_file_or_directory(const String& dst_pat
         }
     }
 
-    auto source_or_error = File::open(src_path, IODevice::ReadOnly);
+    auto source_or_error = File::open(src_path, OpenMode::ReadOnly);
     if (source_or_error.is_error())
         return CopyError { OSError(errno), false };
 
@@ -330,7 +333,7 @@ Result<void, File::CopyError> File::copy_file(const String& dst_path, const stru
         if (errno != EISDIR)
             return CopyError { OSError(errno), false };
 
-        auto dst_dir_path = String::formatted("{}/{}", dst_path, LexicalPath(source.filename()).basename());
+        auto dst_dir_path = String::formatted("{}/{}", dst_path, LexicalPath::basename(source.filename()));
         dst_fd = creat(dst_dir_path.characters(), 0666);
         if (dst_fd < 0)
             return CopyError { OSError(errno), false };

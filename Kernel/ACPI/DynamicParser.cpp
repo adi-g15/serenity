@@ -6,6 +6,7 @@
 
 #include <Kernel/ACPI/DynamicParser.h>
 #include <Kernel/ACPI/Parser.h>
+#include <Kernel/Sections.h>
 
 namespace Kernel {
 namespace ACPI {
@@ -17,7 +18,7 @@ UNMAP_AFTER_INIT DynamicParser::DynamicParser(PhysicalAddress rsdp)
     dmesgln("ACPI: Dynamic Parsing Enabled, Can parse AML");
 }
 
-void DynamicParser::handle_irq(const RegisterState&)
+bool DynamicParser::handle_irq(const RegisterState&)
 {
     // FIXME: Implement IRQ handling of ACPI signals!
     VERIFY_NOT_REACHED();

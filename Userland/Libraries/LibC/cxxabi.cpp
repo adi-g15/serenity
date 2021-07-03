@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020, Andrew Kaster <andrewdkaster@gmail.com>
+ * Copyright (c) 2019-2020, Andrew Kaster <akaster@serenityos.org>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -104,7 +104,7 @@ void __cxa_finalize(void* dso_handle)
     __pthread_mutex_unlock(&atexit_mutex);
 }
 
-[[noreturn]] void __cxa_pure_virtual()
+__attribute__((noreturn)) void __cxa_pure_virtual()
 {
     VERIFY_NOT_REACHED();
 }

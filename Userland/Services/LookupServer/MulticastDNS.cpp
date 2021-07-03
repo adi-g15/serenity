@@ -12,6 +12,7 @@
 #include <AK/JsonValue.h>
 #include <AK/String.h>
 #include <LibCore/File.h>
+#include <limits.h>
 #include <poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -82,15 +83,19 @@ void MulticastDNS::announce()
     DNSPacket response;
     response.set_is_response();
     response.set_code(DNSPacket::Code::NOERROR);
+    response.set_authoritative_answer(true);
+    response.set_recursion_desired(false);
+    response.set_recursion_available(false);
 
     for (auto& address : local_addresses()) {
         auto raw_addr = address.to_in_addr_t();
         DNSAnswer answer {
             m_hostname,
-            T_A,
-            C_IN | 0x8000,
+            DNSRecordType::A,
+            DNSRecordClass::IN,
             120,
-            String { (const char*)&raw_addr, sizeof(raw_addr) }
+            String { (const char*)&raw_addr, sizeof(raw_addr) },
+            true,
         };
         response.add_answer(answer);
     }
@@ -110,7 +115,7 @@ ssize_t MulticastDNS::emit_packet(const DNSPacket& packet, const sockaddr_in* de
 Vector<IPv4Address> MulticastDNS::local_addresses() const
 {
     auto file = Core::File::construct("/proc/net/adapters");
-    if (!file->open(Core::IODevice::ReadOnly)) {
+    if (!file->open(Core::OpenMode::ReadOnly)) {
         dbgln("Failed to open /proc/net/adapters: {}", file->error_string());
         return {};
     }
@@ -137,11 +142,12 @@ Vector<IPv4Address> MulticastDNS::local_addresses() const
     return addresses;
 }
 
-Vector<DNSAnswer> MulticastDNS::lookup(const DNSName& name, unsigned short record_type)
+Vector<DNSAnswer> MulticastDNS::lookup(const DNSName& name, DNSRecordType record_type)
 {
     DNSPacket request;
     request.set_is_query();
-    request.add_question({ name, record_type, C_IN });
+    request.set_recursion_desired(false);
+    request.add_question({ name, record_type, DNSRecordClass::IN, false });
 
     if (emit_packet(request) < 0) {
         perror("failed to emit request packet");
@@ -163,7 +169,7 @@ Vector<DNSAnswer> MulticastDNS::lookup(const DNSName& name, unsigned short recor
         }
 
         auto buffer = receive(1024);
-        if (!buffer)
+        if (buffer.is_empty())
             return {};
         auto optional_packet = DNSPacket::from_raw_packet(buffer.data(), buffer.size());
         if (!optional_packet.has_value()) {

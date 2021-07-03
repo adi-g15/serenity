@@ -10,7 +10,6 @@
 #include <LibCore/DateTime.h>
 #include <LibCore/File.h>
 #include <LibCore/ProcessStatisticsReader.h>
-#include <inttypes.h>
 #include <pwd.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -45,7 +44,7 @@ int main()
 
     unveil(nullptr, nullptr);
 
-    auto file_or_error = Core::File::open("/var/run/utmp", Core::IODevice::ReadOnly);
+    auto file_or_error = Core::File::open("/var/run/utmp", Core::OpenMode::ReadOnly);
     if (file_or_error.is_error()) {
         warnln("Error: {}", file_or_error.error());
         return 1;
@@ -65,8 +64,7 @@ int main()
 
     auto now = time(nullptr);
 
-    printf("\033[1m%-10s %-12s %-16s %-6s %s\033[0m\n",
-        "USER", "TTY", "LOGIN@", "IDLE", "WHAT");
+    outln("\033[1m{:10} {:12} {:16} {:6} {}\033[0m", "USER", "TTY", "LOGIN@", "IDLE", "WHAT");
     json.value().as_object().for_each_member([&](auto& tty, auto& value) {
         const JsonObject& entry = value.as_object();
         auto uid = entry.get("uid").to_u32();
@@ -95,17 +93,12 @@ int main()
 
         String what = "n/a";
 
-        for (auto& it : process_statistics.value()) {
-            if (it.value.tty == tty && it.value.pid == it.value.pgid)
-                what = it.value.name;
+        for (auto& process : process_statistics.value()) {
+            if (process.tty == tty && process.pid == process.pgid)
+                what = process.name;
         }
 
-        printf("%-10s %-12s %-16s %-6s %s\n",
-            username.characters(),
-            tty.characters(),
-            login_at.characters(),
-            idle_string.characters(),
-            what.characters());
+        outln("{:10} {:12} {:16} {:6} {}", username, tty, login_at, idle_string, what);
     });
     return 0;
 }

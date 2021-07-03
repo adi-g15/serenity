@@ -1,10 +1,13 @@
 set(SOURCES
-    Object.cpp
+    ColorSpace.cpp
+    CommonNames.cpp
     Document.cpp
+    Filter.cpp
     Object.cpp
     Parser.cpp
+    Renderer.cpp
     Value.cpp
     )
 
 serenity_lib(LibPDF pdf)
-target_link_libraries(LibPDF LibC LibCore)
+target_link_libraries(LibPDF LibC LibCore LibIPC LibGfx LibTextCodec)

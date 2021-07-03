@@ -21,24 +21,18 @@
 #include <LibGUI/MessageBox.h>
 #include <LibGUI/Window.h>
 #include <LibGfx/Bitmap.h>
-#include <LibThread/Thread.h>
+#include <LibThreading/Thread.h>
 
 int main(int argc, char** argv)
 {
-    if (pledge("stdio thread rpath accept cpath wpath recvfd sendfd unix fattr", nullptr) < 0) {
+    if (pledge("stdio thread rpath cpath wpath recvfd sendfd unix", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
 
     auto app = GUI::Application::construct(argc, argv);
 
-    if (pledge("stdio thread rpath accept cpath wpath recvfd sendfd unix", nullptr) < 0) {
-        perror("pledge");
-        return 1;
-    }
-
     auto audio_client = Audio::ClientConnection::construct();
-    audio_client->handshake();
 
     TrackManager track_manager;
 
@@ -54,9 +48,9 @@ int main(int argc, char** argv)
     Optional<String> save_path;
     bool need_to_write_wav = false;
 
-    auto audio_thread = LibThread::Thread::construct([&] {
+    auto audio_thread = Threading::Thread::construct([&] {
         auto audio = Core::File::construct("/dev/audio");
-        if (!audio->open(Core::IODevice::WriteOnly)) {
+        if (!audio->open(Core::OpenMode::WriteOnly)) {
             dbgln("Can't open audio device: {}", audio->error_string());
             return 1;
         }
@@ -91,7 +85,7 @@ int main(int argc, char** argv)
 
     auto menubar = GUI::Menubar::construct();
 
-    auto& file_menu = menubar->add_menu("File");
+    auto& file_menu = menubar->add_menu("&File");
     file_menu.add_action(GUI::Action::create("Export", { Mod_Ctrl, Key_E }, [&](const GUI::Action&) {
         save_path = GUI::FilePicker::get_save_filepath(window, "Untitled", "wav");
         if (!save_path.has_value())
@@ -110,10 +104,10 @@ int main(int argc, char** argv)
         return;
     }));
 
-    auto& edit_menu = menubar->add_menu("Edit");
+    auto& edit_menu = menubar->add_menu("&Edit");
     main_widget.add_actions(edit_menu);
 
-    auto& help_menu = menubar->add_menu("Help");
+    auto& help_menu = menubar->add_menu("&Help");
     help_menu.add_action(GUI::CommonActions::make_about_action("Piano", app_icon, window));
 
     window->set_menubar(move(menubar));

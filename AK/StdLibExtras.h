@@ -10,7 +10,8 @@
 
 #include <AK/Assertions.h>
 
-constexpr unsigned round_up_to_power_of_two(unsigned value, unsigned power_of_two)
+template<typename T, typename U>
+constexpr auto round_up_to_power_of_two(T value, U power_of_two) requires(IsIntegral<T>&& IsIntegral<U>)
 {
     return ((value - 1) & ~(power_of_two - 1)) + power_of_two;
 }
@@ -38,9 +39,6 @@ struct _RawPtr {
 
 namespace AK {
 
-template<typename T>
-auto declval() -> T;
-
 template<class T>
 constexpr T&& forward(RemoveReference<T>& param)
 {
@@ -61,19 +59,19 @@ constexpr SizeType array_size(T (&)[N])
 }
 
 template<typename T>
-constexpr T min(const T& a, const T& b)
+constexpr T min(const T& a, const IdentityType<T>& b)
 {
     return b < a ? b : a;
 }
 
 template<typename T>
-constexpr T max(const T& a, const T& b)
+constexpr T max(const T& a, const IdentityType<T>& b)
 {
     return a < b ? b : a;
 }
 
 template<typename T>
-constexpr T clamp(const T& value, const T& min, const T& max)
+constexpr T clamp(const T& value, const IdentityType<T>& min, const IdentityType<T>& max)
 {
     VERIFY(max >= min);
     if (value > max)
@@ -112,15 +110,31 @@ constexpr T exchange(T& slot, U&& value)
 template<typename T>
 using RawPtr = typename Detail::_RawPtr<T>::Type;
 
+template<typename V>
+constexpr decltype(auto) to_underlying(V value) requires(IsEnum<V>)
+{
+    return static_cast<UnderlyingType<V>>(value);
+}
+
+constexpr bool is_constant_evaluated()
+{
+#if __has_builtin(__builtin_is_constant_evaluated)
+    return __builtin_is_constant_evaluated();
+#else
+    return false;
+#endif
+}
+
 }
 
 using AK::array_size;
 using AK::ceil_div;
 using AK::clamp;
-using AK::declval;
 using AK::exchange;
 using AK::forward;
+using AK::is_constant_evaluated;
 using AK::max;
 using AK::min;
 using AK::RawPtr;
 using AK::swap;
+using AK::to_underlying;

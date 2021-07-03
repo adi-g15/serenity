@@ -141,15 +141,17 @@ void Canvas::draw()
     painter.draw_text({ 520, 260, 240, 80 }, "CenterRight", Gfx::TextAlignment::CenterRight, Color::White);
     painter.draw_text({ 520, 260, 240, 80 }, "TopLeft", Gfx::TextAlignment::TopLeft, Color::White);
     painter.draw_text({ 520, 260, 240, 80 }, "TopRight", Gfx::TextAlignment::TopRight, Color::White);
+    painter.draw_text({ 520, 260, 240, 80 }, "BottomLeft", Gfx::TextAlignment::BottomLeft, Color::White);
+    painter.draw_text({ 520, 260, 240, 80 }, "BottomRight", Gfx::TextAlignment::BottomRight, Color::White);
 
     painter.draw_rect({ 520, 360, 240, 30 }, Color::DarkGray);
     painter.draw_text({ 520, 360, 240, 30 }, "Emojis! 🙂😂🐞🦄", Gfx::TextAlignment::Center, Color::White);
 
     painter.draw_rect({ 520, 410, 240, 80 }, Color::DarkGray);
     painter.draw_text({ 520, 415, 240, 20 }, "Normal text", Gfx::FontDatabase::default_font(), Gfx::TextAlignment::CenterLeft, Color::Red);
-    painter.draw_text({ 520, 430, 240, 20 }, "Bold text", Gfx::FontDatabase::default_bold_font(), Gfx::TextAlignment::CenterLeft, Color::Green);
+    painter.draw_text({ 520, 430, 240, 20 }, "Bold text", Gfx::FontDatabase::default_font().bold_variant(), Gfx::TextAlignment::CenterLeft, Color::Green);
     painter.draw_text({ 520, 450, 240, 20 }, "Normal text (fixed width)", Gfx::FontDatabase::default_fixed_width_font(), Gfx::TextAlignment::CenterLeft, Color::Blue);
-    painter.draw_text({ 520, 465, 240, 20 }, "Bold text (fixed width)", Gfx::FontDatabase::default_bold_fixed_width_font(), Gfx::TextAlignment::CenterLeft, Color::Yellow);
+    painter.draw_text({ 520, 465, 240, 20 }, "Bold text (fixed width)", Gfx::FontDatabase::default_fixed_width_font().bold_variant(), Gfx::TextAlignment::CenterLeft, Color::Yellow);
 
     auto font = Gfx::BitmapFont::load_from_file("/res/fonts/PebbletonBold14.font");
     painter.draw_rect({ 520, 510, 240, 30 }, Color::DarkGray);
@@ -206,8 +208,8 @@ int main(int argc, char** argv)
     window->resize(WIDTH, HEIGHT);
 
     auto menubar = GUI::Menubar::construct();
-    auto& app_menu = menubar->add_menu("File");
-    app_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
+    auto& file_menu = menubar->add_menu("&File");
+    file_menu.add_action(GUI::CommonActions::make_quit_action([&](auto&) { app->quit(); }));
     window->set_menubar(move(menubar));
 
     auto app_icon = GUI::Icon::default_icon("app-libgfx-demo");

@@ -1,4 +1,9 @@
-add_compile_options(-Os)
+if (ENABLE_EXTRA_KERNEL_DEBUG_SYMBOLS)
+    add_compile_options(-Og)
+    add_compile_options(-ggdb3)
+else()
+    add_compile_options(-Os)
+endif()
 
 if ("${SERENITY_ARCH}" STREQUAL "i686")
     set(KERNEL_ARCH i386)
@@ -21,25 +26,33 @@ set(KERNEL_SOURCES
     AddressSanitizer.cpp
     Arch/PC/BIOS.cpp
     Arch/x86/SmapDisabler.h
+    Bus/PCI/Access.cpp
+    Bus/PCI/Device.cpp
+    Bus/PCI/DeviceController.cpp
+    Bus/PCI/IOAccess.cpp
+    Bus/PCI/MMIOAccess.cpp
+    Bus/PCI/Initializer.cpp
+    Bus/PCI/WindowedMMIOAccess.cpp
+    Bus/USB/UHCIController.cpp
+    Bus/USB/USBDevice.cpp
+    Bus/USB/USBPipe.cpp
+    Bus/USB/USBTransfer.cpp
     CMOS.cpp
     CommandLine.cpp
-    Console.cpp
+    ConsoleDevice.cpp
     CoreDump.cpp
-    DMI.cpp
     Devices/AsyncDeviceRequest.cpp
-    Devices/BXVGADevice.cpp
     Devices/BlockDevice.cpp
     Devices/CharacterDevice.cpp
     Devices/Device.cpp
     Devices/FullDevice.cpp
-    Devices/MBVGADevice.cpp
     Devices/MemoryDevice.cpp
     Devices/NullDevice.cpp
+    Devices/PCISerialDevice.cpp
     Devices/PCSpeaker.cpp
     Devices/RandomDevice.cpp
     Devices/SB16.cpp
     Devices/SerialDevice.cpp
-    Devices/USB/UHCIController.cpp
     VirtIO/VirtIO.cpp
     VirtIO/VirtIOQueue.cpp
     VirtIO/VirtIOConsole.cpp
@@ -52,6 +65,20 @@ set(KERNEL_SOURCES
     Devices/HID/PS2KeyboardDevice.cpp
     Devices/HID/PS2MouseDevice.cpp
     Devices/HID/VMWareMouseDevice.cpp
+    GlobalProcessExposed.cpp
+    Graphics/Console/GenericFramebufferConsole.cpp
+    Graphics/Console/ContiguousFramebufferConsole.cpp
+    Graphics/Console/TextModeConsole.cpp
+    Graphics/Console/VGAConsole.cpp
+    Graphics/BochsGraphicsAdapter.cpp
+    Graphics/FramebufferDevice.cpp
+    Graphics/GraphicsManagement.cpp
+    Graphics/IntelNativeGraphicsAdapter.cpp
+    Graphics/VirtIOGPU/VirtIOFrameBufferDevice.cpp
+    Graphics/VirtIOGPU/VirtIOGPUConsole.cpp
+    Graphics/VirtIOGPU/VirtIOGPU.cpp
+    Graphics/VirtIOGPU/VirtIOGraphicsAdapter.cpp
+    Graphics/VGACompatibleAdapter.cpp
     Storage/Partition/DiskPartition.cpp
     Storage/Partition/DiskPartitionMetadata.cpp
     Storage/Partition/EBRPartitionTable.cpp
@@ -87,6 +114,7 @@ set(KERNEL_SOURCES
     FileSystem/InodeWatcher.cpp
     FileSystem/Plan9FileSystem.cpp
     FileSystem/ProcFS.cpp
+    FileSystem/SysFS.cpp
     FileSystem/TmpFS.cpp
     FileSystem/VirtualFileSystem.cpp
     FutexQueue.cpp
@@ -100,30 +128,29 @@ set(KERNEL_SOURCES
     Interrupts/SpuriousInterruptHandler.cpp
     Interrupts/UnhandledInterruptHandler.cpp
     KBufferBuilder.cpp
+    KString.cpp
     KSyms.cpp
     Lock.cpp
+    Net/E1000ENetworkAdapter.cpp
     Net/E1000NetworkAdapter.cpp
     Net/IPv4Socket.cpp
     Net/LocalSocket.cpp
     Net/LoopbackAdapter.cpp
     Net/NE2000NetworkAdapter.cpp
     Net/NetworkAdapter.cpp
+    Net/NetworkingManagement.cpp
     Net/NetworkTask.cpp
     Net/RTL8139NetworkAdapter.cpp
+    Net/RTL8168NetworkAdapter.cpp
     Net/Routing.cpp
     Net/Socket.cpp
     Net/TCPSocket.cpp
     Net/UDPSocket.cpp
-    PCI/Access.cpp
-    PCI/Device.cpp
-    PCI/DeviceController.cpp
-    PCI/IOAccess.cpp
-    PCI/MMIOAccess.cpp
-    PCI/Initializer.cpp
-    PCI/WindowedMMIOAccess.cpp
     Panic.cpp
     PerformanceEventBuffer.cpp
     Process.cpp
+    ProcessExposed.cpp
+    ProcessSpecificExposed.cpp
     ProcessGroup.cpp
     RTC.cpp
     Random.cpp
@@ -187,6 +214,7 @@ set(KERNEL_SOURCES
     Syscalls/sigaction.cpp
     Syscalls/socket.cpp
     Syscalls/stat.cpp
+    Syscalls/statvfs.cpp
     Syscalls/sync.cpp
     Syscalls/sysconf.cpp
     Syscalls/thread.cpp
@@ -198,8 +226,10 @@ set(KERNEL_SOURCES
     Syscalls/unveil.cpp
     Syscalls/utime.cpp
     Syscalls/waitid.cpp
-    Syscalls/watch_file.cpp
+    Syscalls/inode_watcher.cpp
     Syscalls/write.cpp
+    SystemExposed.cpp
+    TTY/ConsoleManagement.cpp
     TTY/MasterPTY.cpp
     TTY/PTYMultiplexer.cpp
     TTY/SlavePTY.cpp
@@ -236,6 +266,7 @@ set(KERNEL_SOURCES
     VM/Range.cpp
     VM/RangeAllocator.cpp
     VM/Region.cpp
+    VM/RingBuffer.cpp
     VM/ScatterGatherList.cpp
     VM/SharedInodeVMObject.cpp
     VM/Space.cpp
@@ -248,19 +279,28 @@ set(KERNEL_SOURCES
 
 set(KERNEL_SOURCES
     ${KERNEL_SOURCES}
-    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/${KERNEL_ARCH}/CPU.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/${KERNEL_ARCH}/InterruptEntry.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/${KERNEL_ARCH}/ProcessorInfo.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/${KERNEL_ARCH}/SafeMem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/${KERNEL_ARCH}/ASM_wrapper.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/${KERNEL_ARCH}/Boot/boot.S
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/${KERNEL_ARCH}/InterruptEntry.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/${KERNEL_ARCH}/Processor.cpp
+)
+
+set(KERNEL_SOURCES
+    ${KERNEL_SOURCES}
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/common/ASM_wrapper.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/common/Boot/multiboot.S
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/common/CPU.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/common/Interrupts.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/common/Processor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/common/ProcessorInfo.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/common/SafeMem.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/Arch/x86/common/TrapFrame.cpp
 )
 
 set(AK_SOURCES
-    ../AK/ByteBuffer.cpp
     ../AK/FlyString.cpp
     ../AK/GenericLexer.cpp
     ../AK/Hex.cpp
-    ../AK/JsonParser.cpp
-    ../AK/JsonValue.cpp
     ../AK/LexicalPath.cpp
     ../AK/String.cpp
     ../AK/StringBuilder.cpp
@@ -277,9 +317,12 @@ set(ELF_SOURCES
     ../Userland/Libraries/LibELF/Validation.cpp
 )
 
+generate_state_machine(../Userland/Libraries/LibVT/StateMachine.txt ../Userland/Libraries/LibVT/EscapeSequenceStateMachine.h)
+
 set(VT_SOURCES
     ../Userland/Libraries/LibVT/Terminal.cpp
     ../Userland/Libraries/LibVT/Line.cpp
+    ../Userland/Libraries/LibVT/EscapeSequenceParser.cpp
 )
 
 set(KEYBOARD_SOURCES
@@ -306,7 +349,7 @@ set(SOURCES
 )
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unknown-warning-option -Wvla -Wnull-dereference")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pie -fPIE -fno-rtti -ffreestanding -fbuiltin")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti -ffreestanding -fbuiltin")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mno-80387 -mno-mmx -mno-sse -mno-sse2")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-asynchronous-unwind-tables")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fstack-protector-strong")
@@ -315,7 +358,9 @@ if (NOT ${CMAKE_HOST_SYSTEM_NAME} MATCHES SerenityOS)
 endif()
 
 if ("${SERENITY_ARCH}" STREQUAL "x86_64")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcmodel=large -mno-red-zone")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcmodel=large -fno-pic -mno-red-zone")
+else()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pie -fPIE")
 endif()
 
 # Kernel Undefined Behavior Sanitizer (KUBSAN)
@@ -334,25 +379,15 @@ add_compile_definitions(KERNEL)
 #       It's needed because CLion doesn't understand the way we switch compilers mid-build.
 add_compile_definitions(__serenity__)
 
-add_link_options(LINKER:-T ${CMAKE_CURRENT_BINARY_DIR}/linker.ld -nostdlib)
-
-# HACK: This is to work around a bug in CMake dependency resolution, the
-#       kernel won't re-link when boot.S changes without this.
-set_source_files_properties(init.cpp
-    PROPERTIES
-    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/Arch/${KERNEL_ARCH}/Boot/boot.S
-)
-
-add_library(boot OBJECT Arch/${KERNEL_ARCH}/Boot/boot.S)
+add_link_options(LINKER:-T ${CMAKE_CURRENT_SOURCE_DIR}/linker.ld -nostdlib)
 
 add_library(kernel_heap STATIC ${KERNEL_HEAP_SOURCES})
-file(GENERATE OUTPUT linker.ld INPUT linker.ld)
 
 if (${CMAKE_HOST_SYSTEM_NAME} MATCHES SerenityOS)
     include_directories(/usr/local/include/c++/${GCC_VERSION}/)
 else()
     if (NOT EXISTS ${TOOLCHAIN_ROOT}/Kernel/${SERENITY_ARCH}-pc-serenity/include/c++/${GCC_VERSION}/)
-        message(SEND_ERROR "Toolchain version ${GCC_VERSION} appears to be missing! Please run: Meta/serenity.sh rebuild-toolchain")
+        message(FATAL_ERROR "Toolchain version ${GCC_VERSION} appears to be missing! Please run: Meta/serenity.sh rebuild-toolchain")
     endif()
     include_directories(${TOOLCHAIN_ROOT}/Kernel/${SERENITY_ARCH}-pc-serenity/include/c++/${GCC_VERSION}/)
     include_directories(${TOOLCHAIN_ROOT}/Kernel/${SERENITY_ARCH}-pc-serenity/include/c++/${GCC_VERSION}/${SERENITY_ARCH}-pc-serenity/)
@@ -360,19 +395,35 @@ else()
     link_directories(${TOOLCHAIN_ROOT}/Kernel/lib/gcc/${SERENITY_ARCH}-pc-serenity/${GCC_VERSION}/)
 endif()
 
-add_executable(Kernel ${SOURCES})
+if ("${SERENITY_ARCH}" STREQUAL "i686")
+    set(KERNEL_TARGET Kernel32)
+else()
+    set(KERNEL_TARGET Kernel64)
+endif()
+
+add_executable(${KERNEL_TARGET} ${SOURCES})
+add_dependencies(${KERNEL_TARGET} generate_EscapeSequenceStateMachine.h)
+
+set_target_properties(${KERNEL_TARGET} PROPERTIES LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/linker.ld)
+
 if (ENABLE_KERNEL_LTO)
     include(CheckIPOSupported)
     check_ipo_supported()
-    set_property(TARGET Kernel PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_property(TARGET ${KERNEL_TARGET} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
-target_link_libraries(Kernel kernel_heap gcc stdc++)
-add_dependencies(Kernel boot kernel_heap)
-install(TARGETS Kernel RUNTIME DESTINATION boot)
-serenity_add_ak_precompiled_headers_to_target(Kernel)
+target_link_libraries(${KERNEL_TARGET} kernel_heap gcc supc++)
+add_dependencies(${KERNEL_TARGET} kernel_heap)
 
 add_custom_command(
-    TARGET Kernel
+    TARGET ${KERNEL_TARGET} POST_BUILD
+    COMMAND ${TOOLCHAIN_PREFIX}objcopy -O elf32-i386 ${CMAKE_CURRENT_BINARY_DIR}/${KERNEL_TARGET} ${CMAKE_CURRENT_BINARY_DIR}/Kernel
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/Kernel
+)
+
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/Kernel" DESTINATION boot)
+
+add_custom_command(
+    TARGET ${KERNEL_TARGET} POST_BUILD
     COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/mkmap.sh
 )
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/kernel.map DESTINATION res)

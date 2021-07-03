@@ -8,9 +8,12 @@
 #include <AK/StdLibExtras.h>
 #include <AK/Time.h>
 #include <Kernel/ACPI/Parser.h>
+#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/CommandLine.h>
 #include <Kernel/Interrupts/APIC.h>
+#include <Kernel/PerformanceManager.h>
 #include <Kernel/Scheduler.h>
+#include <Kernel/Sections.h>
 #include <Kernel/Time/APICTimer.h>
 #include <Kernel/Time/HPET.h>
 #include <Kernel/Time/HPETComparator.h>
@@ -261,10 +264,16 @@ UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_non_legacy_hardware_timers()
 
     VERIFY(periodic_timers.size() + non_periodic_timers.size() > 0);
 
-    if (periodic_timers.size() > 0)
-        m_system_timer = periodic_timers[0];
-    else
-        m_system_timer = non_periodic_timers[0];
+    size_t taken_periodic_timers_count = 0;
+    size_t taken_non_periodic_timers_count = 0;
+
+    if (periodic_timers.size() > taken_periodic_timers_count) {
+        m_system_timer = periodic_timers[taken_periodic_timers_count];
+        taken_periodic_timers_count += 1;
+    } else if (non_periodic_timers.size() > taken_non_periodic_timers_count) {
+        m_system_timer = non_periodic_timers[taken_non_periodic_timers_count];
+        taken_non_periodic_timers_count += 1;
+    }
 
     m_system_timer->set_callback([this](const RegisterState& regs) {
         // Update the time. We don't really care too much about the
@@ -289,6 +298,20 @@ UNMAP_AFTER_INIT bool TimeManagement::probe_and_set_non_legacy_hardware_timers()
     // We don't need an interrupt for time keeping purposes because we
     // can query the timer.
     m_time_keeper_timer = m_system_timer;
+
+    if (periodic_timers.size() > taken_periodic_timers_count) {
+        m_profile_timer = periodic_timers[taken_periodic_timers_count];
+        taken_periodic_timers_count += 1;
+    } else if (non_periodic_timers.size() > taken_non_periodic_timers_count) {
+        m_profile_timer = non_periodic_timers[taken_non_periodic_timers_count];
+        taken_non_periodic_timers_count += 1;
+    }
+
+    if (m_profile_timer) {
+        m_profile_timer->set_callback(PerformanceManager::timer_tick);
+        m_profile_timer->try_to_set_frequency(m_profile_timer->calculate_nearest_possible_frequency(1));
+    }
+
     return true;
 }
 
@@ -377,6 +400,24 @@ void TimeManagement::system_timer_tick(const RegisterState& regs)
         TimerQueue::the().fire();
     }
     Scheduler::timer_tick(regs);
+}
+
+bool TimeManagement::enable_profile_timer()
+{
+    if (!m_profile_timer)
+        return false;
+    if (m_profile_enable_count.fetch_add(1) == 0)
+        return m_profile_timer->try_to_set_frequency(m_profile_timer->calculate_nearest_possible_frequency(OPTIMAL_PROFILE_TICKS_PER_SECOND_RATE));
+    return true;
+}
+
+bool TimeManagement::disable_profile_timer()
+{
+    if (!m_profile_timer)
+        return false;
+    if (m_profile_enable_count.fetch_sub(1) == 1)
+        return m_profile_timer->try_to_set_frequency(m_profile_timer->calculate_nearest_possible_frequency(1));
+    return true;
 }
 
 }

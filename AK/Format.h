@@ -185,8 +185,8 @@ public:
         SignMode sign_mode = SignMode::OnlyIfNeeded);
 
 #ifndef KERNEL
-    void put_f64(
-        double value,
+    void put_f80(
+        long double value,
         u8 base = 10,
         bool upper_case = false,
         Align align = Align::Right,
@@ -194,7 +194,23 @@ public:
         size_t precision = 6,
         char fill = ' ',
         SignMode sign_mode = SignMode::OnlyIfNeeded);
+
+    void put_f64(
+        double value,
+        u8 base = 10,
+        bool upper_case = false,
+        bool zero_pad = false,
+        Align align = Align::Right,
+        size_t min_width = 0,
+        size_t precision = 6,
+        char fill = ' ',
+        SignMode sign_mode = SignMode::OnlyIfNeeded);
 #endif
+
+    void put_hexdump(
+        ReadonlyBytes,
+        size_t width,
+        char fill = ' ');
 
     const StringBuilder& builder() const
     {
@@ -261,6 +277,7 @@ struct StandardFormatter {
         Float,
         Hexfloat,
         HexfloatUppercase,
+        HexDump,
     };
 
     FormatBuilder::Align m_align = FormatBuilder::Align::Default;
@@ -296,6 +313,27 @@ struct Formatter<StringView> : StandardFormatter {
 
     void format(FormatBuilder&, StringView value);
 };
+
+template<>
+struct Formatter<ReadonlyBytes> : Formatter<StringView> {
+    void format(FormatBuilder& builder, ReadonlyBytes const& value)
+    {
+        if (m_mode == Mode::Pointer) {
+            Formatter<FlatPtr> formatter { *this };
+            formatter.format(builder, reinterpret_cast<FlatPtr>(value.data()));
+        } else if (m_mode == Mode::Default || m_mode == Mode::HexDump) {
+            m_mode = Mode::HexDump;
+            Formatter<StringView>::format(builder, value);
+        } else {
+            Formatter<StringView>::format(builder, value);
+        }
+    }
+};
+
+template<>
+struct Formatter<Bytes> : Formatter<ReadonlyBytes> {
+};
+
 template<>
 struct Formatter<const char*> : Formatter<StringView> {
     void format(FormatBuilder& builder, const char* value)
@@ -313,6 +351,18 @@ struct Formatter<char*> : Formatter<const char*> {
 };
 template<size_t Size>
 struct Formatter<char[Size]> : Formatter<const char*> {
+};
+template<size_t Size>
+struct Formatter<unsigned char[Size]> : Formatter<StringView> {
+    void format(FormatBuilder& builder, const unsigned char* value)
+    {
+        if (m_mode == Mode::Pointer) {
+            Formatter<FlatPtr> formatter { *this };
+            formatter.format(builder, reinterpret_cast<FlatPtr>(value));
+        } else {
+            Formatter<StringView>::format(builder, { value, Size });
+        }
+    }
 };
 template<>
 struct Formatter<String> : Formatter<StringView> {
@@ -356,6 +406,17 @@ struct Formatter<double> : StandardFormatter {
     }
 
     void format(FormatBuilder&, double value);
+};
+
+template<>
+struct Formatter<long double> : StandardFormatter {
+    Formatter() = default;
+    explicit Formatter(StandardFormatter formatter)
+        : StandardFormatter(formatter)
+    {
+    }
+
+    void format(FormatBuilder&, long double value);
 };
 #endif
 
@@ -436,6 +497,16 @@ void dmesgln(CheckedFormatString<Parameters...>&& fmt, const Parameters&... para
 {
     vdmesgln(fmt.view(), VariadicFormatParams { parameters... });
 }
+
+void v_critical_dmesgln(StringView fmtstr, TypeErasedFormatParams);
+
+// be very careful to not cause any allocations here, since we could be in
+// a very unstable situation
+template<typename... Parameters>
+void critical_dmesgln(CheckedFormatString<Parameters...>&& fmt, const Parameters&... parameters)
+{
+    v_critical_dmesgln(fmt.view(), VariadicFormatParams { parameters... });
+}
 #endif
 
 template<typename T, typename = void>
@@ -492,6 +563,7 @@ struct Formatter<FormatString> : Formatter<String> {
 } // namespace AK
 
 #ifdef KERNEL
+using AK::critical_dmesgln;
 using AK::dmesgln;
 #else
 using AK::out;

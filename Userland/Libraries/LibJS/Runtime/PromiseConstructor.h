@@ -19,7 +19,7 @@ public:
     virtual ~PromiseConstructor() override = default;
 
     virtual Value call() override;
-    virtual Value construct(Function& new_target) override;
+    virtual Value construct(FunctionObject& new_target) override;
 
 private:
     virtual bool has_constructor() const override { return true; }
@@ -30,6 +30,8 @@ private:
     JS_DECLARE_NATIVE_FUNCTION(race);
     JS_DECLARE_NATIVE_FUNCTION(reject);
     JS_DECLARE_NATIVE_FUNCTION(resolve);
+
+    JS_DECLARE_NATIVE_GETTER(symbol_species_getter);
 };
 
 }

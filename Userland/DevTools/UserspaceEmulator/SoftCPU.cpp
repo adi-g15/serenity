@@ -1175,6 +1175,9 @@ void SoftCPU::CALL_RM32(const X86::Instruction& insn)
     auto address = insn.modrm().read32(*this, insn);
     warn_if_uninitialized(address, "call rm32");
     set_eip(address.value());
+    // FIXME: this won't catch at the moment due to us not having a way to set
+    //        the watch point
+    m_emulator.call_callback(address.value());
 }
 
 void SoftCPU::CALL_imm16(const X86::Instruction&) { TODO_INSN(); }
@@ -1185,6 +1188,9 @@ void SoftCPU::CALL_imm32(const X86::Instruction& insn)
 {
     push32(shadow_wrap_as_initialized(eip()));
     set_eip(eip() + (i32)insn.imm32());
+    // FIXME: this won't catch at the moment due to us not having a way to set
+    //        the watch point
+    m_emulator.call_callback(eip() + (i32)insn.imm32());
 }
 
 void SoftCPU::CBW(const X86::Instruction&)
@@ -1853,11 +1859,12 @@ void SoftCPU::FLD_RM80(const X86::Instruction& insn)
     VERIFY(!insn.modrm().is_register());
 
     // long doubles can be up to 128 bits wide in memory for reasons (alignment) and only uses 80 bits of precision
-    // gcc uses 12 byte in 32 bit and 16 byte in 64 bit mode
-    // so in the 32 bit case we read a bit to much, but that shouldnt be that bad
-    auto new_f80 = insn.modrm().read128(*this, insn);
+    // GCC uses 12 bytes in 32 bit and 16 bytes in 64 bit mode
+    // so in the 32 bit case we read a bit to much, but that shouldn't be an issue.
     // FIXME: Respect shadow values
-    fpu_push(*(long double*)new_f80.value().bytes());
+    auto new_f80 = insn.modrm().read128(*this, insn).value();
+
+    fpu_push(*(long double*)new_f80.bytes().data());
 }
 
 void SoftCPU::FUCOMI(const X86::Instruction& insn)
@@ -1908,7 +1915,7 @@ void SoftCPU::FSTP_RM80(const X86::Instruction& insn)
         if constexpr (sizeof(long double) == 12)
             f80 = insn.modrm().read128(*this, insn).value();
 
-        *(long double*)f80.bytes() = fpu_pop();
+        *(long double*)f80.bytes().data() = fpu_pop();
 
         insn.modrm().write128(*this, insn, shadow_wrap_as_initialized(f80));
     }
@@ -3127,6 +3134,8 @@ void SoftCPU::RET(const X86::Instruction& insn)
     auto ret_address = pop32();
     warn_if_uninitialized(ret_address, "ret");
     set_eip(ret_address.value());
+
+    m_emulator.return_callback(ret_address.value());
 }
 
 void SoftCPU::RETF(const X86::Instruction&) { TODO_INSN(); }
@@ -3139,6 +3148,8 @@ void SoftCPU::RET_imm16(const X86::Instruction& insn)
     warn_if_uninitialized(ret_address, "ret imm16");
     set_eip(ret_address.value());
     set_esp({ esp().value() + insn.imm16(), esp().shadow() });
+
+    m_emulator.return_callback(ret_address.value());
 }
 
 template<typename T>

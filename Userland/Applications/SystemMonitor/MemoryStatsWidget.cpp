@@ -42,7 +42,7 @@ MemoryStatsWidget::MemoryStatsWidget(GraphWidget& graph)
         container.set_layout<GUI::HorizontalBoxLayout>();
         container.set_fixed_size(275, 12);
         auto& description_label = container.add<GUI::Label>(description);
-        description_label.set_font(Gfx::FontDatabase::default_bold_font());
+        description_label.set_font(Gfx::FontDatabase::default_font().bold_variant());
         description_label.set_text_alignment(Gfx::TextAlignment::CenterLeft);
         auto& label = container.add<GUI::Label>();
         label.set_text_alignment(Gfx::TextAlignment::CenterRight);
@@ -77,7 +77,7 @@ static inline size_t bytes_to_kb(size_t bytes)
 void MemoryStatsWidget::refresh()
 {
     auto proc_memstat = Core::File::construct("/proc/memstat");
-    if (!proc_memstat->open(Core::IODevice::OpenMode::ReadOnly))
+    if (!proc_memstat->open(Core::OpenMode::ReadOnly))
         VERIFY_NOT_REACHED();
 
     auto file_contents = proc_memstat->read_all();

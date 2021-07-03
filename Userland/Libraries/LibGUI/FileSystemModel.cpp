@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, sin-ack <sin-ack@protonmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -15,7 +16,7 @@
 #include <LibGUI/FileSystemModel.h>
 #include <LibGUI/Painter.h>
 #include <LibGfx/Bitmap.h>
-#include <LibThread/BackgroundAction.h>
+#include <LibThreading/BackgroundAction.h>
 #include <grp.h>
 #include <pwd.h>
 #include <stdio.h>
@@ -92,7 +93,7 @@ void FileSystemModel::Node::traverse_if_needed()
     Core::DirIterator di(full_path, m_model.should_show_dotfiles() ? Core::DirIterator::SkipParentAndBaseDir : Core::DirIterator::SkipDots);
     if (di.has_error()) {
         m_error = di.error();
-        fprintf(stderr, "DirIterator: %s\n", di.error_string());
+        warnln("DirIterator: {}", di.error_string());
         return;
     }
 
@@ -122,24 +123,21 @@ void FileSystemModel::Node::traverse_if_needed()
             file_children.append(move(child));
     }
 
-    children.append(move(directory_children));
-    children.append(move(file_children));
+    children.extend(move(directory_children));
+    children.extend(move(file_children));
 
-    if (!m_file_watcher) {
+    if (!m_model.m_file_watcher->is_watching(full_path)) {
+        // We are not already watching this file, watch it
+        auto result = m_model.m_file_watcher->add_watch(full_path,
+            Core::FileWatcherEvent::Type::MetadataModified
+                | Core::FileWatcherEvent::Type::ChildCreated
+                | Core::FileWatcherEvent::Type::ChildDeleted
+                | Core::FileWatcherEvent::Type::Deleted);
 
-        // We are not already watching this file, create a new watcher
-        auto watcher_or_error = Core::FileWatcher::watch(full_path);
-
-        // Note : the watcher may not be created (e.g. we do not have access rights.) This is expected, just don't watch if that's the case.
-        if (!watcher_or_error.is_error()) {
-            m_file_watcher = watcher_or_error.release_value();
-            m_file_watcher->on_change = [this](auto) {
-                has_traversed = false;
-                mode = 0;
-                children.clear();
-                reify_if_needed();
-                m_model.did_update();
-            };
+        if (result.is_error()) {
+            dbgln("Couldn't watch '{}': {}", full_path, result.error());
+        } else if (result.value() == false) {
+            dbgln("Couldn't watch '{}', probably already watching", full_path);
         }
     }
 }
@@ -181,27 +179,47 @@ String FileSystemModel::Node::full_path() const
 
 ModelIndex FileSystemModel::index(String path, int column) const
 {
-    LexicalPath lexical_path(move(path));
+    Node const* node = node_for_path(move(path));
+    if (node != nullptr) {
+        return node->index(column);
+    }
+
+    return {};
+}
+
+FileSystemModel::Node const* FileSystemModel::node_for_path(String const& path) const
+{
+    String resolved_path;
+    if (path == m_root_path)
+        resolved_path = "/";
+    else if (!m_root_path.is_empty() && path.starts_with(m_root_path))
+        resolved_path = LexicalPath::relative_path(path, m_root_path);
+    else
+        resolved_path = path;
+    LexicalPath lexical_path(resolved_path);
+
     const Node* node = m_root->m_parent_of_root ? &m_root->children.first() : m_root;
     if (lexical_path.string() == "/")
-        return node->index(column);
-    for (size_t i = 0; i < lexical_path.parts().size(); ++i) {
-        auto& part = lexical_path.parts()[i];
+        return node;
+
+    auto& parts = lexical_path.parts_view();
+    for (size_t i = 0; i < parts.size(); ++i) {
+        auto& part = parts[i];
         bool found = false;
         for (auto& child : node->children) {
             if (child.name == part) {
                 const_cast<Node&>(child).reify_if_needed();
                 node = &child;
                 found = true;
-                if (i == lexical_path.parts().size() - 1)
-                    return child.index(column);
+                if (i == parts.size() - 1)
+                    return node;
                 break;
             }
         }
         if (!found)
-            return {};
+            return nullptr;
     }
-    return {};
+    return nullptr;
 }
 
 String FileSystemModel::full_path(const ModelIndex& index) const
@@ -224,6 +242,49 @@ FileSystemModel::FileSystemModel(String root_path, Mode mode)
     while (auto* group = getgrent())
         m_group_names.set(group->gr_gid, group->gr_name);
     endgrent();
+
+    auto result = Core::FileWatcher::create();
+    if (result.is_error()) {
+        dbgln("{}", result.error());
+        VERIFY_NOT_REACHED();
+    }
+
+    m_file_watcher = result.release_value();
+    m_file_watcher->on_change = [this](Core::FileWatcherEvent const& event) {
+        Node const* maybe_node = node_for_path(event.event_path);
+        if (maybe_node == nullptr) {
+            dbgln("Received event at \"{}\" but we don't have that node", event.event_path);
+            return;
+        }
+        auto& node = *const_cast<Node*>(maybe_node);
+
+        dbgln("Event at \"{}\" on Node {}: {}", node.full_path(), &node, event);
+
+        // FIXME: Your time is coming, un-granular updates.
+        auto refresh_node = [](Node& node) {
+            node.has_traversed = false;
+            node.mode = 0;
+            node.children.clear();
+            node.reify_if_needed();
+        };
+
+        if (event.type == Core::FileWatcherEvent::Type::Deleted) {
+            auto canonical_event_path = LexicalPath::canonicalized_path(event.event_path);
+            if (m_root_path.starts_with(canonical_event_path)) {
+                // Deleted directory contains our root, so navigate to our nearest parent.
+                auto new_path = LexicalPath(m_root_path).parent();
+                while (!Core::File::is_directory(new_path.string()))
+                    new_path = new_path.parent();
+
+                set_root_path(new_path.string());
+            } else if (node.parent) {
+                refresh_node(*node.parent);
+            }
+        } else {
+            refresh_node(node);
+        }
+        did_update();
+    };
 
     update();
 }
@@ -397,12 +458,8 @@ Variant FileSystemModel::data(const ModelIndex& index, ModelRole role) const
     }
 
     if (role == ModelRole::MimeData) {
-        if (index.column() == Column::Name) {
-            StringBuilder builder;
-            builder.append("file://");
-            builder.append(node.full_path());
-            return builder.to_string();
-        }
+        if (index.column() == Column::Name)
+            return URL::create_with_file_scheme(node.full_path()).serialize();
         return {};
     }
 
@@ -529,8 +586,8 @@ bool FileSystemModel::fetch_thumbnail_for(const Node& node)
 
     auto weak_this = make_weak_ptr();
 
-    LibThread::BackgroundAction<RefPtr<Gfx::Bitmap>>::create(
-        [path] {
+    Threading::BackgroundAction<RefPtr<Gfx::Bitmap>>::create(
+        [path](auto&) {
             return render_thumbnail(path);
         },
 
@@ -550,7 +607,7 @@ bool FileSystemModel::fetch_thumbnail_for(const Node& node)
                 m_thumbnail_progress_total = 0;
             }
 
-            did_update();
+            did_update(UpdateFlag::DontInvalidateIndices);
         });
 
     return false;
@@ -615,7 +672,7 @@ void FileSystemModel::set_data(const ModelIndex& index, const Variant& data)
 {
     VERIFY(is_editable(index));
     Node& node = const_cast<Node&>(this->node(index));
-    auto dirname = LexicalPath(node.full_path()).dirname();
+    auto dirname = LexicalPath::dirname(node.full_path());
     auto new_full_path = String::formatted("{}/{}", dirname, data.to_string());
     int rc = rename(node.full_path().characters(), new_full_path.characters());
     if (rc < 0) {

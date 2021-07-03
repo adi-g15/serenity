@@ -196,6 +196,9 @@ template<typename T>
 using RemoveReference = typename __RemoveReference<T>::Type;
 
 template<typename T>
+using RemoveCVReference = RemoveCV<RemoveReference<T>>;
+
+template<typename T>
 struct __MakeUnsigned {
     using Type = void;
 };
@@ -265,6 +268,7 @@ using MakeUnsigned = typename __MakeUnsigned<T>::Type;
 
 template<typename T>
 struct __MakeSigned {
+    using Type = void;
 };
 template<>
 struct __MakeSigned<signed char> {
@@ -434,10 +438,20 @@ inline constexpr bool IsTrivial = __is_trivial(T);
 template<typename T>
 inline constexpr bool IsTriviallyCopyable = __is_trivially_copyable(T);
 
+template<typename T>
+auto declval() -> T;
+
+template<typename T, typename... Args>
+inline constexpr bool IsCallableWithArguments = requires(T t) { t(declval<Args>()...); };
+
+template<typename T, typename... Args>
+inline constexpr bool IsConstructible = requires { ::new T(declval<Args>()...); };
+
 }
 using AK::Detail::AddConst;
 using AK::Detail::Conditional;
 using AK::Detail::CopyConst;
+using AK::Detail::declval;
 using AK::Detail::DependentFalse;
 using AK::Detail::EnableIf;
 using AK::Detail::FalseType;
@@ -446,8 +460,10 @@ using AK::Detail::IndexSequence;
 using AK::Detail::IntegerSequence;
 using AK::Detail::IsArithmetic;
 using AK::Detail::IsBaseOf;
+using AK::Detail::IsCallableWithArguments;
 using AK::Detail::IsClass;
 using AK::Detail::IsConst;
+using AK::Detail::IsConstructible;
 using AK::Detail::IsEnum;
 using AK::Detail::IsFloatingPoint;
 using AK::Detail::IsFunction;
@@ -470,6 +486,7 @@ using AK::Detail::MakeSigned;
 using AK::Detail::MakeUnsigned;
 using AK::Detail::RemoveConst;
 using AK::Detail::RemoveCV;
+using AK::Detail::RemoveCVReference;
 using AK::Detail::RemovePointer;
 using AK::Detail::RemoveReference;
 using AK::Detail::RemoveVolatile;

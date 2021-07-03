@@ -16,8 +16,8 @@
 #include <AK/WeakPtr.h>
 #include <LibAudio/Buffer.h>
 #include <LibCore/File.h>
-#include <LibThread/Lock.h>
-#include <LibThread/Thread.h>
+#include <LibThreading/Lock.h>
+#include <LibThreading/Thread.h>
 
 namespace AudioServer {
 
@@ -112,12 +112,12 @@ private:
 
     RefPtr<Core::File> m_device;
 
-    NonnullRefPtr<LibThread::Thread> m_sound_thread;
+    NonnullRefPtr<Threading::Thread> m_sound_thread;
 
     bool m_muted { false };
     int m_main_volume { 100 };
 
-    u8* m_zero_filled_buffer { nullptr };
+    static u8 m_zero_filled_buffer[4096];
 
     void mix();
 };

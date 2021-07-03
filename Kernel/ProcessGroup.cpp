@@ -9,26 +9,26 @@
 namespace Kernel {
 
 RecursiveSpinLock g_process_groups_lock;
-InlineLinkedList<ProcessGroup>* g_process_groups;
+ProcessGroup::List* g_process_groups;
 
 ProcessGroup::~ProcessGroup()
 {
     ScopedSpinLock lock(g_process_groups_lock);
-    g_process_groups->remove(this);
+    g_process_groups->remove(*this);
 }
 
-NonnullRefPtr<ProcessGroup> ProcessGroup::create(ProcessGroupID pgid)
+RefPtr<ProcessGroup> ProcessGroup::create(ProcessGroupID pgid)
 {
-    auto process_group = adopt_ref(*new ProcessGroup(pgid));
-    {
+    auto process_group = adopt_ref_if_nonnull(new (nothrow) ProcessGroup(pgid));
+    if (process_group) {
         ScopedSpinLock lock(g_process_groups_lock);
-        g_process_groups->prepend(process_group);
+        g_process_groups->prepend(*process_group);
     }
 
     return process_group;
 }
 
-NonnullRefPtr<ProcessGroup> ProcessGroup::find_or_create(ProcessGroupID pgid)
+RefPtr<ProcessGroup> ProcessGroup::find_or_create(ProcessGroupID pgid)
 {
     ScopedSpinLock lock(g_process_groups_lock);
 

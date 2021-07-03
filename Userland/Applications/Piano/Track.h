@@ -13,7 +13,7 @@
 #include <AK/SinglyLinkedList.h>
 #include <LibAudio/Buffer.h>
 
-typedef AK::SinglyLinkedListIterator<SinglyLinkedList<RollNote>, RollNote> RollIter;
+using RollIter = AK::SinglyLinkedListIterator<SinglyLinkedList<RollNote>, RollNote>;
 
 class Track {
     AK_MAKE_NONCOPYABLE(Track);
@@ -86,5 +86,5 @@ private:
     const u32& m_time;
 
     SinglyLinkedList<RollNote> m_roll_notes[note_count];
-    RollIter m_roll_iters[note_count];
+    RollIter m_roll_iterators[note_count];
 };

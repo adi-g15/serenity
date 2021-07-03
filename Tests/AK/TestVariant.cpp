@@ -6,7 +6,15 @@
 
 #include <LibTest/TestSuite.h>
 
+#include <AK/RefPtr.h>
 #include <AK/Variant.h>
+
+namespace {
+
+struct Object : public RefCounted<Object> {
+};
+
+}
 
 TEST_CASE(basic)
 {
@@ -69,7 +77,7 @@ TEST_CASE(move_moves)
     EXPECT(second_variant.has<NoCopy>());
 }
 
-TEST_CASE(downcast)
+TEST_CASE(verify_cast)
 {
     Variant<i8, i16, i32, i64> one_integer_to_rule_them_all { static_cast<i32>(42) };
     auto fake_integer = one_integer_to_rule_them_all.downcast<i8, i32>();
@@ -109,4 +117,99 @@ TEST_CASE(moved_from_state)
     EXPECT(optionally_a_bunch_of_values.has<Vector<i32>>());
     auto same_contents = __builtin_memcmp(&bunch_of_values, &optionally_a_bunch_of_values.get<Vector<i32>>(), sizeof(bunch_of_values)) == 0;
     EXPECT(same_contents);
+}
+
+TEST_CASE(duplicated_types)
+{
+    Variant<int, int, int, int> its_just_an_int { 42 };
+    EXPECT(its_just_an_int.has<int>());
+    EXPECT_EQ(its_just_an_int.get<int>(), 42);
+}
+
+TEST_CASE(return_values)
+{
+    using MyVariant = Variant<int, String, float>;
+    {
+        MyVariant the_value { 42.0f };
+
+        float value = the_value.visit(
+            [&](const int&) { return 1.0f; },
+            [&](const String&) { return 2.0f; },
+            [&](const float& f) { return f; });
+        EXPECT_EQ(value, 42.0f);
+    }
+    {
+        MyVariant the_value { 42 };
+
+        int value = the_value.visit(
+            [&](int& i) { return i; },
+            [&](String&) { return 2; },
+            [&](float&) { return 3; });
+        EXPECT_EQ(value, 42);
+    }
+    {
+        const MyVariant the_value { "str" };
+
+        String value = the_value.visit(
+            [&](const int&) { return String { "wrong" }; },
+            [&](const String& s) { return s; },
+            [&](const float&) { return String { "wrong" }; });
+        EXPECT_EQ(value, "str");
+    }
+}
+
+TEST_CASE(return_values_by_reference)
+{
+    auto ref = adopt_ref_if_nonnull(new (nothrow) Object());
+    Variant<int, String, float> the_value { 42.0f };
+
+    auto& value = the_value.visit(
+        [&](const int&) -> RefPtr<Object>& { return ref; },
+        [&](const String&) -> RefPtr<Object>& { return ref; },
+        [&](const float&) -> RefPtr<Object>& { return ref; });
+
+    EXPECT_EQ(ref, value);
+    EXPECT_EQ(ref->ref_count(), 1u);
+    EXPECT_EQ(value->ref_count(), 1u);
+}
+
+struct HoldsInt {
+    int i;
+};
+struct HoldsFloat {
+    float f;
+};
+
+TEST_CASE(copy_assign)
+{
+    {
+        Variant<int, String, float> the_value { 42.0f };
+
+        VERIFY(the_value.has<float>());
+        EXPECT_EQ(the_value.get<float>(), 42.0f);
+
+        int twelve = 12;
+        the_value = twelve;
+        VERIFY(the_value.has<int>());
+        EXPECT_EQ(the_value.get<int>(), 12);
+
+        the_value = String("Hello, world!");
+        VERIFY(the_value.has<String>());
+        EXPECT_EQ(the_value.get<String>(), "Hello, world!");
+    }
+    {
+        Variant<HoldsInt, String, HoldsFloat> the_value { HoldsFloat { 42.0f } };
+
+        VERIFY(the_value.has<HoldsFloat>());
+        EXPECT_EQ(the_value.get<HoldsFloat>().f, 42.0f);
+
+        HoldsInt twelve { 12 };
+        the_value = twelve;
+        VERIFY(the_value.has<HoldsInt>());
+        EXPECT_EQ(the_value.get<HoldsInt>().i, 12);
+
+        the_value = String("Hello, world!");
+        VERIFY(the_value.has<String>());
+        EXPECT_EQ(the_value.get<String>(), "Hello, world!");
+    }
 }

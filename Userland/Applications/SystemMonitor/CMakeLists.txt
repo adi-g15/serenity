@@ -1,3 +1,9 @@
+serenity_component(
+    SystemMonitor
+    REQUIRED
+    TARGETS SystemMonitor Profiler Inspector
+)
+
 set(SOURCES
     DevicesModel.cpp
     GraphWidget.cpp
@@ -14,4 +20,4 @@ set(SOURCES
 )
 
 serenity_app(SystemMonitor ICON app-system-monitor)
-target_link_libraries(SystemMonitor LibGUI LibSymbolClient LibPCIDB)
+target_link_libraries(SystemMonitor LibGUI LibSymbolication LibPCIDB)

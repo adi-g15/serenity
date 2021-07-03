@@ -6,8 +6,7 @@
 
 #pragma once
 
-#include "LexerAutoComplete.h"
-#include "ParserAutoComplete.h"
+#include "CppComprehensionEngine.h"
 #include <DevTools/HackStudio/LanguageServers/ClientConnection.h>
 
 namespace LanguageServers::Cpp {
@@ -19,20 +18,15 @@ public:
     ClientConnection(NonnullRefPtr<Core::LocalSocket> socket, int client_id)
         : LanguageServers::ClientConnection(move(socket), client_id)
     {
-        m_autocomplete_engine = make<ParserAutoComplete>(*this, m_filedb);
-        m_autocomplete_engine->set_declarations_of_document_callback = &ClientConnection::set_declarations_of_document_callback;
+        m_autocomplete_engine = make<CppComprehensionEngine>(m_filedb);
+        m_autocomplete_engine->set_declarations_of_document_callback = [this](const String& filename, Vector<GUI::AutocompleteProvider::Declaration>&& declarations) {
+            async_declarations_in_document(filename, move(declarations));
+        };
+        m_autocomplete_engine->set_todo_entries_of_document_callback = [this](String const& filename, Vector<Cpp::Parser::TodoEntry>&& todo_entries) {
+            async_todo_entries_in_document(filename, move(todo_entries));
+        };
     }
 
     virtual ~ClientConnection() override = default;
-
-private:
-    virtual void set_auto_complete_mode(String const& mode) override
-    {
-        dbgln_if(CPP_LANGUAGE_SERVER_DEBUG, "SetAutoCompleteMode: {}", mode);
-        if (mode == "Parser")
-            m_autocomplete_engine = make<ParserAutoComplete>(*this, m_filedb);
-        else
-            m_autocomplete_engine = make<LexerAutoComplete>(*this, m_filedb);
-    }
 };
 }

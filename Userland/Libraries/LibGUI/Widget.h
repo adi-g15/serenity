@@ -245,12 +245,12 @@ public:
     {
         for_each_child([&](auto& child) {
             if (is<Widget>(child))
-                return callback(downcast<Widget>(child));
+                return callback(verify_cast<Widget>(child));
             return IterationDecision::Continue;
         });
     }
 
-    Vector<Widget*> child_widgets() const;
+    Vector<Widget&> child_widgets() const;
 
     void do_layout();
 
@@ -312,7 +312,7 @@ protected:
     virtual void drag_leave_event(Event&);
     virtual void drop_event(DropEvent&);
     virtual void theme_change_event(ThemeChangeEvent&);
-    virtual void screen_rect_change_event(ScreenRectChangeEvent&);
+    virtual void screen_rects_change_event(ScreenRectsChangeEvent&);
 
     virtual void did_begin_inspection() override;
     virtual void did_end_inspection() override;
@@ -370,13 +370,13 @@ private:
 inline Widget* Widget::parent_widget()
 {
     if (parent() && is<Widget>(*parent()))
-        return &downcast<Widget>(*parent());
+        return &verify_cast<Widget>(*parent());
     return nullptr;
 }
 inline const Widget* Widget::parent_widget() const
 {
     if (parent() && is<Widget>(*parent()))
-        return &downcast<const Widget>(*parent());
+        return &verify_cast<const Widget>(*parent());
     return nullptr;
 }
 }

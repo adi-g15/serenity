@@ -22,7 +22,7 @@ int main(int argc, char** argv)
     if (!path) {
         file = Core::File::standard_input();
     } else {
-        auto file_or_error = Core::File::open(path, Core::File::ReadOnly);
+        auto file_or_error = Core::File::open(path, Core::OpenMode::ReadOnly);
         if (file_or_error.is_error()) {
             warnln("Failed to open {}: {}", path, file_or_error.error());
             return 1;
@@ -37,15 +37,15 @@ int main(int argc, char** argv)
     auto print_line = [&] {
         for (size_t i = 0; i < 16; ++i) {
             if (i < line.size())
-                printf("%02x ", line[i]);
+                out("{:02x} ", line[i]);
             else
-                printf("   ");
+                out("   ");
 
             if (i == 7)
-                printf("  ");
+                out("  ");
         }
 
-        printf("  ");
+        out("  ");
 
         for (size_t i = 0; i < 16; ++i) {
             if (i < line.size() && isprint(line[i]))

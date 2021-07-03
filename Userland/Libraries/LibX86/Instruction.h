@@ -278,20 +278,20 @@ enum MMXRegisterIndex {
 class LogicalAddress {
 public:
     LogicalAddress() { }
-    LogicalAddress(u16 selector, u32 offset)
+    LogicalAddress(u16 selector, FlatPtr offset)
         : m_selector(selector)
         , m_offset(offset)
     {
     }
 
     u16 selector() const { return m_selector; }
-    u32 offset() const { return m_offset; }
+    FlatPtr offset() const { return m_offset; }
     void set_selector(u16 selector) { m_selector = selector; }
-    void set_offset(u32 offset) { m_offset = offset; }
+    void set_offset(FlatPtr offset) { m_offset = offset; }
 
 private:
     u16 m_selector { 0 };
-    u32 m_offset { 0 };
+    FlatPtr m_offset { 0 };
 };
 
 class InstructionStream {
@@ -864,14 +864,14 @@ ALWAYS_INLINE Instruction::Instruction(InstructionStreamType& stream, bool o32, 
     if (!m_descriptor->mnemonic) {
         if (has_sub_op()) {
             if (has_slash)
-                fprintf(stderr, "Instruction %02X %02X /%u not understood\n", m_op, m_sub_op, slash());
+                warnln("Instruction {:02X} {:02X} /{} not understood", m_op, m_sub_op, slash());
             else
-                fprintf(stderr, "Instruction %02X %02X not understood\n", m_op, m_sub_op);
+                warnln("Instruction {:02X} {:02X} not understood", m_op, m_sub_op);
         } else {
             if (has_slash)
-                fprintf(stderr, "Instruction %02X /%u not understood\n", m_op, slash());
+                warnln("Instruction {:02X} /{} not understood", m_op, slash());
             else
-                fprintf(stderr, "Instruction %02X not understood\n", m_op);
+                warnln("Instruction {:02X} not understood", m_op);
         }
         m_descriptor = nullptr;
         return;
@@ -915,7 +915,7 @@ ALWAYS_INLINE Instruction::Instruction(InstructionStreamType& stream, bool o32, 
 
 #ifdef DISALLOW_INVALID_LOCK_PREFIX
     if (m_has_lock_prefix && !m_descriptor->lock_prefix_allowed) {
-        fprintf(stderr, "Instruction not allowed with LOCK prefix, this will raise #UD\n");
+        warnln("Instruction not allowed with LOCK prefix, this will raise #UD");
         m_descriptor = nullptr;
     }
 #endif

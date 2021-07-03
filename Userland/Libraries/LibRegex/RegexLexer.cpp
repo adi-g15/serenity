@@ -7,6 +7,7 @@
 #include "RegexLexer.h"
 #include <AK/Assertions.h>
 #include <AK/Debug.h>
+#include <AK/Format.h>
 #include <stdio.h>
 
 namespace regex {
@@ -35,11 +36,11 @@ Lexer::Lexer(const StringView source)
 {
 }
 
-ALWAYS_INLINE char Lexer::peek(size_t offset) const
+ALWAYS_INLINE int Lexer::peek(size_t offset) const
 {
     if ((m_position + offset) >= m_source.length())
         return EOF;
-    return m_source[m_position + offset];
+    return (unsigned char)m_source[m_position + offset];
 }
 
 void Lexer::back(size_t offset)
@@ -89,6 +90,7 @@ char Lexer::skip()
 {
     auto c = peek();
     consume();
+    VERIFY(c != EOF);
     return c;
 }
 
@@ -130,8 +132,7 @@ Token Lexer::next()
         case '\\':
             return 2;
         default:
-            if constexpr (REGEX_DEBUG)
-                fprintf(stderr, "[LEXER] Found invalid escape sequence: \\%c (the parser will have to deal with this!)\n", peek(1));
+            dbgln_if(REGEX_DEBUG, "[LEXER] Found invalid escape sequence: \\{:c} (the parser will have to deal with this!)", peek(1));
             return 0;
         }
     };

@@ -87,16 +87,13 @@ ByteBuffer decode_base64(const StringView& input)
             output.append(out2);
     }
 
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
     return ByteBuffer::copy(output.data(), output.size());
-#pragma GCC diagnostic pop
 }
 
 String encode_base64(ReadonlyBytes input)
 {
     constexpr auto alphabet = make_alphabet();
-    StringBuilder output(calculate_base64_decoded_length(input));
+    StringBuilder output(calculate_base64_encoded_length(input));
 
     auto get = [&](const size_t offset, bool* need_padding = nullptr) -> u8 {
         if (offset >= input.size()) {

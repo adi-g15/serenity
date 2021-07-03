@@ -40,13 +40,14 @@ ByteBuffer DNSPacket::to_byte_buffer() const
         header.set_is_query();
     else
         header.set_is_response();
+    header.set_authoritative_answer(m_authoritative_answer);
     // FIXME: What should this be?
     header.set_opcode(0);
     header.set_response_code(m_code);
     header.set_truncated(false); // hopefully...
-    header.set_recursion_desired(true);
+    header.set_recursion_desired(m_recursion_desired);
     // FIXME: what should the be for requests?
-    header.set_recursion_available(true);
+    header.set_recursion_available(m_recursion_available);
     header.set_question_count(m_questions.size());
     header.set_answer_count(m_answers.size());
 
@@ -55,15 +56,15 @@ ByteBuffer DNSPacket::to_byte_buffer() const
     stream << ReadonlyBytes { &header, sizeof(header) };
     for (auto& question : m_questions) {
         stream << question.name();
-        stream << htons(question.record_type());
-        stream << htons(question.class_code());
+        stream << htons((u16)question.record_type());
+        stream << htons(question.raw_class_code());
     }
     for (auto& answer : m_answers) {
         stream << answer.name();
-        stream << htons(answer.type());
-        stream << htons(answer.class_code());
+        stream << htons((u16)answer.type());
+        stream << htons(answer.raw_class_code());
         stream << htonl(answer.ttl());
-        if (answer.type() == T_PTR) {
+        if (answer.type() == DNSRecordType::PTR) {
             DNSName name { answer.record_data() };
             stream << htons(name.serialized_size());
             stream << name;
@@ -129,7 +130,9 @@ Optional<DNSPacket> DNSPacket::from_raw_packet(const u8* raw_data, size_t raw_si
             NetworkOrdered<u16> class_code;
         };
         auto& record_and_class = *(const RawDNSAnswerQuestion*)&raw_data[offset];
-        packet.m_questions.empend(name, record_and_class.record_type, record_and_class.class_code);
+        u16 class_code = record_and_class.class_code & ~MDNS_WANTS_UNICAST_RESPONSE;
+        bool mdns_wants_unicast_response = record_and_class.class_code & MDNS_WANTS_UNICAST_RESPONSE;
+        packet.m_questions.empend(name, (DNSRecordType)(u16)record_and_class.record_type, (DNSRecordClass)class_code, mdns_wants_unicast_response);
         offset += 4;
         auto& question = packet.m_questions.last();
         dbgln_if(LOOKUPSERVER_DEBUG, "Question #{}: name=_{}_, type={}, class={}", i, question.name(), question.record_type(), question.class_code());
@@ -144,17 +147,32 @@ Optional<DNSPacket> DNSPacket::from_raw_packet(const u8* raw_data, size_t raw_si
 
         offset += sizeof(DNSRecordWithoutName);
 
-        if (record.type() == T_PTR) {
+        switch ((DNSRecordType)record.type()) {
+        case DNSRecordType::PTR: {
             size_t dummy_offset = offset;
             data = DNSName::parse(raw_data, dummy_offset, raw_size).as_string();
-        } else if (record.type() == T_A) {
-            data = { record.data(), record.data_length() };
-        } else {
-            // FIXME: Parse some other record types perhaps?
-            dbgln("data=(unimplemented record type {})", record.type());
+            break;
         }
+        case DNSRecordType::CNAME:
+            // Fall through
+        case DNSRecordType::A:
+            // Fall through
+        case DNSRecordType::TXT:
+            // Fall through
+        case DNSRecordType::AAAA:
+            // Fall through
+        case DNSRecordType::SRV:
+            data = { record.data(), record.data_length() };
+            break;
+        default:
+            // FIXME: Parse some other record types perhaps?
+            dbgln("data=(unimplemented record type {})", (u16)record.type());
+        }
+
         dbgln_if(LOOKUPSERVER_DEBUG, "Answer   #{}: name=_{}_, type={}, ttl={}, length={}, data=_{}_", i, name, record.type(), record.ttl(), record.data_length(), data);
-        packet.m_answers.empend(name, record.type(), record.record_class(), record.ttl(), data);
+        u16 class_code = record.record_class() & ~MDNS_CACHE_FLUSH;
+        bool mdns_cache_flush = record.record_class() & MDNS_CACHE_FLUSH;
+        packet.m_answers.empend(name, (DNSRecordType)record.type(), (DNSRecordClass)class_code, record.ttl(), data, mdns_cache_flush);
         offset += record.data_length();
     }
 

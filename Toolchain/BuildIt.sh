@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -eo pipefail
 # This file will need to be run in bash, for now.
 
 
@@ -31,8 +31,8 @@ SYSTEM_NAME="$(uname -s)"
 # We *most definitely* don't need debug symbols in the linker/compiler.
 # This cuts the uncompressed size from 1.2 GiB per Toolchain down to about 120 MiB.
 # Hence, this might actually cause marginal speedups, although the point is to not waste space as blatantly.
-export CFLAGS="-g0 -O2"
-export CXXFLAGS="-g0 -O2"
+export CFLAGS="-g0 -O2 -mtune=native"
+export CXXFLAGS="-g0 -O2 -mtune=native"
 
 if [ "$SYSTEM_NAME" = "OpenBSD" ]; then
     MAKE=gmake
@@ -91,6 +91,42 @@ buildstep() {
     "$@" 2>&1 | sed $'s|^|\x1b[34m['"${NAME}"$']\x1b[39m |'
 }
 
+# === DEPENDENCIES ===
+buildstep dependencies echo "Checking whether 'make' is available..."
+if ! command -v ${MAKE:-make} >/dev/null; then
+    buildstep dependencies echo "Please make sure to install GNU Make (for the '${MAKE:-make}' tool)."
+    exit 1
+fi
+
+buildstep dependencies echo "Checking whether 'patch' is available..."
+if ! command -v patch >/dev/null; then
+    buildstep dependencies echo "Please make sure to install GNU patch (for the 'patch' tool)."
+    exit 1
+fi
+
+buildstep dependencies echo "Checking whether your C compiler works..."
+if ! ${CC:-cc} -o /dev/null -xc - >/dev/null <<'PROGRAM'
+int main() {}
+PROGRAM
+then
+    buildstep dependencies echo "Please make sure to install a working C compiler."
+    exit 1
+fi
+
+if [ "$SYSTEM_NAME" != "Darwin" ]; then
+    for lib in gmp mpc mpfr; do
+        buildstep dependencies echo "Checking whether the $lib library and headers are available..."
+        if ! ${CC:-cc} -I /usr/local/include -L /usr/local/lib -l$lib -o /dev/null -xc - >/dev/null <<PROGRAM
+#include <$lib.h>
+int main() {}
+PROGRAM
+        then
+            echo "Please make sure to install the $lib library and headers."
+            exit 1
+        fi
+    done
+fi
+
 # === CHECK CACHE AND REUSE ===
 
 pushd "$DIR"
@@ -137,18 +173,24 @@ popd
 # === DOWNLOAD AND PATCH ===
 
 pushd "$DIR/Tarballs"
-    md5="$($MD5SUM $BINUTILS_PKG | cut -f1 -d' ')"
-    echo "bu md5='$md5'"
-    if [ ! -e $BINUTILS_PKG ] || [ "$md5" != ${BINUTILS_MD5SUM} ] ; then
+    md5=""
+    if [ -e "$BINUTILS_PKG" ]; then
+        md5="$($MD5SUM $BINUTILS_PKG | cut -f1 -d' ')"
+        echo "bu md5='$md5'"
+    fi
+    if [ "$md5" != ${BINUTILS_MD5SUM} ] ; then
         rm -f $BINUTILS_PKG
         curl -LO "$BINUTILS_BASE_URL/$BINUTILS_PKG"
     else
         echo "Skipped downloading binutils"
     fi
 
-    md5="$($MD5SUM ${GCC_PKG} | cut -f1 -d' ')"
-    echo "gc md5='$md5'"
-    if [ ! -e $GCC_PKG ] || [ "$md5" != ${GCC_MD5SUM} ] ; then
+    md5=""
+    if [ -e "$GCC_PKG" ]; then
+        md5="$($MD5SUM ${GCC_PKG} | cut -f1 -d' ')"
+        echo "gc md5='$md5'"
+    fi
+    if [ "$md5" != ${GCC_MD5SUM} ] ; then
         rm -f $GCC_PKG
         curl -LO "$GCC_BASE_URL/$GCC_NAME/$GCC_PKG"
     else

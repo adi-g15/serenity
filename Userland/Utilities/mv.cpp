@@ -59,7 +59,7 @@ int main(int argc, char** argv)
         String combined_new_path;
         const char* new_path = original_new_path;
         if (S_ISDIR(st.st_mode)) {
-            auto old_basename = LexicalPath(old_path).basename();
+            auto old_basename = LexicalPath::basename(old_path);
             combined_new_path = String::formatted("{}/{}", original_new_path, old_basename);
             new_path = combined_new_path.characters();
         }
@@ -79,14 +79,14 @@ int main(int argc, char** argv)
                 }
                 rc = unlink(old_path);
                 if (rc < 0)
-                    fprintf(stderr, "mv: unlink '%s': %s\n", old_path, strerror(errno));
+                    warnln("mv: unlink '{}': {}", old_path, strerror(errno));
             } else {
                 warnln("mv: cannot move '{}' : {}", old_path, strerror(errno));
             }
         }
 
         if (verbose && rc == 0)
-            printf("renamed '%s' -> '%s'\n", old_path, new_path);
+            outln("renamed '{}' -> '{}'", old_path, new_path);
     }
 
     return 0;

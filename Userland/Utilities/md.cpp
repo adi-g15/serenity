@@ -4,14 +4,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/ByteBuffer.h>
-#include <AK/OwnPtr.h>
 #include <AK/String.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
 #include <LibMarkdown/Document.h>
 #include <stdio.h>
-#include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -48,13 +45,13 @@ int main(int argc, char* argv[])
     auto file = Core::File::construct();
     bool success;
     if (filename == nullptr) {
-        success = file->open(STDIN_FILENO, Core::IODevice::OpenMode::ReadOnly, Core::File::ShouldCloseFileDescriptor::No);
+        success = file->open(STDIN_FILENO, Core::OpenMode::ReadOnly, Core::File::ShouldCloseFileDescriptor::No);
     } else {
         file->set_filename(filename);
-        success = file->open(Core::IODevice::OpenMode::ReadOnly);
+        success = file->open(Core::OpenMode::ReadOnly);
     }
     if (!success) {
-        fprintf(stderr, "Error: %s\n", file->error_string());
+        warnln("Error: {}", file->error_string());
         return 1;
     }
 
@@ -70,10 +67,10 @@ int main(int argc, char* argv[])
     auto document = Markdown::Document::parse(input);
 
     if (!document) {
-        fprintf(stderr, "Error parsing\n");
+        warnln("Error parsing Markdown document");
         return 1;
     }
 
     String res = html ? document->render_to_html() : document->render_for_terminal(view_width);
-    printf("%s", res.characters());
+    out("{}", res);
 }

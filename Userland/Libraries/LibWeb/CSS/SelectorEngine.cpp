@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibWeb/CSS/Parser/DeprecatedCSSParser.h>
 #include <LibWeb/CSS/SelectorEngine.h>
 #include <LibWeb/DOM/Document.h>
 #include <LibWeb/DOM/Element.h>
@@ -43,13 +44,18 @@ static bool matches(const CSS::Selector::SimpleSelector& component, const DOM::E
     case CSS::Selector::SimpleSelector::PseudoClass::Visited:
         // FIXME: Maybe match this selector sometimes?
         return false;
+    case CSS::Selector::SimpleSelector::PseudoClass::Active:
+        if (!element.is_active())
+            return false;
+        break;
     case CSS::Selector::SimpleSelector::PseudoClass::Hover:
         if (!matches_hover_pseudo_class(element))
             return false;
         break;
     case CSS::Selector::SimpleSelector::PseudoClass::Focus:
-        // FIXME: Implement matches_focus_pseudo_class(element)
-        return false;
+        if (!element.is_focused())
+            return false;
+        break;
     case CSS::Selector::SimpleSelector::PseudoClass::FirstChild:
         if (element.previous_element_sibling())
             return false;
@@ -82,7 +88,37 @@ static bool matches(const CSS::Selector::SimpleSelector& component, const DOM::E
                 return false;
         }
         break;
+    case CSS::Selector::SimpleSelector::PseudoClass::Disabled:
+        if (!element.tag_name().equals_ignoring_case(HTML::TagNames::input))
+            return false;
+        if (!element.has_attribute("disabled"))
+            return false;
+        break;
+    case CSS::Selector::SimpleSelector::PseudoClass::Enabled:
+        if (!element.tag_name().equals_ignoring_case(HTML::TagNames::input))
+            return false;
+        if (element.has_attribute("disabled"))
+            return false;
+        break;
+    case CSS::Selector::SimpleSelector::PseudoClass::Checked:
+        if (!element.tag_name().equals_ignoring_case(HTML::TagNames::input))
+            return false;
+        if (!element.has_attribute("checked"))
+            return false;
+        break;
+    case CSS::Selector::SimpleSelector::PseudoClass::Not: {
+        if (component.not_selector.is_empty())
+            return false;
+        auto not_selector = Web::parse_selector(CSS::ParsingContext(element), component.not_selector);
+        if (!not_selector.has_value())
+            return false;
+        auto not_matches = matches(not_selector.value(), element);
+        if (not_matches)
+            return false;
+        break;
+    }
     case CSS::Selector::SimpleSelector::PseudoClass::NthChild:
+    case CSS::Selector::SimpleSelector::PseudoClass::NthLastChild:
         const auto step_size = component.nth_child_pattern.step_size;
         const auto offset = component.nth_child_pattern.offset;
         if (step_size == 0 && offset == 0)
@@ -93,8 +129,12 @@ static bool matches(const CSS::Selector::SimpleSelector& component, const DOM::E
             return false;
 
         int index = 1;
-        for (auto* child = parent->first_child_of_type<DOM::Element>(); child && child != &element; child = child->next_element_sibling()) {
-            ++index;
+        if (component.pseudo_class == CSS::Selector::SimpleSelector::PseudoClass::NthChild) {
+            for (auto* child = parent->first_child_of_type<DOM::Element>(); child && child != &element; child = child->next_element_sibling())
+                ++index;
+        } else {
+            for (auto* child = parent->last_child_of_type<DOM::Element>(); child && child != &element; child = child->previous_element_sibling())
+                ++index;
         }
 
         if (step_size < 0) {
@@ -177,7 +217,7 @@ static bool matches(const CSS::Selector& selector, int component_list_index, con
         for (auto* ancestor = element.parent(); ancestor; ancestor = ancestor->parent()) {
             if (!is<DOM::Element>(*ancestor))
                 continue;
-            if (matches(selector, component_list_index - 1, downcast<DOM::Element>(*ancestor)))
+            if (matches(selector, component_list_index - 1, verify_cast<DOM::Element>(*ancestor)))
                 return true;
         }
         return false;
@@ -185,7 +225,7 @@ static bool matches(const CSS::Selector& selector, int component_list_index, con
         VERIFY(component_list_index != 0);
         if (!element.parent() || !is<DOM::Element>(*element.parent()))
             return false;
-        return matches(selector, component_list_index - 1, downcast<DOM::Element>(*element.parent()));
+        return matches(selector, component_list_index - 1, verify_cast<DOM::Element>(*element.parent()));
     case CSS::Selector::ComplexSelector::Relation::AdjacentSibling:
         VERIFY(component_list_index != 0);
         if (auto* sibling = element.previous_element_sibling())

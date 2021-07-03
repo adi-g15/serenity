@@ -4,12 +4,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/HashMap.h>
 #include <AK/String.h>
-#include <AK/Vector.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/ProcessStatisticsReader.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,14 +16,14 @@ static int pid_of(const String& process_name, bool single_shot, bool omit_pid, p
 {
     bool displayed_at_least_one = false;
 
-    auto processes = Core::ProcessStatisticsReader().get_all();
+    auto processes = Core::ProcessStatisticsReader::get_all();
     if (!processes.has_value())
         return 1;
 
     for (auto& it : processes.value()) {
-        if (it.value.name == process_name) {
-            if (!omit_pid || it.value.pid != pid) {
-                printf(" %d" + (displayed_at_least_one ? 0 : 1), it.value.pid);
+        if (it.name == process_name) {
+            if (!omit_pid || it.pid != pid) {
+                out(displayed_at_least_one ? " {}" : "{}", it.pid);
                 displayed_at_least_one = true;
 
                 if (single_shot)
@@ -36,7 +33,7 @@ static int pid_of(const String& process_name, bool single_shot, bool omit_pid, p
     }
 
     if (displayed_at_least_one)
-        printf("\n");
+        outln();
 
     return 0;
 }
@@ -61,7 +58,7 @@ int main(int argc, char** argv)
         } else {
             auto number = StringView(omit_pid_value).to_uint();
             if (!number.has_value()) {
-                fprintf(stderr, "Invalid value for -o\n");
+                warnln("Invalid value for -o");
                 args_parser.print_usage(stderr, argv[0]);
                 return 1;
             }

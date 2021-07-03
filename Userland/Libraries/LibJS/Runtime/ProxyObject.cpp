@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <LibJS/Runtime/AbstractOperations.h>
 #include <LibJS/Runtime/Accessor.h>
 #include <LibJS/Runtime/Array.h>
 #include <LibJS/Runtime/Error.h>
@@ -44,7 +45,7 @@ ProxyObject* ProxyObject::create(GlobalObject& global_object, Object& target, Ob
 }
 
 ProxyObject::ProxyObject(Object& target, Object& handler, Object& prototype)
-    : Function(prototype)
+    : FunctionObject(prototype)
     , m_target(target)
     , m_handler(handler)
 {
@@ -61,7 +62,7 @@ Object* ProxyObject::prototype()
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return nullptr;
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.getPrototypeOf);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.getPrototypeOf);
     if (vm.exception())
         return nullptr;
     if (!trap)
@@ -107,7 +108,7 @@ bool ProxyObject::set_prototype(Object* object)
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return false;
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.setPrototypeOf);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.setPrototypeOf);
     if (vm.exception())
         return false;
     if (!trap)
@@ -134,7 +135,7 @@ bool ProxyObject::is_extensible() const
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return false;
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.isExtensible);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.isExtensible);
     if (vm.exception())
         return false;
     if (!trap)
@@ -157,7 +158,7 @@ bool ProxyObject::prevent_extensions()
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return false;
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.preventExtensions);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.preventExtensions);
     if (vm.exception())
         return false;
     if (!trap)
@@ -180,7 +181,7 @@ Optional<PropertyDescriptor> ProxyObject::get_own_property_descriptor(const Prop
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return {};
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.getOwnPropertyDescriptor);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.getOwnPropertyDescriptor);
     if (vm.exception())
         return {};
     if (!trap)
@@ -231,7 +232,7 @@ bool ProxyObject::define_property(const StringOrSymbol& property_name, const Obj
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return false;
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.defineProperty);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.defineProperty);
     if (vm.exception())
         return false;
     if (!trap)
@@ -278,7 +279,7 @@ bool ProxyObject::has_property(const PropertyName& name) const
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return false;
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.has);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.has);
     if (vm.exception())
         return false;
     if (!trap)
@@ -305,10 +306,10 @@ bool ProxyObject::has_property(const PropertyName& name) const
     return trap_result.to_boolean();
 }
 
-Value ProxyObject::get(const PropertyName& name, Value receiver, bool without_side_effects) const
+Value ProxyObject::get(const PropertyName& name, Value receiver, AllowSideEffects allow_side_effects) const
 {
     auto& vm = this->vm();
-    if (without_side_effects) {
+    if (allow_side_effects == AllowSideEffects::No) {
         // Sorry, we're not going to call anything on this proxy.
         return js_string(vm, "<ProxyObject>");
     }
@@ -318,7 +319,7 @@ Value ProxyObject::get(const PropertyName& name, Value receiver, bool without_si
     }
     if (receiver.is_empty())
         receiver = Value(const_cast<ProxyObject*>(this));
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.get);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.get);
     if (vm.exception())
         return {};
     if (!trap)
@@ -351,7 +352,7 @@ bool ProxyObject::put(const PropertyName& name, Value value, Value receiver)
     }
     if (receiver.is_empty())
         receiver = Value(const_cast<ProxyObject*>(this));
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.set);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.set);
     if (vm.exception())
         return false;
     if (!trap)
@@ -374,18 +375,18 @@ bool ProxyObject::put(const PropertyName& name, Value value, Value receiver)
     return true;
 }
 
-bool ProxyObject::delete_property(const PropertyName& name)
+bool ProxyObject::delete_property(PropertyName const& name, bool force_throw_exception)
 {
     auto& vm = this->vm();
     if (m_is_revoked) {
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return false;
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.deleteProperty);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.deleteProperty);
     if (vm.exception())
         return false;
     if (!trap)
-        return m_target.delete_property(name);
+        return m_target.delete_property(name, force_throw_exception);
     auto trap_result = vm.call(*trap, Value(&m_handler), Value(&m_target), name.to_value(vm));
     if (vm.exception())
         return false;
@@ -405,7 +406,7 @@ bool ProxyObject::delete_property(const PropertyName& name)
 
 void ProxyObject::visit_edges(Cell::Visitor& visitor)
 {
-    Function::visit_edges(visitor);
+    Base::visit_edges(visitor);
     visitor.visit(&m_target);
     visitor.visit(&m_handler);
 }
@@ -421,11 +422,11 @@ Value ProxyObject::call()
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return {};
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.apply);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.apply);
     if (vm.exception())
         return {};
     if (!trap)
-        return static_cast<Function&>(m_target).call();
+        return static_cast<FunctionObject&>(m_target).call();
     MarkedValueList arguments(heap());
     arguments.append(Value(&m_target));
     arguments.append(Value(&m_handler));
@@ -439,7 +440,7 @@ Value ProxyObject::call()
     return vm.call(*trap, Value(&m_handler), move(arguments));
 }
 
-Value ProxyObject::construct(Function& new_target)
+Value ProxyObject::construct(FunctionObject& new_target)
 {
     auto& vm = this->vm();
     if (!is_function()) {
@@ -450,11 +451,11 @@ Value ProxyObject::construct(Function& new_target)
         vm.throw_exception<TypeError>(global_object(), ErrorType::ProxyRevoked);
         return {};
     }
-    auto trap = get_method(global_object(), Value(&m_handler), vm.names.construct);
+    auto trap = Value(&m_handler).get_method(global_object(), vm.names.construct);
     if (vm.exception())
         return {};
     if (!trap)
-        return static_cast<Function&>(m_target).construct(new_target);
+        return static_cast<FunctionObject&>(m_target).construct(new_target);
     MarkedValueList arguments(vm.heap());
     arguments.append(Value(&m_target));
     auto arguments_array = Array::create(global_object());
@@ -474,13 +475,13 @@ Value ProxyObject::construct(Function& new_target)
 const FlyString& ProxyObject::name() const
 {
     VERIFY(is_function());
-    return static_cast<Function&>(m_target).name();
+    return static_cast<FunctionObject&>(m_target).name();
 }
 
-LexicalEnvironment* ProxyObject::create_environment()
+FunctionEnvironment* ProxyObject::create_environment(FunctionObject& function_being_invoked)
 {
     VERIFY(is_function());
-    return static_cast<Function&>(m_target).create_environment();
+    return static_cast<FunctionObject&>(m_target).create_environment(function_being_invoked);
 }
 
 }

@@ -290,7 +290,7 @@ String Element::inner_html() const
     Function<void(const Node&)> recurse = [&](auto& node) {
         for (auto* child = node.first_child(); child; child = child->next_sibling()) {
             if (child->is_element()) {
-                auto& element = downcast<Element>(*child);
+                auto& element = verify_cast<Element>(*child);
                 builder.append('<');
                 builder.append(element.local_name());
                 element.for_each_attribute([&](auto& name, auto& value) {
@@ -311,7 +311,7 @@ String Element::inner_html() const
                 builder.append('>');
             }
             if (child->is_text()) {
-                auto& text = downcast<Text>(*child);
+                auto& text = verify_cast<Text>(*child);
                 builder.append(escape_string(text.data(), false));
             }
             // FIXME: Also handle Comment, ProcessingInstruction, DocumentType
@@ -325,6 +325,11 @@ String Element::inner_html() const
 bool Element::is_focused() const
 {
     return document().focused_element() == this;
+}
+
+bool Element::is_active() const
+{
+    return document().active_element() == this;
 }
 
 NonnullRefPtr<HTMLCollection> Element::get_elements_by_tag_name(FlyString const& tag_name)

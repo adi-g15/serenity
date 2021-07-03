@@ -84,6 +84,7 @@ struct Position {
     size_t column { 0 };
 
     bool operator<(const Position&) const;
+    bool operator<=(const Position&) const;
     bool operator>(const Position&) const;
     bool operator==(const Position&) const;
 };
@@ -115,10 +116,9 @@ struct Token {
         VERIFY_NOT_REACHED();
     }
 
-    const char* to_string() const
-    {
-        return type_to_string(m_type);
-    }
+    String to_string() const;
+    String type_as_string() const;
+
     const Position& start() const { return m_start; }
     const Position& end() const { return m_end; }
 

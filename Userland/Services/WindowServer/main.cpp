@@ -10,6 +10,8 @@
 #include "Screen.h"
 #include "WindowManager.h"
 #include <LibCore/ConfigFile.h>
+#include <LibCore/DirIterator.h>
+#include <LibCore/File.h>
 #include <LibGfx/Palette.h>
 #include <LibGfx/SystemTheme.h>
 #include <signal.h>
@@ -19,7 +21,7 @@
 
 int main(int, char**)
 {
-    if (pledge("stdio video thread sendfd recvfd accept rpath wpath cpath unix proc fattr sigaction", nullptr) < 0) {
+    if (pledge("stdio video thread sendfd recvfd accept rpath wpath cpath unix proc sigaction", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -62,6 +64,12 @@ int main(int, char**)
     Gfx::set_system_theme(theme);
     auto palette = Gfx::PaletteImpl::create_with_anonymous_buffer(theme);
 
+    auto default_font_query = wm_config->read_entry("Fonts", "Default", "Katica 10 400");
+    auto fixed_width_font_query = wm_config->read_entry("Fonts", "FixedWidth", "Csilla 10 400");
+
+    Gfx::FontDatabase::set_default_font_query(default_font_query);
+    Gfx::FontDatabase::set_fixed_width_font_query(fixed_width_font_query);
+
     WindowServer::EventLoop loop;
 
     if (pledge("stdio video thread sendfd recvfd accept rpath wpath cpath proc", nullptr) < 0) {
@@ -69,10 +77,45 @@ int main(int, char**)
         return 1;
     }
 
-    int scale = wm_config->read_num_entry("Screen", "ScaleFactor", 1);
-    WindowServer::Screen screen(wm_config->read_num_entry("Screen", "Width", 1024 / scale), wm_config->read_num_entry("Screen", "Height", 768 / scale), scale);
-    screen.set_acceleration_factor(atof(wm_config->read_entry("Mouse", "AccelerationFactor", "1.0").characters()));
-    screen.set_scroll_step_size(wm_config->read_num_entry("Mouse", "ScrollStepSize", 4));
+    // First check which screens are explicitly configured
+    {
+        AK::HashTable<String> fb_devices_configured;
+        WindowServer::ScreenLayout screen_layout;
+        String error_msg;
+        if (!screen_layout.load_config(*wm_config, &error_msg)) {
+            dbgln("Error loading screen configuration: {}", error_msg);
+            return 1;
+        }
+
+        for (auto& screen_info : screen_layout.screens)
+            fb_devices_configured.set(screen_info.device);
+
+        // Enumerate the /dev/fbX devices and try to set up any ones we find that we haven't already used
+        Core::DirIterator di("/dev", Core::DirIterator::SkipParentAndBaseDir);
+        while (di.has_next()) {
+            auto path = di.next_path();
+            if (!path.starts_with("fb"))
+                continue;
+            auto full_path = String::formatted("/dev/{}", path);
+            if (!Core::File::is_device(full_path))
+                continue;
+            if (fb_devices_configured.find(full_path) != fb_devices_configured.end())
+                continue;
+            if (!screen_layout.try_auto_add_framebuffer(full_path))
+                dbgln("Could not auto-add framebuffer device {} to screen layout", full_path);
+        }
+
+        if (!WindowServer::Screen::apply_layout(move(screen_layout), error_msg)) {
+            dbgln("Error applying screen layout: {}", error_msg);
+            return 1;
+        }
+    }
+
+    auto& screen_input = WindowServer::ScreenInput::the();
+    screen_input.set_cursor_location(WindowServer::Screen::main().rect().center());
+    screen_input.set_acceleration_factor(atof(wm_config->read_entry("Mouse", "AccelerationFactor", "1.0").characters()));
+    screen_input.set_scroll_step_size(wm_config->read_num_entry("Mouse", "ScrollStepSize", 4));
+
     WindowServer::Compositor::the();
     auto wm = WindowServer::WindowManager::construct(*palette);
     auto am = WindowServer::AppletManager::construct();
@@ -83,10 +126,9 @@ int main(int, char**)
         return 1;
     }
 
-    if (unveil("/dev", "") < 0) {
-        perror("unveil /dev");
-        return 1;
-    }
+    // NOTE: Because we dynamically need to be able to open new /dev/fb*
+    // devices we can't really unveil all of /dev unless we have some
+    // other mechanism that can hand us file descriptors for these.
 
     if (unveil(nullptr, nullptr) < 0) {
         perror("unveil");

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
 #include <AK/ScopeGuard.h>
 #include <AK/String.h>
@@ -25,9 +26,9 @@ enum class BinaryFileMode {
 template<typename... Ts>
 void fail(StringView format, Ts... args)
 {
-    fprintf(stderr, "\x1b[31m");
+    warn("\x1b[31m");
     warnln(format, forward<Ts>(args)...);
-    fprintf(stderr, "\x1b[0m");
+    warn("\x1b[0m");
     abort();
 }
 
@@ -140,7 +141,7 @@ int main(int argc, char** argv)
 
     auto handle_file = [&matches, binary_mode](StringView filename, bool print_filename) -> bool {
         auto file = Core::File::construct(filename);
-        if (!file->open(Core::IODevice::ReadOnly)) {
+        if (!file->open(Core::OpenMode::ReadOnly)) {
             warnln("Failed to open {}: {}", filename, file->error_string());
             return false;
         }
@@ -176,7 +177,9 @@ int main(int argc, char** argv)
         ScopeGuard free_line = [line] { free(line); };
         while ((nread = getline(&line, &line_len, stdin)) != -1) {
             VERIFY(nread > 0);
-            StringView line_view(line, nread - 1);
+            if (line[nread - 1] == '\n')
+                --nread;
+            StringView line_view(line, nread);
             bool is_binary = line_view.contains(0);
 
             if (is_binary && binary_mode == BinaryFileMode::Skip)

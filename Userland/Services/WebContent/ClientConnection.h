@@ -32,9 +32,9 @@ private:
     Web::Page& page();
     const Web::Page& page() const;
 
-    virtual void greet() override;
     virtual void update_system_theme(Core::AnonymousBuffer const&) override;
-    virtual void update_screen_rect(Gfx::IntRect const&) override;
+    virtual void update_system_fonts(String const&, String const&) override;
+    virtual void update_screen_rects(Vector<Gfx::IntRect> const&, u32) override;
     virtual void load_url(URL const&) override;
     virtual void load_html(String const&, URL const&) override;
     virtual void paint(Gfx::IntRect const&, i32) override;
@@ -48,6 +48,7 @@ private:
     virtual void remove_backing_store(i32) override;
     virtual void debug_request(String const&, String const&) override;
     virtual void get_source() override;
+    virtual void inspect_dom_tree() override;
     virtual void js_console_initialize() override;
     virtual void js_console_input(String const&) override;
 

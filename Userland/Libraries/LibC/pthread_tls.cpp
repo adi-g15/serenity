@@ -6,6 +6,7 @@
 
 #include <AK/Atomic.h>
 #include <LibPthread/pthread.h>
+#include <errno.h>
 #include <unistd.h>
 
 #ifndef _DYNAMIC_LOADER
@@ -25,7 +26,10 @@ struct SpecificTable {
 
 static KeyTable s_keys;
 
-__thread SpecificTable t_specifics;
+#    ifndef X86_64_NO_TLS
+__thread
+#    endif
+    SpecificTable t_specifics;
 
 int __pthread_key_create(pthread_key_t* key, KeyDestructor destructor)
 {

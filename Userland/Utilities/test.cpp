@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/LexicalPath.h>
 #include <AK/NonnullOwnPtr.h>
 #include <AK/OwnPtr.h>
@@ -497,7 +498,7 @@ int main(int argc, char* argv[])
         return 126;
     }
 
-    if (LexicalPath { argv[0] }.basename() == "[") {
+    if (LexicalPath::basename(argv[0]) == "[") {
         --argc;
         if (StringView { argv[argc] } != "]")
             fatal_error("test invoked as '[' requires a closing bracket ']'");

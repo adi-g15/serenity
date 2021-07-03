@@ -6,12 +6,13 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/CharacterTypes.h>
 #include <AK/StringBuilder.h>
 #include <AK/Utf8View.h>
 #include <LibCore/Timer.h>
 #include <LibJS/Interpreter.h>
 #include <LibJS/Parser.h>
-#include <LibJS/Runtime/Function.h>
+#include <LibJS/Runtime/FunctionObject.h>
 #include <LibWeb/Bindings/MainThreadVM.h>
 #include <LibWeb/Bindings/WindowObject.h>
 #include <LibWeb/CSS/StyleResolver.h>
@@ -50,10 +51,9 @@
 #include <LibWeb/Layout/TreeBuilder.h>
 #include <LibWeb/Namespace.h>
 #include <LibWeb/Origin.h>
-#include <LibWeb/Page/Frame.h>
+#include <LibWeb/Page/BrowsingContext.h>
 #include <LibWeb/SVG/TagNames.h>
 #include <LibWeb/UIEvents/MouseEvent.h>
-#include <ctype.h>
 
 namespace Web::DOM {
 
@@ -188,7 +188,7 @@ HTML::HTMLHtmlElement* Document::html_element()
 {
     auto* html = document_element();
     if (is<HTML::HTMLHtmlElement>(html))
-        return downcast<HTML::HTMLHtmlElement>(html);
+        return verify_cast<HTML::HTMLHtmlElement>(html);
     return nullptr;
 }
 
@@ -224,7 +224,7 @@ ExceptionOr<void> Document::set_body(HTML::HTMLElement& new_body)
     if (existing_body) {
         auto replace_result = existing_body->parent()->replace_child(new_body, *existing_body);
         if (replace_result.is_exception())
-            return NonnullRefPtr<DOMException>(replace_result.exception());
+            return replace_result.exception();
         return {};
     }
 
@@ -234,7 +234,7 @@ ExceptionOr<void> Document::set_body(HTML::HTMLElement& new_body)
 
     auto append_result = document_element->append_child(new_body);
     if (append_result.is_exception())
-        return NonnullRefPtr<DOMException>(append_result.exception());
+        return append_result.exception();
     return {};
 }
 
@@ -253,7 +253,7 @@ String Document::title() const
     StringBuilder builder;
     bool last_was_space = false;
     for (auto code_point : Utf8View(raw_title)) {
-        if (isspace(code_point)) {
+        if (is_ascii_space(code_point)) {
             last_was_space = true;
         } else {
             if (last_was_space && !builder.is_empty())
@@ -281,22 +281,22 @@ void Document::set_title(const String& title)
     title_element->append_child(adopt_ref(*new Text(*this, title)));
 
     if (auto* page = this->page()) {
-        if (frame() == &page->main_frame())
+        if (browsing_context() == &page->top_level_browsing_context())
             page->client().page_did_change_title(title);
     }
 }
 
-void Document::attach_to_frame(Badge<Frame>, Frame& frame)
+void Document::attach_to_browsing_context(Badge<BrowsingContext>, BrowsingContext& browsing_context)
 {
-    m_frame = frame;
+    m_browsing_context = browsing_context;
     update_layout();
 }
 
-void Document::detach_from_frame(Badge<Frame>, Frame& frame)
+void Document::detach_from_browsing_context(Badge<BrowsingContext>, BrowsingContext& browsing_context)
 {
-    VERIFY(&frame == m_frame);
+    VERIFY(&browsing_context == m_browsing_context);
     tear_down_layout_tree();
-    m_frame = nullptr;
+    m_browsing_context = nullptr;
 }
 
 void Document::tear_down_layout_tree()
@@ -399,7 +399,7 @@ void Document::force_layout()
 
 void Document::update_layout()
 {
-    if (!frame())
+    if (!browsing_context())
         return;
 
     if (!m_layout_root) {
@@ -412,7 +412,7 @@ void Document::update_layout()
 
     m_layout_root->set_needs_display();
 
-    if (frame()->is_main_frame()) {
+    if (browsing_context()->is_top_level()) {
         if (auto* page = this->page())
             page->client().page_did_layout();
     }
@@ -423,7 +423,7 @@ static void update_style_recursively(DOM::Node& node)
     node.for_each_child([&](auto& child) {
         if (child.needs_style_update()) {
             if (is<Element>(child))
-                downcast<Element>(child).recompute_style();
+                verify_cast<Element>(child).recompute_style();
             child.set_needs_style_update(false);
         }
         if (child.child_needs_style_update()) {
@@ -525,7 +525,7 @@ NonnullRefPtr<HTMLCollection> Document::applets()
 {
     // FIXME: This should return the same HTMLCollection object every time,
     //        but that would cause a reference cycle since HTMLCollection refs the root.
-    return HTMLCollection::create(*this, [] { return false; });
+    return HTMLCollection::create(*this, [](auto&) { return false; });
 }
 
 // https://html.spec.whatwg.org/multipage/obsolete.html#dom-document-anchors
@@ -630,6 +630,7 @@ JS::Interpreter& Document::interpreter()
         vm.on_call_stack_emptied = [this] {
             auto& vm = m_interpreter->vm();
             vm.run_queued_promise_jobs();
+            vm.run_queued_finalization_registry_cleanup_jobs();
             // Note: This is not an exception check for the promise jobs, they will just leave any
             // exception that already exists intact and never throw a new one (without cleaning it
             // up, that is). Taking care of any previous unhandled exception just happens to be the
@@ -655,6 +656,8 @@ JS::Interpreter& Document::interpreter()
                     dbgln("  {} at {}:{}:{}", function_name, source_range.filename, source_range.start.line, source_range.start.column);
                 }
             }
+
+            vm.finish_execution_generation();
         };
         m_interpreter = JS::Interpreter::create<Bindings::WindowObject>(vm, *m_window);
     }
@@ -828,12 +831,12 @@ void Document::adopt_node(Node& node)
 ExceptionOr<NonnullRefPtr<Node>> Document::adopt_node_binding(NonnullRefPtr<Node> node)
 {
     if (is<Document>(*node))
-        return DOM ::NotSupportedError::create("Cannot adopt_ref a document into a document");
+        return DOM::NotSupportedError::create("Cannot adopt a document into a document");
 
     if (is<ShadowRoot>(*node))
-        return DOM::HierarchyRequestError::create("Cannot adopt_ref a shadow root into a document");
+        return DOM::HierarchyRequestError::create("Cannot adopt a shadow root into a document");
 
-    if (is<DocumentFragment>(*node) && downcast<DocumentFragment>(*node).host())
+    if (is<DocumentFragment>(*node) && verify_cast<DocumentFragment>(*node).host())
         return node;
 
     adopt_node(*node);
@@ -873,6 +876,17 @@ void Document::set_focused_element(Element* element)
         m_layout_root->set_needs_display();
 }
 
+void Document::set_active_element(Element* element)
+{
+    if (m_active_element == element)
+        return;
+
+    m_active_element = element;
+
+    if (m_layout_root)
+        m_layout_root->set_needs_display();
+}
+
 void Document::set_ready_state(const String& ready_state)
 {
     m_ready_state = ready_state;
@@ -881,12 +895,12 @@ void Document::set_ready_state(const String& ready_state)
 
 Page* Document::page()
 {
-    return m_frame ? m_frame->page() : nullptr;
+    return m_browsing_context ? m_browsing_context->page() : nullptr;
 }
 
 const Page* Document::page() const
 {
-    return m_frame ? m_frame->page() : nullptr;
+    return m_browsing_context ? m_browsing_context->page() : nullptr;
 }
 
 EventTarget* Document::get_parent(const Event& event)
@@ -918,6 +932,16 @@ void Document::set_cookie(String cookie_string, Cookie::Source source)
 
     if (auto* page = this->page())
         page->client().page_did_set_cookie(m_url, cookie.value(), source);
+}
+
+String Document::dump_dom_tree_as_json() const
+{
+    StringBuilder builder;
+    JsonObjectSerializer json(builder);
+    serialize_tree_as_json(json);
+
+    json.finish();
+    return builder.to_string();
 }
 
 }

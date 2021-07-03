@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <AK/Assertions.h>
 #include <AK/ByteBuffer.h>
 #include <AK/JsonArray.h>
 #include <AK/JsonObject.h>
@@ -40,7 +41,7 @@ int main(int argc, char** argv)
     if (path == nullptr)
         path = "/dev/stdin";
     auto file = Core::File::construct(path);
-    if (!file->open(Core::IODevice::ReadOnly)) {
+    if (!file->open(Core::OpenMode::ReadOnly)) {
         warnln("Couldn't open {} for reading: {}", path, file->error_string());
         return 1;
     }
@@ -67,7 +68,7 @@ void print(const JsonValue& value, int spaces_per_indent, int indent, bool use_c
 {
     if (value.is_object()) {
         size_t printed_members = 0;
-        auto object = value.as_object();
+        auto& object = value.as_object();
         outln("{{");
         object.for_each_member([&](auto& member_name, auto& member_value) {
             ++printed_members;

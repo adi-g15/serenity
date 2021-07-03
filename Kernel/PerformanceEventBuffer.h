@@ -47,12 +47,28 @@ struct [[gnu::packed]] ThreadCreatePerformanceEvent {
     pid_t parent_tid;
 };
 
+struct [[gnu::packed]] ContextSwitchPerformanceEvent {
+    pid_t next_pid;
+    u32 next_tid;
+};
+
+struct [[gnu::packed]] KMallocPerformanceEvent {
+    size_t size;
+    FlatPtr ptr;
+};
+
+struct [[gnu::packed]] KFreePerformanceEvent {
+    size_t size;
+    FlatPtr ptr;
+};
+
 struct [[gnu::packed]] PerformanceEvent {
-    u8 type { 0 };
+    u16 type { 0 };
     u8 stack_size { 0 };
     u32 pid { 0 };
     u32 tid { 0 };
     u64 timestamp;
+    u32 lost_samples;
     union {
         MallocPerformanceEvent malloc;
         FreePerformanceEvent free;
@@ -61,6 +77,9 @@ struct [[gnu::packed]] PerformanceEvent {
         ProcessCreatePerformanceEvent process_create;
         ProcessExecPerformanceEvent process_exec;
         ThreadCreatePerformanceEvent thread_create;
+        ContextSwitchPerformanceEvent context_switch;
+        KMallocPerformanceEvent kmalloc;
+        KFreePerformanceEvent kfree;
     } data;
     static constexpr size_t max_stack_frame_count = 64;
     FlatPtr stack[max_stack_frame_count];
@@ -77,7 +96,7 @@ public:
 
     KResult append(int type, FlatPtr arg1, FlatPtr arg2, const StringView& arg3, Thread* current_thread = Thread::current());
     KResult append_with_eip_and_ebp(ProcessID pid, ThreadID tid, u32 eip, u32 ebp,
-        int type, FlatPtr arg1, FlatPtr arg2, const StringView& arg3);
+        int type, u32 lost_samples, FlatPtr arg1, FlatPtr arg2, const StringView& arg3);
 
     void clear()
     {
@@ -109,5 +128,6 @@ private:
 
 extern bool g_profiling_all_threads;
 extern PerformanceEventBuffer* g_global_perf_events;
+extern u64 g_profiling_event_mask;
 
 }

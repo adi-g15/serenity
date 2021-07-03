@@ -1,3 +1,9 @@
+serenity_component(
+    UserspaceEmulator
+    RECOMMENDED
+    TARGETS UserspaceEmulator
+)
+
 set(SOURCES
     Emulator.cpp
     Emulator_syscalls.cpp
@@ -13,4 +19,4 @@ set(SOURCES
 )
 
 serenity_bin(UserspaceEmulator)
-target_link_libraries(UserspaceEmulator LibX86 LibDebug LibCore LibPthread)
+target_link_libraries(UserspaceEmulator LibX86 LibDebug LibCore LibPthread LibLine)

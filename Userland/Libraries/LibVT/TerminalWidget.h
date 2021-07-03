@@ -14,6 +14,7 @@
 #include <LibGUI/Frame.h>
 #include <LibGfx/Bitmap.h>
 #include <LibGfx/Rect.h>
+#include <LibVT/Color.h>
 #include <LibVT/Range.h>
 #include <LibVT/Terminal.h>
 
@@ -38,8 +39,6 @@ public:
     void flush_dirty_lines();
 
     void apply_size_increments_to_window(GUI::Window&);
-
-    const Gfx::Font& bold_font() const { return *m_bold_font; }
 
     void set_opacity(u8);
     float opacity() { return m_opacity; };
@@ -82,13 +81,19 @@ public:
     void paste();
     void clear_including_history();
 
+    const StringView color_scheme_name() const { return m_color_scheme_name; }
+
     Function<void(const StringView&)> on_title_change;
     Function<void(const Gfx::IntSize&)> on_terminal_size_change;
     Function<void()> on_command_exit;
 
     GUI::Menu& context_menu() { return *m_context_menu; }
 
+    constexpr Gfx::Color terminal_color_to_rgb(VT::Color) const;
+
     void set_font_and_resize_to_fit(const Gfx::Font&);
+
+    void set_color_scheme(const StringView&);
 
 private:
     // ^GUI::Widget
@@ -114,10 +119,13 @@ private:
     virtual void set_window_title(const StringView&) override;
     virtual void set_window_progress(int value, int max) override;
     virtual void terminal_did_resize(u16 columns, u16 rows) override;
-    virtual void terminal_history_changed() override;
+    virtual void terminal_history_changed(int delta) override;
     virtual void emit(const u8*, size_t) override;
+    virtual void set_cursor_style(CursorStyle) override;
 
     void set_logical_focus(bool);
+
+    void send_non_user_input(const ReadonlyBytes&);
 
     Gfx::IntRect glyph_rect(u16 row, u16 column);
     Gfx::IntRect row_rect(u16 row);
@@ -153,6 +161,13 @@ private:
     // Snapshot of m_hovered_href when opening a context menu for a hyperlink.
     String m_context_menu_href;
 
+    unsigned m_colors[256];
+    Gfx::Color m_default_foreground_color;
+    Gfx::Color m_default_background_color;
+    bool m_show_bold_text_as_bright { true };
+
+    String m_color_scheme_name;
+
     BellMode m_bell_mode { BellMode::Visible };
     bool m_alt_key_held { false };
     bool m_rectangle_selection { false };
@@ -175,7 +190,7 @@ private:
     bool m_cursor_blink_state { true };
     bool m_automatic_size_policy { false };
 
-    RefPtr<Gfx::Font> m_bold_font;
+    VT::CursorStyle m_cursor_style { BlinkingBlock };
 
     enum class AutoScrollDirection {
         None,

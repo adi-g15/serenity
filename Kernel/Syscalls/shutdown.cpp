@@ -8,10 +8,11 @@
 #include <Kernel/FileSystem/FileSystem.h>
 #include <Kernel/IO.h>
 #include <Kernel/Process.h>
+#include <Kernel/TTY/ConsoleManagement.h>
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$reboot()
+KResultOr<FlatPtr> Process::sys$reboot()
 {
     if (!is_superuser())
         return EPERM;
@@ -31,12 +32,13 @@ KResultOr<int> Process::sys$reboot()
     return 0;
 }
 
-KResultOr<int> Process::sys$halt()
+KResultOr<FlatPtr> Process::sys$halt()
 {
     if (!is_superuser())
         return EPERM;
 
     REQUIRE_NO_PROMISES;
+    ConsoleManagement::the().switch_to_debug();
 
     dbgln("acquiring FS locks...");
     FS::lock_all();
@@ -50,8 +52,8 @@ KResultOr<int> Process::sys$halt()
     // VirtualBox shutdown failed. Try Bochs/Old QEMU shutdown.
     IO::out16(0xb004, 0x2000);
     dbgln("shutdown attempts failed, applications will stop responding.");
-
-    return 0;
+    dmesgln("Shutdown can't be completed. It's safe to turn off the computer!");
+    Processor::halt();
 }
 
 }

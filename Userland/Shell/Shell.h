@@ -108,9 +108,9 @@ public:
 
     static bool has_history_event(StringView);
 
-    RefPtr<AST::Value> get_argument(size_t);
-    RefPtr<AST::Value> lookup_local_variable(const String&);
-    String local_variable_or(const String&, const String&);
+    RefPtr<AST::Value> get_argument(size_t) const;
+    RefPtr<AST::Value> lookup_local_variable(const String&) const;
+    String local_variable_or(const String&, const String&) const;
     void set_local_variable(const String&, RefPtr<AST::Value>, bool only_in_current_frame = false);
     void unset_local_variable(const String&, bool only_in_current_frame = false);
 
@@ -276,6 +276,10 @@ private:
     Shell();
     virtual ~Shell() override;
 
+    void timer_event(Core::TimerEvent&) override;
+
+    bool is_allowed_to_modify_termios(const AST::Command&) const;
+
     // FIXME: Port to Core::Property
     void save_to(JsonObject&);
     void bring_cursor_to_beginning_of_a_line() const;
@@ -286,6 +290,10 @@ private:
     void stop_all_jobs();
     const Job* m_current_job { nullptr };
     LocalFrame* find_frame_containing_local_variable(const String& name);
+    const LocalFrame* find_frame_containing_local_variable(const String& name) const
+    {
+        return const_cast<Shell*>(this)->find_frame_containing_local_variable(name);
+    }
 
     void run_tail(RefPtr<Job>);
     void run_tail(const AST::Command&, const AST::NodeWithAction&, int head_exit_code);
@@ -347,6 +355,8 @@ private:
     bool m_default_constructed { false };
 
     mutable bool m_last_continuation_state { false }; // false == not needed.
+
+    Optional<size_t> m_history_autosave_time;
 };
 
 [[maybe_unused]] static constexpr bool is_word_character(char c)

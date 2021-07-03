@@ -59,29 +59,51 @@ CyrillicDecoder& cyrillic_decoder()
     return *decoder;
 }
 
+Latin9Decoder& latin9_decoder()
+{
+    static Latin9Decoder* decoder = nullptr;
+    if (!decoder)
+        decoder = new Latin9Decoder;
+    return *decoder;
+}
+
+TurkishDecoder& turkish_decoder()
+{
+    static TurkishDecoder* decoder = nullptr;
+    if (!decoder)
+        decoder = new TurkishDecoder;
+    return *decoder;
+}
+
 }
 
 Decoder* decoder_for(const String& a_encoding)
 {
     auto encoding = get_standardized_encoding(a_encoding);
-    if (encoding.equals_ignoring_case("windows-1252"))
-        return &latin1_decoder();
-    if (encoding.equals_ignoring_case("utf-8"))
-        return &utf8_decoder();
-    if (encoding.equals_ignoring_case("utf-16be"))
-        return &utf16be_decoder();
-    if (encoding.equals_ignoring_case("iso-8859-2"))
-        return &latin2_decoder();
-    if (encoding.equals_ignoring_case("windows-1255"))
-        return &hebrew_decoder();
-    if (encoding.equals_ignoring_case("windows-1251"))
-        return &cyrillic_decoder();
+    if (encoding.has_value()) {
+        if (encoding.value().equals_ignoring_case("windows-1252"))
+            return &latin1_decoder();
+        if (encoding.value().equals_ignoring_case("utf-8"))
+            return &utf8_decoder();
+        if (encoding.value().equals_ignoring_case("utf-16be"))
+            return &utf16be_decoder();
+        if (encoding.value().equals_ignoring_case("iso-8859-2"))
+            return &latin2_decoder();
+        if (encoding.value().equals_ignoring_case("windows-1255"))
+            return &hebrew_decoder();
+        if (encoding.value().equals_ignoring_case("windows-1251"))
+            return &cyrillic_decoder();
+        if (encoding.value().equals_ignoring_case("iso-8859-15"))
+            return &latin9_decoder();
+        if (encoding.value().equals_ignoring_case("windows-1254"))
+            return &turkish_decoder();
+    }
     dbgln("TextCodec: No decoder implemented for encoding '{}'", a_encoding);
     return nullptr;
 }
 
 // https://encoding.spec.whatwg.org/#concept-encoding-get
-String get_standardized_encoding(const String& encoding)
+Optional<String> get_standardized_encoding(const String& encoding)
 {
     String trimmed_lowercase_encoding = encoding.trim_whitespace().to_lowercase();
 
@@ -172,7 +194,8 @@ String get_standardized_encoding(const String& encoding)
 
 bool is_standardized_encoding(const String& encoding)
 {
-    return encoding.equals_ignoring_case(get_standardized_encoding(encoding));
+    auto standardized_encoding = get_standardized_encoding(encoding);
+    return standardized_encoding.has_value() && encoding.equals_ignoring_case(standardized_encoding.value());
 }
 
 String UTF8Decoder::to_utf8(const StringView& input)
@@ -333,6 +356,68 @@ String CyrillicDecoder::to_utf8(const StringView& input)
         } else {
             builder.append_code_point(translation_table[ch - 0x80]);
         }
+    }
+    return builder.to_string();
+}
+
+String Latin9Decoder::to_utf8(const StringView& input)
+{
+    auto convert_latin9_to_utf8 = [](u8 ch) -> u32 {
+        // Latin9 is the same as the first 256 Unicode code points, except for 8 characters.
+        switch (ch) {
+        case 0xA4:
+            return 0x20AC;
+        case 0xA6:
+            return 0x160;
+        case 0xA8:
+            return 0x161;
+        case 0xB4:
+            return 0x17D;
+        case 0xB8:
+            return 0x17E;
+        case 0xBC:
+            return 0x152;
+        case 0xBD:
+            return 0x153;
+        case 0xBE:
+            return 0x178;
+        default:
+            return ch;
+        }
+    };
+
+    StringBuilder builder(input.length());
+    for (auto ch : input) {
+        builder.append_code_point(convert_latin9_to_utf8(ch));
+    }
+    return builder.to_string();
+}
+
+String TurkishDecoder::to_utf8(const StringView& input)
+{
+    auto convert_turkish_to_utf8 = [](u8 ch) -> u32 {
+        // Turkish (aka ISO-8859-9, Windows-1254) is the same as the first 256 Unicode code points, except for 6 characters.
+        switch (ch) {
+        case 0xD0:
+            return 0x11E;
+        case 0xDD:
+            return 0x130;
+        case 0xDE:
+            return 0x15E;
+        case 0xF0:
+            return 0x11F;
+        case 0xFD:
+            return 0x131;
+        case 0xFE:
+            return 0x15F;
+        default:
+            return ch;
+        }
+    };
+
+    StringBuilder builder(input.length());
+    for (auto ch : input) {
+        builder.append_code_point(convert_turkish_to_utf8(ch));
     }
     return builder.to_string();
 }

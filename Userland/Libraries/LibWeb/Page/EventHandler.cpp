@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2020-2021, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, Max Wipfli <mail@maxwipfli.ch>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -13,8 +14,8 @@
 #include <LibWeb/HTML/HTMLImageElement.h>
 #include <LibWeb/InProcessWebView.h>
 #include <LibWeb/Layout/InitialContainingBlockBox.h>
+#include <LibWeb/Page/BrowsingContext.h>
 #include <LibWeb/Page/EventHandler.h>
-#include <LibWeb/Page/Frame.h>
 #include <LibWeb/UIEvents/EventNames.h>
 #include <LibWeb/UIEvents/MouseEvent.h>
 
@@ -86,7 +87,7 @@ static Gfx::IntPoint compute_mouse_event_offset(const Gfx::IntPoint& position, c
     };
 }
 
-EventHandler::EventHandler(Badge<Frame>, Frame& frame)
+EventHandler::EventHandler(Badge<BrowsingContext>, BrowsingContext& frame)
     : m_frame(frame)
     , m_edit_event_handler(make<EditEventHandler>(frame))
 {
@@ -157,7 +158,7 @@ bool EventHandler::handle_mouseup(const Gfx::IntPoint& position, unsigned button
     if (result.layout_node && result.layout_node->dom_node()) {
         RefPtr<DOM::Node> node = result.layout_node->dom_node();
         if (is<HTML::HTMLIFrameElement>(*node)) {
-            if (auto* subframe = downcast<HTML::HTMLIFrameElement>(*node).content_frame())
+            if (auto* subframe = verify_cast<HTML::HTMLIFrameElement>(*node).nested_browsing_context())
                 return subframe->event_handler().handle_mouseup(position.translated(compute_mouse_event_offset({}, *result.layout_node)), button, modifiers);
             return false;
         }
@@ -201,13 +202,13 @@ bool EventHandler::handle_mousedown(const Gfx::IntPoint& position, unsigned butt
             return false;
 
         if (is<HTML::HTMLIFrameElement>(*node)) {
-            if (auto* subframe = downcast<HTML::HTMLIFrameElement>(*node).content_frame())
+            if (auto* subframe = verify_cast<HTML::HTMLIFrameElement>(*node).nested_browsing_context())
                 return subframe->event_handler().handle_mousedown(position.translated(compute_mouse_event_offset({}, *result.layout_node)), button, modifiers);
             return false;
         }
 
         if (auto* page = m_frame.page())
-            page->set_focused_frame({}, m_frame);
+            page->set_focused_browsing_context({}, m_frame);
 
         auto offset = compute_mouse_event_offset(position, *result.layout_node);
         node->dispatch_event(UIEvents::MouseEvent::create(UIEvents::EventNames::mousedown, offset.x(), offset.y(), position.x(), position.y()));
@@ -218,10 +219,10 @@ bool EventHandler::handle_mousedown(const Gfx::IntPoint& position, unsigned butt
         return true;
 
     if (button == GUI::MouseButton::Right && is<HTML::HTMLImageElement>(*node)) {
-        auto& image_element = downcast<HTML::HTMLImageElement>(*node);
+        auto& image_element = verify_cast<HTML::HTMLImageElement>(*node);
         auto image_url = image_element.document().complete_url(image_element.src());
         if (auto* page = m_frame.page())
-            page->client().page_did_request_image_context_menu(m_frame.to_main_frame_position(position), image_url, "", modifiers, image_element.bitmap());
+            page->client().page_did_request_image_context_menu(m_frame.to_top_level_position(position), image_url, "", modifiers, image_element.bitmap());
         return true;
     }
 
@@ -236,7 +237,8 @@ bool EventHandler::handle_mousedown(const Gfx::IntPoint& position, unsigned butt
                 auto anchor = href.substring_view(1, href.length() - 1);
                 m_frame.scroll_to_anchor(anchor);
             } else {
-                if (m_frame.is_main_frame()) {
+                document->set_active_element(link);
+                if (m_frame.is_top_level()) {
                     if (auto* page = m_frame.page())
                         page->client().page_did_click_link(url, link->target(), modifiers);
                 } else {
@@ -246,7 +248,7 @@ bool EventHandler::handle_mousedown(const Gfx::IntPoint& position, unsigned butt
             }
         } else if (button == GUI::MouseButton::Right) {
             if (auto* page = m_frame.page())
-                page->client().page_did_request_link_context_menu(m_frame.to_main_frame_position(position), url, link->target(), modifiers);
+                page->client().page_did_request_link_context_menu(m_frame.to_top_level_position(position), url, link->target(), modifiers);
         } else if (button == GUI::MouseButton::Middle) {
             if (auto* page = m_frame.page())
                 page->client().page_did_middle_click_link(url, link->target(), modifiers);
@@ -261,7 +263,7 @@ bool EventHandler::handle_mousedown(const Gfx::IntPoint& position, unsigned butt
             }
         } else if (button == GUI::MouseButton::Right) {
             if (auto* page = m_frame.page())
-                page->client().page_did_request_context_menu(m_frame.to_main_frame_position(position));
+                page->client().page_did_request_context_menu(m_frame.to_top_level_position(position));
         }
     }
     return true;
@@ -298,7 +300,7 @@ bool EventHandler::handle_mousemove(const Gfx::IntPoint& position, unsigned butt
         RefPtr<DOM::Node> node = result.layout_node->dom_node();
 
         if (node && is<HTML::HTMLIFrameElement>(*node)) {
-            if (auto* subframe = downcast<HTML::HTMLIFrameElement>(*node).content_frame())
+            if (auto* subframe = verify_cast<HTML::HTMLIFrameElement>(*node).nested_browsing_context())
                 return subframe->event_handler().handle_mousemove(position.translated(compute_mouse_event_offset({}, *result.layout_node)), buttons, modifiers);
             return false;
         }
@@ -339,7 +341,7 @@ bool EventHandler::handle_mousemove(const Gfx::IntPoint& position, unsigned butt
         if (hovered_node_changed) {
             RefPtr<HTML::HTMLElement> hovered_html_element = document.hovered_node() ? document.hovered_node()->enclosing_html_element_with_attribute(HTML::AttributeNames::title) : nullptr;
             if (hovered_html_element && !hovered_html_element->title().is_null()) {
-                page->client().page_did_enter_tooltip_area(m_frame.to_main_frame_position(position), hovered_html_element->title());
+                page->client().page_did_enter_tooltip_area(m_frame.to_top_level_position(position), hovered_html_element->title());
             } else {
                 page->client().page_did_leave_tooltip_area();
             }
@@ -378,6 +380,12 @@ bool EventHandler::focus_previous_element()
     return false;
 }
 
+constexpr bool should_ignore_keydown_event(u32 code_point)
+{
+    // FIXME: There are probably also keys with non-zero code points that should be filtered out.
+    return code_point == 0;
+}
+
 bool EventHandler::handle_keydown(KeyCode key, unsigned modifiers, u32 code_point)
 {
     if (key == KeyCode::Key_Tab) {
@@ -396,17 +404,12 @@ bool EventHandler::handle_keydown(KeyCode key, unsigned modifiers, u32 code_poin
             m_frame.set_cursor_position({ *range->start_container(), range->start_offset() });
 
             if (key == KeyCode::Key_Backspace || key == KeyCode::Key_Delete) {
-
                 m_edit_event_handler->handle_delete(range);
                 return true;
-            } else {
+            } else if (!should_ignore_keydown_event(code_point)) {
                 m_edit_event_handler->handle_delete(range);
                 m_edit_event_handler->handle_insert(m_frame.cursor_position(), code_point);
-
-                auto new_position = m_frame.cursor_position();
-                new_position.set_offset(new_position.offset() + 1);
-                m_frame.set_cursor_position(move(new_position));
-
+                m_frame.increment_cursor_position_offset();
                 return true;
             }
         }
@@ -414,56 +417,36 @@ bool EventHandler::handle_keydown(KeyCode key, unsigned modifiers, u32 code_poin
 
     if (m_frame.cursor_position().is_valid() && m_frame.cursor_position().node()->is_editable()) {
         if (key == KeyCode::Key_Backspace) {
-            auto position = m_frame.cursor_position();
+            if (!m_frame.decrement_cursor_position_offset()) {
+                // FIXME: Move to the previous node and delete the last character there.
+                return true;
+            }
 
-            if (position.offset() == 0)
-                TODO();
-
-            auto new_position = m_frame.cursor_position();
-            new_position.set_offset(position.offset() - 1);
-            m_frame.set_cursor_position(move(new_position));
-
-            m_edit_event_handler->handle_delete(DOM::Range::create(*position.node(), position.offset() - 1, *position.node(), position.offset()));
-
+            m_edit_event_handler->handle_delete_character_after(m_frame.cursor_position());
             return true;
         } else if (key == KeyCode::Key_Delete) {
-            auto position = m_frame.cursor_position();
-
-            if (position.offset() >= downcast<DOM::Text>(position.node())->data().length())
-                TODO();
-
-            m_edit_event_handler->handle_delete(DOM::Range::create(*position.node(), position.offset(), *position.node(), position.offset() + 1));
-
+            if (m_frame.cursor_position().offset_is_at_end_of_node()) {
+                // FIXME: Move to the next node and delete the first character there.
+                return true;
+            }
+            m_edit_event_handler->handle_delete_character_after(m_frame.cursor_position());
             return true;
         } else if (key == KeyCode::Key_Right) {
-            auto position = m_frame.cursor_position();
-
-            if (position.offset() >= downcast<DOM::Text>(position.node())->data().length())
-                TODO();
-
-            auto new_position = m_frame.cursor_position();
-            new_position.set_offset(position.offset() + 1);
-            m_frame.set_cursor_position(move(new_position));
-
+            if (!m_frame.increment_cursor_position_offset()) {
+                // FIXME: Move to the next node.
+            }
             return true;
         } else if (key == KeyCode::Key_Left) {
-            auto position = m_frame.cursor_position();
-
-            if (position.offset() == 0)
-                TODO();
-
-            auto new_position = m_frame.cursor_position();
-            new_position.set_offset(new_position.offset() - 1);
-            m_frame.set_cursor_position(move(new_position));
-
+            if (!m_frame.decrement_cursor_position_offset()) {
+                // FIXME: Move to the previous node.
+            }
+            return true;
+        } else if (!should_ignore_keydown_event(code_point)) {
+            m_edit_event_handler->handle_insert(m_frame.cursor_position(), code_point);
+            m_frame.increment_cursor_position_offset();
             return true;
         } else {
-            m_edit_event_handler->handle_insert(m_frame.cursor_position(), code_point);
-
-            auto new_position = m_frame.cursor_position();
-            new_position.set_offset(new_position.offset() + 1);
-            m_frame.set_cursor_position(move(new_position));
-
+            // NOTE: Because modifier keys should be ignored, we need to return true.
             return true;
         }
     }

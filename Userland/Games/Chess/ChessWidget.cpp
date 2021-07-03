@@ -6,6 +6,7 @@
 
 #include "ChessWidget.h"
 #include "PromotionDialog.h"
+#include <AK/Random.h>
 #include <AK/String.h>
 #include <LibCore/DateTime.h>
 #include <LibCore/File.h>
@@ -16,14 +17,9 @@
 #include <LibGfx/Path.h>
 #include <unistd.h>
 
-ChessWidget::ChessWidget(const StringView& set)
-{
-    set_piece_set(set);
-}
-
 ChessWidget::ChessWidget()
-    : ChessWidget("stelar7")
 {
+    set_piece_set("stelar7");
 }
 
 ChessWidget::~ChessWidget()
@@ -32,16 +28,26 @@ ChessWidget::~ChessWidget()
 
 void ChessWidget::paint_event(GUI::PaintEvent& event)
 {
-    GUI::Widget::paint_event(event);
+    const int min_size = min(width(), height());
+    const int widget_offset_x = (window()->width() - min_size) / 2;
+    const int widget_offset_y = (window()->height() - min_size) / 2;
+
+    GUI::Frame::paint_event(event);
 
     GUI::Painter painter(*this);
     painter.add_clip_rect(event.rect());
 
-    size_t tile_width = width() / 8;
-    size_t tile_height = height() / 8;
-    unsigned coord_rank_file = (side() == Chess::Color::White) ? 0 : 7;
+    painter.fill_rect({ 0, 0, width(), height() }, Color::Black);
+
+    painter.translate(frame_thickness() + widget_offset_x, frame_thickness() + widget_offset_y);
+
+    size_t tile_width = min_size / 8;
+    size_t tile_height = min_size / 8;
+    int coord_rank_file = (side() == Chess::Color::White) ? 0 : 7;
 
     Chess::Board& active_board = (m_playback ? board_playback() : board());
+
+    auto& coordinate_font = Gfx::FontDatabase::default_font().bold_variant();
 
     Chess::Square::for_each([&](Chess::Square sq) {
         Gfx::IntRect tile_rect;
@@ -64,10 +70,10 @@ void ChessWidget::paint_event(GUI::PaintEvent& event)
             auto shrunken_rect = tile_rect;
             shrunken_rect.shrink(4, 4);
             if (sq.rank == coord_rank_file)
-                painter.draw_text(shrunken_rect, coord.substring_view(0, 1), Gfx::FontDatabase::default_bold_font(), Gfx::TextAlignment::BottomRight, text_color);
+                painter.draw_text(shrunken_rect, coord.substring_view(0, 1), coordinate_font, Gfx::TextAlignment::BottomRight, text_color);
 
             if (sq.file == coord_rank_file)
-                painter.draw_text(shrunken_rect, coord.substring_view(1, 1), Gfx::FontDatabase::default_bold_font(), Gfx::TextAlignment::TopLeft, text_color);
+                painter.draw_text(shrunken_rect, coord.substring_view(1, 1), coordinate_font, Gfx::TextAlignment::TopLeft, text_color);
         }
 
         for (auto& m : m_board_markings) {
@@ -163,11 +169,17 @@ void ChessWidget::paint_event(GUI::PaintEvent& event)
 
 void ChessWidget::mousedown_event(GUI::MouseEvent& event)
 {
-    GUI::Widget::mousedown_event(event);
+    const int min_size = min(width(), height());
+    const int widget_offset_x = (window()->width() - min_size) / 2;
+    const int widget_offset_y = (window()->height() - min_size) / 2;
+
+    if (!frame_inner_rect().contains(event.position()))
+        return;
 
     if (event.button() == GUI::MouseButton::Right) {
         if (m_dragging_piece) {
             m_dragging_piece = false;
+            set_override_cursor(Gfx::StandardCursor::None);
             m_available_moves.clear();
         } else {
             m_current_marking.from = mouse_to_square(event);
@@ -180,7 +192,8 @@ void ChessWidget::mousedown_event(GUI::MouseEvent& event)
     auto piece = board().get_piece(square);
     if (drag_enabled() && piece.color == board().turn() && !m_playback) {
         m_dragging_piece = true;
-        m_drag_point = event.position();
+        set_override_cursor(Gfx::StandardCursor::Drag);
+        m_drag_point = { event.position().x() - widget_offset_x, event.position().y() - widget_offset_y };
         m_moving_square = square;
 
         m_board.generate_moves([&](Chess::Move move) {
@@ -196,7 +209,8 @@ void ChessWidget::mousedown_event(GUI::MouseEvent& event)
 
 void ChessWidget::mouseup_event(GUI::MouseEvent& event)
 {
-    GUI::Widget::mouseup_event(event);
+    if (!frame_inner_rect().contains(event.position()))
+        return;
 
     if (event.button() == GUI::MouseButton::Right) {
         m_current_marking.secondary_color = event.shift();
@@ -217,6 +231,7 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
         return;
 
     m_dragging_piece = false;
+    set_override_cursor(Gfx::StandardCursor::Hand);
     m_available_moves.clear();
 
     auto target_square = mouse_to_square(event);
@@ -280,6 +295,7 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
                 VERIFY_NOT_REACHED();
             }
             if (over) {
+                set_override_cursor(Gfx::StandardCursor::None);
                 set_drag_enabled(false);
                 update();
                 GUI::MessageBox::show(window(), msg, "Game Over", GUI::MessageBox::Type::Information);
@@ -294,16 +310,35 @@ void ChessWidget::mouseup_event(GUI::MouseEvent& event)
 
 void ChessWidget::mousemove_event(GUI::MouseEvent& event)
 {
-    GUI::Widget::mousemove_event(event);
-    if (!m_dragging_piece)
+    const int min_size = min(width(), height());
+    const int widget_offset_x = (window()->width() - min_size) / 2;
+    const int widget_offset_y = (window()->height() - min_size) / 2;
+
+    if (!frame_inner_rect().contains(event.position()))
         return;
 
-    m_drag_point = event.position();
+    if (m_engine && board().turn() != side())
+        return;
+
+    if (!m_dragging_piece) {
+        auto square = mouse_to_square(event);
+        if (!square.in_bounds())
+            return;
+        auto piece = board().get_piece(square);
+        if (piece.color == board().turn())
+            set_override_cursor(Gfx::StandardCursor::Hand);
+        else
+            set_override_cursor(Gfx::StandardCursor::None);
+        return;
+    }
+
+    m_drag_point = { event.position().x() - widget_offset_x, event.position().y() - widget_offset_y };
     update();
 }
 
 void ChessWidget::keydown_event(GUI::KeyEvent& event)
 {
+    set_override_cursor(Gfx::StandardCursor::None);
     switch (event.key()) {
     case KeyCode::Key_Left:
         playback_move(PlaybackDirection::Backward);
@@ -360,13 +395,17 @@ void ChessWidget::set_piece_set(const StringView& set)
 
 Chess::Square ChessWidget::mouse_to_square(GUI::MouseEvent& event) const
 {
-    unsigned tile_width = width() / 8;
-    unsigned tile_height = height() / 8;
+    const int min_size = min(width(), height());
+    const int widget_offset_x = (window()->width() - min_size) / 2;
+    const int widget_offset_y = (window()->height() - min_size) / 2;
+
+    int tile_width = min_size / 8;
+    int tile_height = min_size / 8;
 
     if (side() == Chess::Color::White) {
-        return { (unsigned)(7 - (event.y() / tile_height)), (unsigned)(event.x() / tile_width) };
+        return { 7 - ((event.y() - widget_offset_y) / tile_height), (event.x() - widget_offset_x) / tile_width };
     } else {
-        return { (unsigned)(event.y() / tile_height), (unsigned)(7 - (event.x() / tile_width)) };
+        return { (event.y() - widget_offset_y) / tile_height, 7 - ((event.x() - widget_offset_x) / tile_width) };
     }
 }
 
@@ -382,7 +421,7 @@ void ChessWidget::reset()
     m_playback_move_number = 0;
     m_board_playback = Chess::Board();
     m_board = Chess::Board();
-    m_side = (arc4random() % 2) ? Chess::Color::White : Chess::Color::Black;
+    m_side = (get_random<u32>() % 2) ? Chess::Color::White : Chess::Color::Black;
     m_drag_enabled = true;
     input_engine_move();
     update();
@@ -483,7 +522,7 @@ String ChessWidget::get_fen() const
 
 bool ChessWidget::import_pgn(const StringView& import_path)
 {
-    auto file_or_error = Core::File::open(import_path, Core::File::OpenMode::ReadOnly);
+    auto file_or_error = Core::File::open(import_path, Core::OpenMode::ReadOnly);
     if (file_or_error.is_error()) {
         warnln("Couldn't open '{}': {}", import_path, file_or_error.error());
         return false;
@@ -588,7 +627,7 @@ bool ChessWidget::import_pgn(const StringView& import_path)
 
 bool ChessWidget::export_pgn(const StringView& export_path) const
 {
-    auto file_or_error = Core::File::open(export_path, Core::File::WriteOnly);
+    auto file_or_error = Core::File::open(export_path, Core::OpenMode::WriteOnly);
     if (file_or_error.is_error()) {
         warnln("Couldn't open '{}': {}", export_path, file_or_error.error());
         return false;

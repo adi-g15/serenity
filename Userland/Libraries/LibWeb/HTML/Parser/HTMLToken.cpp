@@ -57,6 +57,12 @@ String HTMLToken::to_string() const
         builder.append("' }");
     }
 
+    if (type() == HTMLToken::Type::Character) {
+        builder.appendff("@{}:{}", m_start_position.line, m_start_position.column);
+    } else {
+        builder.appendff("@{}:{}-{}:{}", m_start_position.line, m_start_position.column, m_end_position.line, m_end_position.column);
+    }
+
     return builder.to_string();
 }
 

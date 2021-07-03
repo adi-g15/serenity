@@ -6,10 +6,11 @@
 
 #pragma once
 
+#include <AK/Concepts.h>
 #include <AK/HashTable.h>
 #include <AK/NonnullRefPtrVector.h>
 #include <AK/String.h>
-#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/Arch/x86/PageFault.h>
 #include <Kernel/Forward.h>
 #include <Kernel/SpinLock.h>
 #include <Kernel/VM/AllocationStrategy.h>
@@ -21,13 +22,13 @@ namespace Kernel {
 
 constexpr bool page_round_up_would_wrap(FlatPtr x)
 {
-    return x > 0xfffff000u;
+    return x > (explode_byte(0xFF) & ~0xFFF);
 }
 
 constexpr FlatPtr page_round_up(FlatPtr x)
 {
     FlatPtr rounded = (((FlatPtr)(x)) + PAGE_SIZE - 1) & (~(PAGE_SIZE - 1));
-    // Rounding up >0xffff0000 wraps back to 0. That's never what we want.
+    // Rounding up >0xfffff000 wraps back to 0. That's never what we want.
     VERIFY(x == 0 || rounded != 0);
     return rounded;
 }
@@ -39,12 +40,12 @@ constexpr FlatPtr page_round_down(FlatPtr x)
 
 inline FlatPtr low_physical_to_virtual(FlatPtr physical)
 {
-    return physical + 0xc0000000;
+    return physical + KERNEL_BASE;
 }
 
-inline FlatPtr virtual_to_low_physical(FlatPtr physical)
+inline FlatPtr virtual_to_low_physical(FlatPtr virtual_)
 {
-    return physical - 0xc0000000;
+    return virtual_ - KERNEL_BASE;
 }
 
 enum class UsedMemoryRangeType {
@@ -53,7 +54,7 @@ enum class UsedMemoryRangeType {
     BootModule,
 };
 
-constexpr static const char* UserMemoryRangeTypeNames[] {
+static constexpr StringView UserMemoryRangeTypeNames[] {
     "Low memory",
     "Kernel",
     "Boot module",
@@ -104,7 +105,6 @@ class MemoryManager {
     friend class PhysicalRegion;
     friend class AnonymousVMObject;
     friend class Region;
-    friend class ScatterGatherList;
     friend class VMObject;
 
 public:
@@ -144,12 +144,12 @@ public:
     void deallocate_user_physical_page(const PhysicalPage&);
     void deallocate_supervisor_physical_page(const PhysicalPage&);
 
-    OwnPtr<Region> allocate_contiguous_kernel_region(size_t, String name, Region::Access access, size_t physical_alignment = PAGE_SIZE, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region(size_t, String name, Region::Access access, AllocationStrategy strategy = AllocationStrategy::Reserve, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region(PhysicalAddress, size_t, String name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region_identity(PhysicalAddress, size_t, String name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region_with_vmobject(VMObject&, size_t, String name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
-    OwnPtr<Region> allocate_kernel_region_with_vmobject(const Range&, VMObject&, String name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_contiguous_kernel_region(size_t, StringView name, Region::Access access, size_t physical_alignment = PAGE_SIZE, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region(size_t, StringView name, Region::Access access, AllocationStrategy strategy = AllocationStrategy::Reserve, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region(PhysicalAddress, size_t, StringView name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region_identity(PhysicalAddress, size_t, StringView name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region_with_vmobject(VMObject&, size_t, StringView name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
+    OwnPtr<Region> allocate_kernel_region_with_vmobject(const Range&, VMObject&, StringView name, Region::Access access, Region::Cacheable = Region::Cacheable::Yes);
 
     unsigned user_physical_pages() const { return m_user_physical_pages; }
     unsigned user_physical_pages_used() const { return m_user_physical_pages_used; }
@@ -158,13 +158,20 @@ public:
     unsigned super_physical_pages() const { return m_super_physical_pages; }
     unsigned super_physical_pages_used() const { return m_super_physical_pages_used; }
 
-    template<typename Callback>
+    template<IteratorFunction<VMObject&> Callback>
     static void for_each_vmobject(Callback callback)
     {
         for (auto& vmobject : MM.m_vmobjects) {
             if (callback(vmobject) == IterationDecision::Break)
                 break;
         }
+    }
+
+    template<VoidFunction<VMObject&> Callback>
+    static void for_each_vmobject(Callback callback)
+    {
+        for (auto& vmobject : MM.m_vmobjects)
+            callback(vmobject);
     }
 
     static Region* find_region_from_vaddr(Space&, VirtualAddress);
@@ -226,13 +233,13 @@ private:
     NonnullRefPtrVector<PhysicalRegion> m_user_physical_regions;
     NonnullRefPtrVector<PhysicalRegion> m_super_physical_regions;
 
-    InlineLinkedList<Region> m_user_regions;
-    InlineLinkedList<Region> m_kernel_regions;
+    Region::List m_user_regions;
+    Region::List m_kernel_regions;
     Vector<UsedMemoryRange> m_used_memory_ranges;
     Vector<PhysicalMemoryRange> m_physical_memory_ranges;
     Vector<ContiguousReservedMemoryRange> m_reserved_memory_ranges;
 
-    InlineLinkedList<VMObject> m_vmobjects;
+    VMObject::List m_vmobjects;
 };
 
 template<typename Callback>
@@ -253,7 +260,7 @@ void VMObject::for_each_region(Callback callback)
 
 inline bool is_user_address(VirtualAddress vaddr)
 {
-    return vaddr.get() < 0xc0000000;
+    return vaddr.get() < KERNEL_BASE;
 }
 
 inline bool is_user_range(VirtualAddress vaddr, size_t size)

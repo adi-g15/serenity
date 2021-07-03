@@ -4,9 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include "NullDevice.h"
 #include <AK/Singleton.h>
 #include <AK/StdLibExtras.h>
+#include <Kernel/Devices/NullDevice.h>
+#include <Kernel/Sections.h>
 
 namespace Kernel {
 
@@ -43,7 +44,7 @@ KResultOr<size_t> NullDevice::read(FileDescription&, u64, UserOrKernelBuffer&, s
 
 KResultOr<size_t> NullDevice::write(FileDescription&, u64, const UserOrKernelBuffer&, size_t buffer_size)
 {
-    return min(static_cast<size_t>(PAGE_SIZE), buffer_size);
+    return buffer_size;
 }
 
 }

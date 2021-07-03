@@ -8,7 +8,6 @@
 
 #include <AK/String.h>
 #include <AK/Types.h>
-#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Interrupts/GenericInterruptHandler.h>
 
 namespace Kernel {
@@ -17,7 +16,7 @@ public:
     explicit UnhandledInterruptHandler(u8 interrupt_vector);
     virtual ~UnhandledInterruptHandler();
 
-    virtual void handle_interrupt(const RegisterState&) override;
+    virtual bool handle_interrupt(const RegisterState&) override;
 
     [[noreturn]] virtual bool eoi() override;
 

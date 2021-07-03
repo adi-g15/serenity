@@ -8,19 +8,15 @@
 #include <Clipboard/ClipboardClientEndpoint.h>
 #include <Clipboard/ClipboardServerEndpoint.h>
 #include <LibGUI/Clipboard.h>
+#include <LibGfx/Bitmap.h>
 #include <LibIPC/ServerConnection.h>
 
 namespace GUI {
 
-class ClipboardServerConnection : public IPC::ServerConnection<ClipboardClientEndpoint, ClipboardServerEndpoint>
+class ClipboardServerConnection final
+    : public IPC::ServerConnection<ClipboardClientEndpoint, ClipboardServerEndpoint>
     , public ClipboardClientEndpoint {
     C_OBJECT(ClipboardServerConnection);
-
-public:
-    virtual void handshake() override
-    {
-        greet();
-    }
 
 private:
     ClipboardServerConnection()
@@ -76,6 +72,11 @@ void Clipboard::set_data(ReadonlyBytes data, const String& type, const HashMap<S
         memcpy(buffer.data<void>(), data.data(), data.size());
 
     connection().async_set_clipboard_data(move(buffer), type, metadata);
+}
+
+void Clipboard::clear()
+{
+    connection().async_set_clipboard_data({}, {}, {});
 }
 
 void ClipboardServerConnection::clipboard_data_changed(String const& mime_type)

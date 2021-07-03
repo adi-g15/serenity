@@ -7,7 +7,6 @@
 #include "RunWindow.h"
 #include <AK/LexicalPath.h>
 #include <AK/URL.h>
-#include <AK/URLParser.h>
 #include <Applications/Run/RunGML.h>
 #include <LibCore/File.h>
 #include <LibCore/StandardPaths.h>
@@ -171,7 +170,7 @@ String RunWindow::history_file_path()
 void RunWindow::load_history()
 {
     m_path_history.clear();
-    auto file_or_error = Core::File::open(history_file_path(), Core::IODevice::ReadOnly);
+    auto file_or_error = Core::File::open(history_file_path(), Core::OpenMode::ReadOnly);
     if (file_or_error.is_error())
         return;
 
@@ -185,7 +184,7 @@ void RunWindow::load_history()
 
 void RunWindow::save_history()
 {
-    auto file_or_error = Core::File::open(history_file_path(), Core::IODevice::WriteOnly);
+    auto file_or_error = Core::File::open(history_file_path(), Core::OpenMode::WriteOnly);
     if (file_or_error.is_error())
         return;
 

@@ -12,7 +12,7 @@
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
 {
-    if (pledge("stdio accept unix inet cpath rpath fattr", nullptr) < 0) {
+    if (pledge("stdio accept unix inet rpath", nullptr) < 0) {
         perror("pledge");
         return 1;
     }
@@ -26,6 +26,11 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char** argv)
     }
 
     if (unveil("/proc/net/adapters", "r") < 0) {
+        perror("unveil");
+        return 1;
+    }
+
+    if (unveil("/etc/hosts", "r") < 0) {
         perror("unveil");
         return 1;
     }

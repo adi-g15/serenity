@@ -54,8 +54,9 @@ TYPEDEF_DISTINCT_ORDERED_ID(size_t, LocalIndex);
 TYPEDEF_DISTINCT_ORDERED_ID(size_t, GlobalIndex);
 TYPEDEF_DISTINCT_ORDERED_ID(size_t, LabelIndex);
 TYPEDEF_DISTINCT_ORDERED_ID(size_t, DataIndex);
+TYPEDEF_DISTINCT_NUMERIC_GENERAL(u64, true, true, false, true, false, true, InstructionPointer);
 
-ParseError with_eof_check(const InputStream& stream, ParseError error_if_not_eof);
+ParseError with_eof_check(InputStream const& stream, ParseError error_if_not_eof);
 
 template<typename T>
 struct GenericIndexParser {
@@ -169,6 +170,8 @@ public:
         F64,
         FunctionReference,
         ExternReference,
+        NullFunctionReference,
+        NullExternReference,
     };
 
     explicit ValueType(Kind kind)
@@ -176,7 +179,7 @@ public:
     {
     }
 
-    auto is_reference() const { return m_kind == ExternReference || m_kind == FunctionReference; }
+    auto is_reference() const { return m_kind == ExternReference || m_kind == FunctionReference || m_kind == NullExternReference || m_kind == NullFunctionReference; }
     auto is_numeric() const { return !is_reference(); }
     auto kind() const { return m_kind; }
 
@@ -197,6 +200,10 @@ public:
             return "funcref";
         case ExternReference:
             return "externref";
+        case NullFunctionReference:
+            return "ref.null externref";
+        case NullExternReference:
+            return "ref.null funcref";
         }
         VERIFY_NOT_REACHED();
     }
@@ -213,7 +220,7 @@ public:
     {
     }
 
-    const auto& types() const { return m_types; }
+    auto const& types() const { return m_types; }
 
     static ParseResult<ResultType> parse(InputStream& stream);
 
@@ -389,15 +396,10 @@ public:
         TableIndex rhs;
     };
 
-    struct BlockAndInstructionSet {
+    struct StructuredInstructionArgs {
         BlockType block_type;
-        NonnullOwnPtrVector<Instruction> instructions;
-    };
-
-    struct BlockAndTwoInstructionSets {
-        BlockType block_type;
-        NonnullOwnPtrVector<Instruction> left_instructions;
-        NonnullOwnPtrVector<Instruction> right_instructions;
+        InstructionPointer end_ip;
+        Optional<InstructionPointer> else_ip;
     };
 
     struct TableBranchArgs {
@@ -422,14 +424,16 @@ public:
     {
     }
 
-    static ParseResult<Instruction> parse(InputStream& stream);
+    static ParseResult<Vector<Instruction>> parse(InputStream& stream, InstructionPointer& ip);
+
+    auto& opcode() const { return m_opcode; }
+    auto& arguments() const { return m_arguments; }
 
 private:
     OpCode m_opcode { 0 };
     // clang-format off
     Variant<
-        BlockAndInstructionSet,
-        BlockAndTwoInstructionSets,
+        BlockType,
         DataIndex,
         ElementIndex,
         FunctionIndex,
@@ -438,6 +442,7 @@ private:
         LabelIndex,
         LocalIndex,
         MemoryArgument,
+        StructuredInstructionArgs,
         TableBranchArgs,
         TableElementArgs,
         TableIndex,
@@ -491,10 +496,10 @@ private:
 };
 
 class ImportSection {
-private:
+public:
     class Import {
     public:
-        using ImportDesc = Variant<TypeIndex, TableType, MemoryType, GlobalType>;
+        using ImportDesc = Variant<TypeIndex, TableType, MemoryType, GlobalType, FunctionType>;
         Import(String module, String name, ImportDesc description)
             : m_module(move(module))
             , m_name(move(name))
@@ -557,7 +562,7 @@ private:
 };
 
 class TableSection {
-private:
+public:
     class Table {
     public:
         explicit Table(TableType type)
@@ -590,7 +595,7 @@ private:
 };
 
 class MemorySection {
-private:
+public:
     class Memory {
     public:
         explicit Memory(MemoryType type)
@@ -638,7 +643,7 @@ private:
 };
 
 class GlobalSection {
-private:
+public:
     class Global {
     public:
         explicit Global(GlobalType type, Expression expression)
@@ -676,6 +681,8 @@ private:
 class ExportSection {
 private:
     using ExportDesc = Variant<FunctionIndex, TableIndex, MemoryIndex, GlobalIndex>;
+
+public:
     class Export {
     public:
         explicit Export(String name, ExportDesc description)
@@ -694,7 +701,6 @@ private:
         ExportDesc m_description;
     };
 
-public:
     static constexpr u8 section_id = 7;
 
     explicit ExportSection(Vector<Export> entries)
@@ -711,7 +717,7 @@ private:
 };
 
 class StartSection {
-private:
+public:
     class StartFunction {
     public:
         explicit StartFunction(FunctionIndex index)
@@ -727,7 +733,6 @@ private:
         FunctionIndex m_index;
     };
 
-public:
     static constexpr u8 section_id = 8;
 
     explicit StartSection(StartFunction func)
@@ -744,42 +749,74 @@ private:
 };
 
 class ElementSection {
-private:
-    class Element {
-    public:
-        explicit Element(TableIndex table, Expression expr, Vector<FunctionIndex> init)
-            : m_table(table)
-            , m_offset(move(expr))
-            , m_init(move(init))
-        {
-        }
-
-        auto& table() const { return m_table; }
-        auto& offset() const { return m_offset; }
-        auto& init() const { return m_init; }
-
-        static ParseResult<Element> parse(InputStream& stream);
-
-    private:
-        TableIndex m_table;
-        Expression m_offset;
-        Vector<FunctionIndex> m_init;
+public:
+    struct Active {
+        TableIndex index;
+        Expression expression;
+    };
+    struct Declarative {
+    };
+    struct Passive {
     };
 
-public:
+    struct SegmentType0 {
+        // FIXME: Implement me!
+        static ParseResult<SegmentType0> parse(InputStream& stream);
+
+        Vector<FunctionIndex> function_indices;
+        Active mode;
+    };
+    struct SegmentType1 {
+        static ParseResult<SegmentType1> parse(InputStream& stream);
+
+        Vector<FunctionIndex> function_indices;
+    };
+    struct SegmentType2 {
+        // FIXME: Implement me!
+        static ParseResult<SegmentType2> parse(InputStream& stream);
+    };
+    struct SegmentType3 {
+        // FIXME: Implement me!
+        static ParseResult<SegmentType3> parse(InputStream& stream);
+    };
+    struct SegmentType4 {
+        // FIXME: Implement me!
+        static ParseResult<SegmentType4> parse(InputStream& stream);
+    };
+    struct SegmentType5 {
+        // FIXME: Implement me!
+        static ParseResult<SegmentType5> parse(InputStream& stream);
+    };
+    struct SegmentType6 {
+        // FIXME: Implement me!
+        static ParseResult<SegmentType6> parse(InputStream& stream);
+    };
+    struct SegmentType7 {
+        // FIXME: Implement me!
+        static ParseResult<SegmentType7> parse(InputStream& stream);
+    };
+
+    struct Element {
+        static ParseResult<Element> parse(InputStream&);
+
+        ValueType type;
+        Vector<Expression> init;
+        Variant<Active, Passive, Declarative> mode;
+    };
+
     static constexpr u8 section_id = 9;
 
-    explicit ElementSection(Element func)
-        : m_function(move(func))
+    explicit ElementSection(Vector<Element> segs)
+        : m_segments(move(segs))
     {
     }
 
-    auto& function() const { return m_function; }
+    auto& segments() const { return m_segments; }
 
     static ParseResult<ElementSection> parse(InputStream& stream);
 
 private:
-    Element m_function;
+    Vector<Element> m_segments;
 };
 
 class Locals {
@@ -801,27 +838,26 @@ private:
     ValueType m_type;
 };
 
-// https://webassembly.github.io/spec/core/bikeshed/#binary-func
-class Func {
-public:
-    explicit Func(Vector<Locals> locals, Expression body)
-        : m_locals(move(locals))
-        , m_body(move(body))
-    {
-    }
-
-    auto& locals() const { return m_locals; }
-    auto& body() const { return m_body; }
-
-    static ParseResult<Func> parse(InputStream& stream);
-
-private:
-    Vector<Locals> m_locals;
-    Expression m_body;
-};
-
 class CodeSection {
-private:
+public:
+    // https://webassembly.github.io/spec/core/bikeshed/#binary-func
+    class Func {
+    public:
+        explicit Func(Vector<Locals> locals, Expression body)
+            : m_locals(move(locals))
+            , m_body(move(body))
+        {
+        }
+
+        auto& locals() const { return m_locals; }
+        auto& body() const { return m_body; }
+
+        static ParseResult<Func> parse(InputStream& stream);
+
+    private:
+        Vector<Locals> m_locals;
+        Expression m_body;
+    };
     class Code {
     public:
         explicit Code(u32 size, Func func)
@@ -840,7 +876,6 @@ private:
         Func m_func;
     };
 
-public:
     static constexpr u8 section_id = 10;
 
     explicit CodeSection(Vector<Code> funcs)
@@ -857,8 +892,9 @@ private:
 };
 
 class DataSection {
-private:
+public:
     class Data {
+    public:
         struct Passive {
             Vector<u8> init;
         };
@@ -869,7 +905,6 @@ private:
         };
         using Value = Variant<Passive, Active>;
 
-    public:
         explicit Data(Value value)
             : m_value(move(value))
         {
@@ -883,7 +918,6 @@ private:
         Value m_value;
     };
 
-public:
     static constexpr u8 section_id = 11;
 
     explicit DataSection(Vector<Data> data)
@@ -917,7 +951,7 @@ private:
 };
 
 class Module {
-private:
+public:
     class Function {
     public:
         explicit Function(TypeIndex type, Vector<ValueType> local_types, Expression body)
@@ -949,20 +983,54 @@ private:
         StartSection,
         ElementSection,
         CodeSection,
-        DataSection>;
+        DataSection,
+        DataCountSection>;
 
     static constexpr Array<u8, 4> wasm_magic { 0, 'a', 's', 'm' };
     static constexpr Array<u8, 4> wasm_version { 1, 0, 0, 0 };
 
-public:
     explicit Module(Vector<AnySection> sections)
         : m_sections(move(sections))
     {
+        populate_sections();
+    }
+
+    auto& sections() const { return m_sections; }
+    auto& functions() const { return m_functions; }
+    auto& type(TypeIndex index) const
+    {
+        FunctionType const* type = nullptr;
+        for_each_section_of_type<TypeSection>([&](TypeSection const& section) {
+            type = &section.types().at(index.value());
+        });
+
+        VERIFY(type != nullptr);
+        return *type;
+    }
+
+    template<typename T, typename Callback>
+    void for_each_section_of_type(Callback&& callback) const
+    {
+        for (auto& section : m_sections) {
+            if (auto ptr = section.get_pointer<T>())
+                callback(*ptr);
+        }
+    }
+    template<typename T, typename Callback>
+    void for_each_section_of_type(Callback&& callback)
+    {
+        for (auto& section : m_sections) {
+            if (auto ptr = section.get_pointer<T>())
+                callback(*ptr);
+        }
     }
 
     static ParseResult<Module> parse(InputStream& stream);
 
 private:
+    void populate_sections();
+
     Vector<AnySection> m_sections;
+    Vector<Function> m_functions;
 };
 }

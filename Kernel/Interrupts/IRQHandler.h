@@ -9,7 +9,6 @@
 #include <AK/RefPtr.h>
 #include <AK/String.h>
 #include <AK/Types.h>
-#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Interrupts/GenericInterruptHandler.h>
 #include <Kernel/Interrupts/IRQController.h>
 
@@ -19,8 +18,8 @@ class IRQHandler : public GenericInterruptHandler {
 public:
     virtual ~IRQHandler();
 
-    virtual void handle_interrupt(const RegisterState& regs) { handle_irq(regs); }
-    virtual void handle_irq(const RegisterState&) = 0;
+    virtual bool handle_interrupt(const RegisterState& regs) override { return handle_irq(regs); }
+    virtual bool handle_irq(const RegisterState&) = 0;
 
     void enable_irq();
     void disable_irq();

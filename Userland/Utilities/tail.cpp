@@ -4,14 +4,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#include <AK/Assertions.h>
-#include <AK/ByteBuffer.h>
 #include <LibCore/ArgsParser.h>
 #include <LibCore/File.h>
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 
 #define DEFAULT_LINE_COUNT 10
@@ -47,8 +43,8 @@ static off_t find_seek_pos(Core::File& file, int wanted_lines)
     // Rather than reading the whole file, start at the end and work backwards,
     // stopping when we've found the number of lines we want.
     off_t pos = 0;
-    if (!file.seek(0, Core::IODevice::SeekMode::FromEndPosition, &pos)) {
-        fprintf(stderr, "Failed to find end of file: %s\n", file.error_string());
+    if (!file.seek(0, Core::SeekMode::FromEndPosition, &pos)) {
+        warnln("Failed to find end of file: {}", file.error_string());
         return 1;
     }
 
@@ -94,8 +90,8 @@ int main(int argc, char* argv[])
     args_parser.parse(argc, argv);
 
     auto f = Core::File::construct(file);
-    if (!f->open(Core::IODevice::ReadOnly)) {
-        fprintf(stderr, "Error opening file %s: %s\n", file, strerror(errno));
+    if (!f->open(Core::OpenMode::ReadOnly)) {
+        warnln("Failed to open {}: {}", f->name(), f->error_string());
         exit(1);
     }
 

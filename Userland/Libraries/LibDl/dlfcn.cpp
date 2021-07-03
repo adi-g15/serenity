@@ -11,8 +11,16 @@
 #include <string.h>
 
 // FIXME: use thread_local and a String once TLS works
-__thread char* s_dlerror_text = NULL;
-__thread bool s_dlerror_retrieved = false;
+#ifndef X86_64_NO_TLS
+__thread
+#endif
+    char* s_dlerror_text
+    = NULL;
+#ifndef X86_64_NO_TLS
+__thread
+#endif
+    bool s_dlerror_retrieved
+    = false;
 
 static void store_error(const String& error)
 {
@@ -59,4 +67,16 @@ void* dlsym(void* handle, const char* symbol_name)
         return nullptr;
     }
     return result.value();
+}
+
+int dladdr(void* addr, Dl_info* info)
+{
+    auto result = __dladdr(addr, info);
+    if (result.is_error()) {
+        // FIXME: According to the man page glibc does _not_ make the error
+        // available via dlerror(), however we do. Does this break anything?
+        store_error(result.error().text);
+        return 0;
+    }
+    return 1;
 }

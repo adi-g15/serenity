@@ -38,4 +38,12 @@ ALWAYS_INLINE int fb_set_buffer(int fd, int index)
     return ioctl(fd, FB_IOCTL_SET_BUFFER, index);
 }
 
+ALWAYS_INLINE int fb_flush_buffers(int fd, FBRect const* rects, unsigned count)
+{
+    FBRects fb_rects;
+    fb_rects.count = count;
+    fb_rects.rects = rects;
+    return ioctl(fd, FB_IOCTL_FLUSH_BUFFERS, &fb_rects);
+}
+
 __END_DECLS

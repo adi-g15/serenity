@@ -18,7 +18,7 @@ struct MD5Digest {
     u8 data[Size];
 
     const u8* immutable_data() const { return data; }
-    size_t data_length() { return Size; }
+    size_t data_length() const { return Size; }
 };
 
 namespace MD5Constants {
@@ -57,11 +57,6 @@ class MD5 final : public HashFunction<512, MD5Digest> {
 public:
     using HashFunction::update;
 
-    MD5()
-    {
-        m_buffer = Bytes { m_data_buffer, sizeof(m_data_buffer) };
-    }
-
     virtual void update(const u8*, size_t) override;
     virtual DigestType digest() override;
     virtual DigestType peek() override;
@@ -98,9 +93,8 @@ private:
 
     u32 m_A { MD5Constants::init_A }, m_B { MD5Constants::init_B }, m_C { MD5Constants::init_C }, m_D { MD5Constants::init_D };
     u32 m_count[2] { 0, 0 };
-    Bytes m_buffer;
 
-    u8 m_data_buffer[64];
+    u8 m_data_buffer[64] {};
 };
 
 }

@@ -10,7 +10,8 @@
 
 namespace JS {
 
-const u32 SPARSE_ARRAY_HOLE_THRESHOLD = 200;
+constexpr const size_t SPARSE_ARRAY_HOLE_THRESHOLD = 200;
+constexpr const size_t LENGTH_SETTER_GENERIC_STORAGE_THRESHOLD = 4 * MiB;
 
 SimpleIndexedPropertyStorage::SimpleIndexedPropertyStorage(Vector<Value>&& initial_values)
     : m_array_size(initial_values.size())
@@ -159,20 +160,40 @@ ValueAndAttributes GenericIndexedPropertyStorage::take_last()
     m_array_size--;
 
     auto result = m_sparse_elements.get(m_array_size);
+    if (!result.has_value())
+        return {};
     m_sparse_elements.remove(m_array_size);
-    VERIFY(result.has_value());
     return result.value();
 }
 
 void GenericIndexedPropertyStorage::set_array_like_size(size_t new_size)
 {
-    m_array_size = new_size;
+    if (new_size == m_array_size)
+        return;
+
+    if (new_size >= m_array_size) {
+        m_array_size = new_size;
+        return;
+    }
+
+    size_t highest_index = 0;
+    bool any_left = false;
 
     HashMap<u32, ValueAndAttributes> new_sparse_elements;
     for (auto& entry : m_sparse_elements) {
-        if (entry.key < new_size)
+        if (entry.key < new_size || !entry.value.attributes.is_configurable()) {
             new_sparse_elements.set(entry.key, entry.value);
+            any_left = true;
+            highest_index = max(highest_index, (size_t)entry.key);
+        }
     }
+
+    if (any_left) {
+        m_array_size = max(highest_index + 1, new_size);
+    } else {
+        m_array_size = new_size;
+    }
+
     m_sparse_elements = move(new_sparse_elements);
 }
 
@@ -205,10 +226,10 @@ bool IndexedPropertyIterator::operator!=(const IndexedPropertyIterator& other) c
     return m_index != other.m_index;
 }
 
-ValueAndAttributes IndexedPropertyIterator::value_and_attributes(Object* this_object, bool evaluate_accessors)
+ValueAndAttributes IndexedPropertyIterator::value_and_attributes(Object* this_object, AllowSideEffects allow_side_effects)
 {
     if (m_index < m_indexed_properties.array_like_size())
-        return m_indexed_properties.get(this_object, m_index, evaluate_accessors).value_or({});
+        return m_indexed_properties.get(this_object, m_index, allow_side_effects).value_or({});
     return {};
 }
 
@@ -224,10 +245,10 @@ void IndexedPropertyIterator::skip_empty_indices()
     m_index = m_indexed_properties.array_like_size();
 }
 
-Optional<ValueAndAttributes> IndexedProperties::get(Object* this_object, u32 index, bool evaluate_accessors) const
+Optional<ValueAndAttributes> IndexedProperties::get(Object* this_object, u32 index, AllowSideEffects allow_side_effects) const
 {
     auto result = m_storage->get(index);
-    if (!evaluate_accessors)
+    if (allow_side_effects == AllowSideEffects::No)
         return result;
     if (!result.has_value())
         return {};
@@ -240,13 +261,13 @@ Optional<ValueAndAttributes> IndexedProperties::get(Object* this_object, u32 ind
     return result;
 }
 
-void IndexedProperties::put(Object* this_object, u32 index, Value value, PropertyAttributes attributes, bool evaluate_accessors)
+void IndexedProperties::put(Object* this_object, u32 index, Value value, PropertyAttributes attributes, AllowSideEffects allow_side_effects)
 {
     if (m_storage->is_simple_storage() && (attributes != default_attributes || index > (array_like_size() + SPARSE_ARRAY_HOLE_THRESHOLD))) {
         switch_to_generic_storage();
     }
 
-    if (m_storage->is_simple_storage() || !evaluate_accessors) {
+    if (m_storage->is_simple_storage() || allow_side_effects == AllowSideEffects::No) {
         m_storage->put(index, value, attributes);
         return;
     }
@@ -298,22 +319,8 @@ ValueAndAttributes IndexedProperties::take_last(Object* this_object)
     return last;
 }
 
-void IndexedProperties::append_all(Object* this_object, const IndexedProperties& properties, bool evaluate_accessors)
-{
-    if (m_storage->is_simple_storage() && !properties.m_storage->is_simple_storage())
-        switch_to_generic_storage();
-
-    for (auto it = properties.begin(false); it != properties.end(); ++it) {
-        const auto& element = it.value_and_attributes(this_object, evaluate_accessors);
-        if (this_object && this_object->vm().exception())
-            return;
-        m_storage->put(m_storage->array_like_size(), element.value, element.attributes);
-    }
-}
-
 void IndexedProperties::set_array_like_size(size_t new_size)
 {
-    constexpr size_t length_setter_generic_storage_threshold = 4 * MiB;
     auto current_array_like_size = array_like_size();
 
     // We can't use simple storage for lengths that don't fit in an i32.
@@ -321,7 +328,7 @@ void IndexedProperties::set_array_like_size(size_t new_size)
     // This prevents something like "a = []; a.length = 0x80000000;" from allocating 2G entries.
     if (m_storage->is_simple_storage()
         && (new_size > NumericLimits<i32>::max()
-            || (current_array_like_size < length_setter_generic_storage_threshold && new_size > length_setter_generic_storage_threshold))) {
+            || (current_array_like_size < LENGTH_SETTER_GENERIC_STORAGE_THRESHOLD && new_size > LENGTH_SETTER_GENERIC_STORAGE_THRESHOLD))) {
         switch_to_generic_storage();
     }
 

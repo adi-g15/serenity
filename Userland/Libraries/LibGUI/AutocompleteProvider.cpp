@@ -84,21 +84,25 @@ AutocompleteBox::AutocompleteBox(TextEditor& editor)
 {
     m_popup_window = GUI::Window::construct(m_editor->window());
     m_popup_window->set_window_type(GUI::WindowType::Tooltip);
-    m_popup_window->set_rect(0, 0, 200, 100);
+    m_popup_window->set_rect(0, 0, 300, 100);
 
     m_suggestion_view = m_popup_window->set_main_widget<GUI::TableView>();
     m_suggestion_view->set_column_headers_visible(false);
-    m_suggestion_view->set_column_width(1, 100);
 }
 
 void AutocompleteBox::update_suggestions(Vector<AutocompleteProvider::Entry>&& suggestions)
 {
+    // FIXME: There's a potential race here if, after the user selected an autocomplete suggestion,
+    // the LanguageServer sends an update and this function is executed before AutocompleteBox::apply_suggestion()
+    // is executed.
+
     bool has_suggestions = !suggestions.is_empty();
     if (m_suggestion_view->model()) {
         auto& model = *static_cast<AutocompleteSuggestionModel*>(m_suggestion_view->model());
         model.set_suggestions(move(suggestions));
     } else {
         m_suggestion_view->set_model(adopt_ref(*new AutocompleteSuggestionModel(move(suggestions))));
+        m_suggestion_view->set_column_width(1, 100);
         m_suggestion_view->update();
         if (has_suggestions)
             m_suggestion_view->set_cursor(m_suggestion_view->model()->index(0), GUI::AbstractView::SelectionUpdate::Set);
@@ -168,7 +172,7 @@ void AutocompleteBox::apply_suggestion()
         return;
 
     auto selected_index = m_suggestion_view->selection().first();
-    if (!selected_index.is_valid())
+    if (!selected_index.is_valid() || !m_suggestion_view->model()->is_valid(selected_index))
         return;
 
     auto suggestion_index = m_suggestion_view->model()->index(selected_index.row(), AutocompleteSuggestionModel::Column::Name);
@@ -176,7 +180,17 @@ void AutocompleteBox::apply_suggestion()
     size_t partial_length = suggestion_index.data((GUI::ModelRole)AutocompleteSuggestionModel::InternalRole::PartialInputLength).to_i64();
 
     VERIFY(suggestion.length() >= partial_length);
-    auto completion = suggestion.substring_view(partial_length, suggestion.length() - partial_length);
+    auto completion_view = suggestion.substring_view(partial_length, suggestion.length() - partial_length);
+    auto completion_kind = (GUI::AutocompleteProvider::CompletionKind)suggestion_index.data((GUI::ModelRole)AutocompleteSuggestionModel::InternalRole::Kind).as_u32();
+
+    String completion;
+    if (completion_view.ends_with(".h") && completion_kind == GUI::AutocompleteProvider::CompletionKind::SystemInclude)
+        completion = String::formatted("{}{}", completion_view, ">");
+    else if (completion_view.ends_with(".h") && completion_kind == GUI::AutocompleteProvider::CompletionKind::ProjectInclude)
+        completion = String::formatted("{}{}", completion_view, "\"");
+    else
+        completion = completion_view;
+
     m_editor->insert_at_cursor_or_replace_selection(completion);
 }
 

@@ -21,7 +21,7 @@ class TmpFS final : public FS {
 
 public:
     virtual ~TmpFS() override;
-    static NonnullRefPtr<TmpFS> create();
+    static RefPtr<TmpFS> create();
     virtual bool initialize() override;
 
     virtual const char* class_name() const override { return "TmpFS"; }
@@ -54,12 +54,12 @@ public:
     const TmpFS& fs() const { return static_cast<const TmpFS&>(Inode::fs()); }
 
     // ^Inode
-    virtual KResultOr<ssize_t> read_bytes(off_t, ssize_t, UserOrKernelBuffer& buffer, FileDescription*) const override;
+    virtual KResultOr<size_t> read_bytes(off_t, size_t, UserOrKernelBuffer& buffer, FileDescription*) const override;
     virtual InodeMetadata metadata() const override;
     virtual KResult traverse_as_directory(Function<bool(const FS::DirectoryEntryView&)>) const override;
     virtual RefPtr<Inode> lookup(StringView name) override;
     virtual void flush_metadata() override;
-    virtual KResultOr<ssize_t> write_bytes(off_t, ssize_t, const UserOrKernelBuffer& buffer, FileDescription*) override;
+    virtual KResultOr<size_t> write_bytes(off_t, size_t, const UserOrKernelBuffer& buffer, FileDescription*) override;
     virtual KResultOr<NonnullRefPtr<Inode>> create_child(const String& name, mode_t, dev_t, uid_t, gid_t) override;
     virtual KResult add_child(Inode&, const StringView& name, mode_t) override;
     virtual KResult remove_child(const StringView& name) override;
@@ -74,8 +74,8 @@ public:
 
 private:
     TmpFSInode(TmpFS& fs, InodeMetadata metadata, InodeIdentifier parent);
-    static NonnullRefPtr<TmpFSInode> create(TmpFS&, InodeMetadata metadata, InodeIdentifier parent);
-    static NonnullRefPtr<TmpFSInode> create_root(TmpFS&);
+    static RefPtr<TmpFSInode> create(TmpFS&, InodeMetadata metadata, InodeIdentifier parent);
+    static RefPtr<TmpFSInode> create_root(TmpFS&);
 
     void notify_watchers();
 

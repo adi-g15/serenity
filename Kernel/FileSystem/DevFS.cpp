@@ -81,7 +81,7 @@ DevFSInode::DevFSInode(DevFS& fs)
 {
 }
 
-KResultOr<ssize_t> DevFSInode::read_bytes(off_t, ssize_t, UserOrKernelBuffer&, FileDescription*) const
+KResultOr<size_t> DevFSInode::read_bytes(off_t, size_t, UserOrKernelBuffer&, FileDescription*) const
 {
     VERIFY_NOT_REACHED();
 }
@@ -100,7 +100,7 @@ void DevFSInode::flush_metadata()
 {
 }
 
-KResultOr<ssize_t> DevFSInode::write_bytes(off_t, ssize_t, const UserOrKernelBuffer&, FileDescription*)
+KResultOr<size_t> DevFSInode::write_bytes(off_t, size_t, const UserOrKernelBuffer&, FileDescription*)
 {
     VERIFY_NOT_REACHED();
 }
@@ -152,7 +152,7 @@ DevFSLinkInode::DevFSLinkInode(DevFS& fs, String name)
     , m_name(name)
 {
 }
-KResultOr<ssize_t> DevFSLinkInode::read_bytes(off_t offset, ssize_t, UserOrKernelBuffer& buffer, FileDescription*) const
+KResultOr<size_t> DevFSLinkInode::read_bytes(off_t offset, size_t, UserOrKernelBuffer& buffer, FileDescription*) const
 {
     Locker locker(m_lock);
     VERIFY(offset == 0);
@@ -173,7 +173,7 @@ InodeMetadata DevFSLinkInode::metadata() const
     metadata.mtime = mepoch;
     return metadata;
 }
-KResultOr<ssize_t> DevFSLinkInode::write_bytes(off_t offset, ssize_t count, const UserOrKernelBuffer& buffer, FileDescription*)
+KResultOr<size_t> DevFSLinkInode::write_bytes(off_t offset, size_t count, const UserOrKernelBuffer& buffer, FileDescription*)
 {
     Locker locker(m_lock);
     VERIFY(offset == 0);
@@ -275,13 +275,15 @@ KResultOr<NonnullRefPtr<Inode>> DevFSRootDirectoryInode::create_child(const Stri
         }
         if (name != "pts")
             return EROFS;
-        auto new_directory_inode = adopt_ref(*new DevFSPtsDirectoryInode(m_parent_fs));
+        auto new_directory_inode = adopt_ref_if_nonnull(new (nothrow) DevFSPtsDirectoryInode(m_parent_fs));
+        if (!new_directory_inode)
+            return ENOMEM;
         if (!m_subfolders.try_ensure_capacity(m_subfolders.size() + 1))
             return ENOMEM;
         if (!m_parent_fs.m_nodes.try_ensure_capacity(m_parent_fs.m_nodes.size() + 1))
             return ENOMEM;
-        m_subfolders.append(new_directory_inode);
-        m_parent_fs.m_nodes.append(new_directory_inode);
+        m_subfolders.append(*new_directory_inode);
+        m_parent_fs.m_nodes.append(*new_directory_inode);
         return KResult(KSuccess);
     }
     if (metadata.is_symlink()) {
@@ -289,14 +291,16 @@ KResultOr<NonnullRefPtr<Inode>> DevFSRootDirectoryInode::create_child(const Stri
             if (link.name() == name)
                 return EEXIST;
         }
-        auto new_link_inode = adopt_ref(*new DevFSLinkInode(m_parent_fs, name));
+        auto new_link_inode = adopt_ref_if_nonnull(new (nothrow) DevFSLinkInode(m_parent_fs, name));
+        if (!new_link_inode)
+            return ENOMEM;
         if (!m_links.try_ensure_capacity(m_links.size() + 1))
             return ENOMEM;
         if (!m_parent_fs.m_nodes.try_ensure_capacity(m_parent_fs.m_nodes.size() + 1))
             return ENOMEM;
-        m_links.append(new_link_inode);
-        m_parent_fs.m_nodes.append(new_link_inode);
-        return new_link_inode;
+        m_links.append(*new_link_inode);
+        m_parent_fs.m_nodes.append(*new_link_inode);
+        return new_link_inode.release_nonnull();
     }
     return EROFS;
 }
@@ -346,7 +350,7 @@ String DevFSDeviceInode::name() const
     return m_cached_name;
 }
 
-KResultOr<ssize_t> DevFSDeviceInode::read_bytes(off_t offset, ssize_t count, UserOrKernelBuffer& buffer, FileDescription* description) const
+KResultOr<size_t> DevFSDeviceInode::read_bytes(off_t offset, size_t count, UserOrKernelBuffer& buffer, FileDescription* description) const
 {
     Locker locker(m_lock);
     VERIFY(!!description);
@@ -372,7 +376,7 @@ InodeMetadata DevFSDeviceInode::metadata() const
     metadata.minor_device = m_attached_device->minor();
     return metadata;
 }
-KResultOr<ssize_t> DevFSDeviceInode::write_bytes(off_t offset, ssize_t count, const UserOrKernelBuffer& buffer, FileDescription* description)
+KResultOr<size_t> DevFSDeviceInode::write_bytes(off_t offset, size_t count, const UserOrKernelBuffer& buffer, FileDescription* description)
 {
     Locker locker(m_lock);
     VERIFY(!!description);

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2020, Andreas Kling <kling@serenityos.org>
+ * Copyright (c) 2021, sin-ack <sin-ack@protonmail.com>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -19,9 +20,8 @@
 
 namespace Kernel {
 
-static const size_t max_link_count = 65535;
-static const size_t max_block_size = 4096;
-static const ssize_t max_inline_symlink_length = 60;
+static constexpr size_t max_block_size = 4096;
+static constexpr size_t max_inline_symlink_length = 60;
 
 struct Ext2FSDirectoryEntry {
     String name;
@@ -113,6 +113,7 @@ bool Ext2FS::initialize()
     }
 
     set_block_size(EXT2_BLOCK_SIZE(&super_block));
+    set_fragment_size(EXT2_FRAG_SIZE(&super_block));
 
     VERIFY(block_size() <= (int)max_block_size);
 
@@ -822,7 +823,7 @@ RefPtr<Inode> Ext2FS::get_inode(InodeIdentifier inode) const
     return new_inode;
 }
 
-KResultOr<ssize_t> Ext2FSInode::read_bytes(off_t offset, ssize_t count, UserOrKernelBuffer& buffer, FileDescription* description) const
+KResultOr<size_t> Ext2FSInode::read_bytes(off_t offset, size_t count, UserOrKernelBuffer& buffer, FileDescription* description) const
 {
     Locker inode_locker(m_lock);
     VERIFY(offset >= 0);
@@ -836,8 +837,8 @@ KResultOr<ssize_t> Ext2FSInode::read_bytes(off_t offset, ssize_t count, UserOrKe
     // This avoids wasting an entire block on short links. (Most links are short.)
     if (is_symlink() && size() < max_inline_symlink_length) {
         VERIFY(offset == 0);
-        ssize_t nread = min((off_t)size() - offset, static_cast<off_t>(count));
-        if (!buffer.write(((const u8*)m_raw_inode.i_block) + offset, (size_t)nread))
+        size_t nread = min((off_t)size() - offset, static_cast<off_t>(count));
+        if (!buffer.write(((const u8*)m_raw_inode.i_block) + offset, nread))
             return EFAULT;
         return nread;
     }
@@ -861,7 +862,7 @@ KResultOr<ssize_t> Ext2FSInode::read_bytes(off_t offset, ssize_t count, UserOrKe
 
     int offset_into_first_block = offset % block_size;
 
-    ssize_t nread = 0;
+    size_t nread = 0;
     auto remaining_count = min((off_t)count, (off_t)size() - offset);
 
     dbgln_if(EXT2_VERY_DEBUG, "Ext2FSInode[{}]::read_bytes(): Reading up to {} bytes, {} bytes into inode to {}", identifier(), count, offset, buffer.user_or_kernel_ptr());
@@ -919,7 +920,7 @@ KResult Ext2FSInode::resize(u64 new_size)
         auto blocks_or_error = fs().allocate_blocks(fs().group_index_from_inode(index()), blocks_needed_after - blocks_needed_before);
         if (blocks_or_error.is_error())
             return blocks_or_error.error();
-        if (!m_block_list.try_append(blocks_or_error.release_value()))
+        if (!m_block_list.try_extend(blocks_or_error.release_value()))
             return ENOMEM;
     } else if (blocks_needed_after < blocks_needed_before) {
         if constexpr (EXT2_VERY_DEBUG) {
@@ -967,10 +968,9 @@ KResult Ext2FSInode::resize(u64 new_size)
     return KSuccess;
 }
 
-KResultOr<ssize_t> Ext2FSInode::write_bytes(off_t offset, ssize_t count, const UserOrKernelBuffer& data, FileDescription* description)
+KResultOr<size_t> Ext2FSInode::write_bytes(off_t offset, size_t count, const UserOrKernelBuffer& data, FileDescription* description)
 {
     VERIFY(offset >= 0);
-    VERIFY(count >= 0);
 
     if (count == 0)
         return 0;
@@ -1016,7 +1016,7 @@ KResultOr<ssize_t> Ext2FSInode::write_bytes(off_t offset, ssize_t count, const U
 
     size_t offset_into_first_block = offset % block_size;
 
-    ssize_t nwritten = 0;
+    size_t nwritten = 0;
     auto remaining_count = min((off_t)count, (off_t)new_size - offset);
 
     dbgln_if(EXT2_VERY_DEBUG, "Ext2FSInode[{}]::write_bytes(): Writing {} bytes, {} bytes into inode from {}", identifier(), count, offset, data.user_or_kernel_ptr());
@@ -1032,6 +1032,8 @@ KResultOr<ssize_t> Ext2FSInode::write_bytes(off_t offset, ssize_t count, const U
         remaining_count -= num_bytes_to_copy;
         nwritten += num_bytes_to_copy;
     }
+
+    did_modify_contents();
 
     dbgln_if(EXT2_VERY_DEBUG, "Ext2FSInode[{}]::write_bytes(): After write, i_size={}, i_blocks={} ({} blocks in list)", identifier(), size(), m_raw_inode.i_blocks, m_block_list.size());
     return nwritten;
@@ -1207,8 +1209,11 @@ KResult Ext2FSInode::add_child(Inode& child, const StringView& name, mode_t mode
     if (result.is_error())
         return result;
 
+    if (auto populate_result = populate_lookup_cache(); populate_result.is_error())
+        return populate_result;
+
     m_lookup_cache.set(name, child.index());
-    did_add_child(child.identifier());
+    did_add_child(child.identifier(), name);
     return KSuccess;
 }
 
@@ -1217,6 +1222,9 @@ KResult Ext2FSInode::remove_child(const StringView& name)
     Locker locker(m_lock);
     dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]::remove_child(): Removing '{}'", identifier(), name);
     VERIFY(is_directory());
+
+    if (auto populate_result = populate_lookup_cache(); populate_result.is_error())
+        return populate_result;
 
     auto it = m_lookup_cache.find(name);
     if (it == m_lookup_cache.end())
@@ -1245,7 +1253,7 @@ KResult Ext2FSInode::remove_child(const StringView& name)
     if (result.is_error())
         return result;
 
-    did_remove_child(child_id);
+    did_remove_child(child_id, name);
     return KSuccess;
 }
 
@@ -1492,7 +1500,10 @@ KResultOr<Ext2FS::CachedBitmap*> Ext2FS::get_bitmap_block(BlockIndex bitmap_bloc
         dbgln("Ext2FS: Failed to load bitmap block {}", bitmap_block_index);
         return result;
     }
-    if (!m_cached_bitmaps.try_append(make<CachedBitmap>(bitmap_block_index, move(block))))
+    auto new_bitmap = adopt_own_if_nonnull(new (nothrow) CachedBitmap(bitmap_block_index, move(block)));
+    if (!new_bitmap)
+        return ENOMEM;
+    if (!m_cached_bitmaps.try_append(move(new_bitmap)))
         return ENOMEM;
     return m_cached_bitmaps.last();
 }
@@ -1586,11 +1597,11 @@ KResultOr<NonnullRefPtr<Inode>> Ext2FS::create_inode(Ext2FSInode& parent_inode, 
     return new_inode.release_nonnull();
 }
 
-bool Ext2FSInode::populate_lookup_cache() const
+KResult Ext2FSInode::populate_lookup_cache() const
 {
     Locker locker(m_lock);
     if (!m_lookup_cache.is_empty())
-        return true;
+        return KSuccess;
     HashMap<String, InodeIndex> children;
 
     KResult result = traverse_as_directory([&children](auto& entry) {
@@ -1599,19 +1610,18 @@ bool Ext2FSInode::populate_lookup_cache() const
     });
 
     if (!result.is_success())
-        return false;
+        return result;
 
-    if (!m_lookup_cache.is_empty())
-        return false;
+    VERIFY(m_lookup_cache.is_empty());
     m_lookup_cache = move(children);
-    return true;
+    return KSuccess;
 }
 
 RefPtr<Inode> Ext2FSInode::lookup(StringView name)
 {
     VERIFY(is_directory());
     dbgln_if(EXT2_DEBUG, "Ext2FSInode[{}]:lookup(): Looking up '{}'", identifier(), name);
-    if (!populate_lookup_cache())
+    if (populate_lookup_cache().is_error())
         return {};
     Locker locker(m_lock);
     auto it = m_lookup_cache.find(name.hash(), [&](auto& entry) { return entry.key == name; });
@@ -1661,6 +1671,7 @@ KResult Ext2FSInode::increment_link_count()
     Locker locker(m_lock);
     if (fs().is_readonly())
         return EROFS;
+    constexpr size_t max_link_count = 65535;
     if (m_raw_inode.i_links_count == max_link_count)
         return EMLINK;
     ++m_raw_inode.i_links_count;
@@ -1674,10 +1685,15 @@ KResult Ext2FSInode::decrement_link_count()
     if (fs().is_readonly())
         return EROFS;
     VERIFY(m_raw_inode.i_links_count);
+
     --m_raw_inode.i_links_count;
+    set_metadata_dirty(true);
+    if (m_raw_inode.i_links_count == 0)
+        did_delete_self();
+
     if (ref_count() == 1 && m_raw_inode.i_links_count == 0)
         fs().uncache_inode(index());
-    set_metadata_dirty(true);
+
     return KSuccess;
 }
 
@@ -1691,7 +1707,8 @@ KResultOr<size_t> Ext2FSInode::directory_entry_count() const
 {
     VERIFY(is_directory());
     Locker locker(m_lock);
-    populate_lookup_cache();
+    if (auto result = populate_lookup_cache(); result.is_error())
+        return KResultOr<size_t>(result);
     return m_lookup_cache.size();
 }
 

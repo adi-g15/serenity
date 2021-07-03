@@ -70,7 +70,7 @@ static bool collect_work_items(const String& source, const String& destination, 
         items.append(WorkItem {
             .type = WorkItem::Type::CopyFile,
             .source = source,
-            .destination = String::formatted("{}/{}", destination, LexicalPath(source).basename()),
+            .destination = String::formatted("{}/{}", destination, LexicalPath::basename(source)),
             .size = st.st_size,
         });
         return true;
@@ -80,7 +80,7 @@ static bool collect_work_items(const String& source, const String& destination, 
     items.append(WorkItem {
         .type = WorkItem::Type::CreateDirectory,
         .source = {},
-        .destination = String::formatted("{}/{}", destination, LexicalPath(source).basename()),
+        .destination = String::formatted("{}/{}", destination, LexicalPath::basename(source)),
         .size = 0,
     });
 
@@ -89,7 +89,7 @@ static bool collect_work_items(const String& source, const String& destination, 
         auto name = dt.next_path();
         if (!collect_work_items(
                 String::formatted("{}/{}", source, name),
-                String::formatted("{}/{}", destination, LexicalPath(source).basename()),
+                String::formatted("{}/{}", destination, LexicalPath::basename(source)),
                 items)) {
             return false;
         }
@@ -127,12 +127,12 @@ int perform_copy(const String& source, const String& destination)
             continue;
         }
         VERIFY(item.type == WorkItem::Type::CopyFile);
-        auto source_file_or_error = Core::File::open(item.source, Core::File::ReadOnly);
+        auto source_file_or_error = Core::File::open(item.source, Core::OpenMode::ReadOnly);
         if (source_file_or_error.is_error()) {
             report_warning(String::formatted("Failed to open {} for reading: {}", item.source, source_file_or_error.error()));
             return 1;
         }
-        auto destination_file_or_error = Core::File::open(item.destination, (Core::IODevice::OpenMode)(Core::File::WriteOnly | Core::File::Truncate));
+        auto destination_file_or_error = Core::File::open(item.destination, (Core::OpenMode)(Core::OpenMode::WriteOnly | Core::OpenMode::Truncate));
         if (destination_file_or_error.is_error()) {
             report_warning(String::formatted("Failed to open {} for write: {}", item.destination, destination_file_or_error.error()));
             return 1;
@@ -143,7 +143,7 @@ int perform_copy(const String& source, const String& destination)
         while (true) {
             print_progress();
             auto buffer = source_file.read(65536);
-            if (buffer.is_null())
+            if (buffer.is_empty())
                 break;
             if (!destination_file.write(buffer)) {
                 report_warning(String::formatted("Failed to write to destination file: {}", destination_file.error_string()));

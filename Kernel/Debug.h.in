@@ -46,6 +46,10 @@
 #cmakedefine01 E1000_DEBUG
 #endif
 
+#ifndef E1000E_DEBUG
+#cmakedefine01 E1000E_DEBUG
+#endif
+
 #ifndef ETHERNET_DEBUG
 #cmakedefine01 ETHERNET_DEBUG
 #endif
@@ -64,6 +68,10 @@
 
 #ifndef EXT2_DEBUG
 #cmakedefine01 EXT2_DEBUG
+#endif
+
+#ifndef FRAMEBUFFER_DEVICE_DEBUG
+#cmakedefine01 FRAMEBUFFER_DEVICE_DEBUG
 #endif
 
 #ifndef EXT2_VERY_DEBUG
@@ -102,6 +110,10 @@
 #cmakedefine01 ICMP_DEBUG
 #endif
 
+#ifndef INTEL_GRAPHICS_DEBUG
+#cmakedefine01 INTEL_GRAPHICS_DEBUG
+#endif
+
 #ifndef INTERRUPT_DEBUG
 #cmakedefine01 INTERRUPT_DEBUG
 #endif
@@ -132,6 +144,10 @@
 
 #ifndef KMALLOC_DEBUG
 #cmakedefine01 KMALLOC_DEBUG
+#endif
+
+#ifndef KMALLOC_VERIFY_NO_SPINLOCK_HELD
+#cmakedefine01 KMALLOC_VERIFY_NO_SPINLOCK_HELD
 #endif
 
 #ifndef LOCAL_SOCKET_DEBUG
@@ -222,6 +238,10 @@
 #cmakedefine01 RTL8139_DEBUG
 #endif
 
+#ifndef RTL8168_DEBUG
+#cmakedefine01 RTL8168_DEBUG
+#endif
+
 #ifndef SB16_DEBUG
 #cmakedefine01 SB16_DEBUG
 #endif
@@ -282,6 +302,10 @@
 #cmakedefine01 UHCI_VERBOSE_DEBUG
 #endif
 
+#ifndef USB_DEBUG
+#cmakedefine01 USB_DEBUG
+#endif
+
 #ifndef VFS_DEBUG
 #cmakedefine01 VFS_DEBUG
 #endif
@@ -296,6 +320,10 @@
 
 #ifndef VIRTIO_DEBUG
 #cmakedefine01 VIRTIO_DEBUG
+#endif
+
+#ifndef VIRTUAL_CONSOLE_DEBUG
+#cmakedefine01 VIRTUAL_CONSOLE_DEBUG
 #endif
 
 #ifndef VRA_DEBUG

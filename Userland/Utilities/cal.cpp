@@ -17,8 +17,6 @@ const int column_width = 22;
 char print_buffer[line_width * line_count];
 char temp_buffer[line_width * 8];
 
-int target_year;
-int target_month;
 int target_day;
 
 int current_year;
@@ -127,20 +125,20 @@ int main(int argc, char** argv)
     clean_buffers();
 
     if (year_mode) {
-        printf("                             ");
-        printf("Year %4d", year);
-        printf("                             \n\n");
+        out("                           Year {:04}                            ", year);
+        outln();
+        outln();
 
         for (int i = 1; i < 12; ++i) {
             insert_month_to_print(0, i++, year);
             insert_month_to_print(1, i++, year);
             insert_month_to_print(2, i, year);
-            printf("%s\n", print_buffer);
+            outln("{}", print_buffer);
             clean_buffers();
         }
     } else {
         insert_month_to_print(0, month, year);
-        printf("%s\n\n", print_buffer);
+        outln("{}", print_buffer);
         clean_buffers();
     }
 

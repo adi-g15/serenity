@@ -17,6 +17,7 @@ namespace Kernel {
 class VirtIORNG final : public CharacterDevice
     , public VirtIODevice {
 public:
+    virtual const char* purpose() const override { return class_name(); }
     virtual const char* class_name() const override { return m_class_name.characters(); }
 
     virtual bool can_read(const FileDescription&, size_t) const override { return false; }
@@ -33,6 +34,7 @@ public:
 private:
     virtual bool handle_device_config_change() override;
     virtual void handle_queue_update(u16 queue_index) override;
+    void request_entropy_from_host();
 
     OwnPtr<Region> m_entropy_buffer;
     EntropySource m_entropy_source;

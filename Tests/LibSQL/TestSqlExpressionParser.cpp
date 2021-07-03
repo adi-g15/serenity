@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2021, Tim Flynn <trflynn89@pm.me>
+ * Copyright (c) 2021, Jan de Visser <jan@de-visser.net>
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -12,29 +13,29 @@
 #include <AK/StringBuilder.h>
 #include <AK/StringView.h>
 #include <AK/TypeCasts.h>
-#include <LibSQL/Lexer.h>
-#include <LibSQL/Parser.h>
+#include <LibSQL/AST/Lexer.h>
+#include <LibSQL/AST/Parser.h>
 
 namespace {
 
-class ExpressionParser : public SQL::Parser {
+class ExpressionParser : public SQL::AST::Parser {
 public:
-    explicit ExpressionParser(SQL::Lexer lexer)
-        : SQL::Parser(move(lexer))
+    explicit ExpressionParser(SQL::AST::Lexer lexer)
+        : SQL::AST::Parser(move(lexer))
     {
     }
 
-    NonnullRefPtr<SQL::Expression> parse()
+    NonnullRefPtr<SQL::AST::Expression> parse()
     {
-        return SQL::Parser::parse_expression();
+        return SQL::AST::Parser::parse_expression();
     }
 };
 
-using ParseResult = AK::Result<NonnullRefPtr<SQL::Expression>, String>;
+using ParseResult = AK::Result<NonnullRefPtr<SQL::AST::Expression>, String>;
 
 ParseResult parse(StringView sql)
 {
-    auto parser = ExpressionParser(SQL::Lexer(sql));
+    auto parser = ExpressionParser(SQL::AST::Lexer(sql));
     auto expression = parser.parse();
 
     if (parser.has_errors()) {
@@ -48,20 +49,30 @@ ParseResult parse(StringView sql)
 
 TEST_CASE(numeric_literal)
 {
+    // FIXME Right now the "1a" test fails (meaning the parse succeeds).
+    //       This is obviously inconsistent.
+    //       See the FIXME in lexer.cpp, method consume_exponent() about
+    //       solutions.
+    // EXPECT(parse("1e").is_error());
+    // EXPECT(parse("1a").is_error());
+    // EXPECT(parse("0x").is_error());
+
     auto validate = [](StringView sql, double expected_value) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::NumericLiteral>(*expression));
+        EXPECT(is<SQL::AST::NumericLiteral>(*expression));
 
-        const auto& literal = static_cast<const SQL::NumericLiteral&>(*expression);
+        const auto& literal = static_cast<const SQL::AST::NumericLiteral&>(*expression);
         EXPECT_EQ(literal.value(), expected_value);
     };
 
     validate("123", 123);
     validate("3.14", 3.14);
+    validate("0xA", 10);
     validate("0xff", 255);
+    validate("0x100", 256);
     validate("1e3", 1000);
 }
 
@@ -75,34 +86,36 @@ TEST_CASE(string_literal)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::StringLiteral>(*expression));
+        EXPECT(is<SQL::AST::StringLiteral>(*expression));
 
-        const auto& literal = static_cast<const SQL::StringLiteral&>(*expression);
+        const auto& literal = static_cast<const SQL::AST::StringLiteral&>(*expression);
         EXPECT_EQ(literal.value(), expected_value);
     };
 
-    validate("''", "''");
-    validate("'hello friends'", "'hello friends'");
+    validate("''", "");
+    validate("'hello friends'", "hello friends");
+    validate("'hello ''friends'''", "hello 'friends'");
 }
 
 TEST_CASE(blob_literal)
 {
     EXPECT(parse("x'").is_error());
     EXPECT(parse("x'unterminated").is_error());
+    EXPECT(parse("x'NOTHEX'").is_error());
 
     auto validate = [](StringView sql, StringView expected_value) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::BlobLiteral>(*expression));
+        EXPECT(is<SQL::AST::BlobLiteral>(*expression));
 
-        const auto& literal = static_cast<const SQL::BlobLiteral&>(*expression);
+        const auto& literal = static_cast<const SQL::AST::BlobLiteral&>(*expression);
         EXPECT_EQ(literal.value(), expected_value);
     };
 
-    validate("x''", "x''");
-    validate("x'hello friends'", "x'hello friends'");
+    validate("x''", "");
+    validate("x'DEADC0DE'", "DEADC0DE");
 }
 
 TEST_CASE(null_literal)
@@ -112,7 +125,7 @@ TEST_CASE(null_literal)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::NullLiteral>(*expression));
+        EXPECT(is<SQL::AST::NullLiteral>(*expression));
     };
 
     validate("NULL");
@@ -120,26 +133,29 @@ TEST_CASE(null_literal)
 
 TEST_CASE(column_name)
 {
-    EXPECT(parse(".column").is_error());
-    EXPECT(parse("table.").is_error());
-    EXPECT(parse("schema.table.").is_error());
+    EXPECT(parse(".column_name").is_error());
+    EXPECT(parse("table_name.").is_error());
+    EXPECT(parse("schema_name.table_name.").is_error());
+    EXPECT(parse("\"unterminated").is_error());
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, StringView expected_column) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::ColumnNameExpression>(*expression));
+        EXPECT(is<SQL::AST::ColumnNameExpression>(*expression));
 
-        const auto& column = static_cast<const SQL::ColumnNameExpression&>(*expression);
+        const auto& column = static_cast<const SQL::AST::ColumnNameExpression&>(*expression);
         EXPECT_EQ(column.schema_name(), expected_schema);
         EXPECT_EQ(column.table_name(), expected_table);
         EXPECT_EQ(column.column_name(), expected_column);
     };
 
-    validate("column", {}, {}, "column");
-    validate("table.column", {}, "table", "column");
-    validate("schema.table.column", "schema", "table", "column");
+    validate("column_name", {}, {}, "COLUMN_NAME");
+    validate("table_name.column_name", {}, "TABLE_NAME", "COLUMN_NAME");
+    validate("schema_name.table_name.column_name", "SCHEMA_NAME", "TABLE_NAME", "COLUMN_NAME");
+    validate("\"Column_Name\"", {}, {}, "Column_Name");
+    validate("\"Column\n_Name\"", {}, {}, "Column\n_Name");
 }
 
 TEST_CASE(unary_operator)
@@ -152,49 +168,49 @@ TEST_CASE(unary_operator)
     EXPECT(parse("~~").is_error());
     EXPECT(parse("NOT").is_error());
 
-    auto validate = [](StringView sql, SQL::UnaryOperator expected_operator) {
+    auto validate = [](StringView sql, SQL::AST::UnaryOperator expected_operator) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::UnaryOperatorExpression>(*expression));
+        EXPECT(is<SQL::AST::UnaryOperatorExpression>(*expression));
 
-        const auto& unary = static_cast<const SQL::UnaryOperatorExpression&>(*expression);
+        const auto& unary = static_cast<const SQL::AST::UnaryOperatorExpression&>(*expression);
         EXPECT_EQ(unary.type(), expected_operator);
 
         const auto& secondary_expression = unary.expression();
-        EXPECT(!is<SQL::ErrorExpression>(*secondary_expression));
+        EXPECT(!is<SQL::AST::ErrorExpression>(*secondary_expression));
     };
 
-    validate("-15", SQL::UnaryOperator::Minus);
-    validate("+15", SQL::UnaryOperator::Plus);
-    validate("~15", SQL::UnaryOperator::BitwiseNot);
-    validate("NOT 15", SQL::UnaryOperator::Not);
+    validate("-15", SQL::AST::UnaryOperator::Minus);
+    validate("+15", SQL::AST::UnaryOperator::Plus);
+    validate("~15", SQL::AST::UnaryOperator::BitwiseNot);
+    validate("NOT 15", SQL::AST::UnaryOperator::Not);
 }
 
 TEST_CASE(binary_operator)
 {
-    HashMap<StringView, SQL::BinaryOperator> operators {
-        { "||", SQL::BinaryOperator::Concatenate },
-        { "*", SQL::BinaryOperator::Multiplication },
-        { "/", SQL::BinaryOperator::Division },
-        { "%", SQL::BinaryOperator::Modulo },
-        { "+", SQL::BinaryOperator::Plus },
-        { "-", SQL::BinaryOperator::Minus },
-        { "<<", SQL::BinaryOperator::ShiftLeft },
-        { ">>", SQL::BinaryOperator::ShiftRight },
-        { "&", SQL::BinaryOperator::BitwiseAnd },
-        { "|", SQL::BinaryOperator::BitwiseOr },
-        { "<", SQL::BinaryOperator::LessThan },
-        { "<=", SQL::BinaryOperator::LessThanEquals },
-        { ">", SQL::BinaryOperator::GreaterThan },
-        { ">=", SQL::BinaryOperator::GreaterThanEquals },
-        { "=", SQL::BinaryOperator::Equals },
-        { "==", SQL::BinaryOperator::Equals },
-        { "!=", SQL::BinaryOperator::NotEquals },
-        { "<>", SQL::BinaryOperator::NotEquals },
-        { "AND", SQL::BinaryOperator::And },
-        { "OR", SQL::BinaryOperator::Or },
+    HashMap<StringView, SQL::AST::BinaryOperator> operators {
+        { "||", SQL::AST::BinaryOperator::Concatenate },
+        { "*", SQL::AST::BinaryOperator::Multiplication },
+        { "/", SQL::AST::BinaryOperator::Division },
+        { "%", SQL::AST::BinaryOperator::Modulo },
+        { "+", SQL::AST::BinaryOperator::Plus },
+        { "-", SQL::AST::BinaryOperator::Minus },
+        { "<<", SQL::AST::BinaryOperator::ShiftLeft },
+        { ">>", SQL::AST::BinaryOperator::ShiftRight },
+        { "&", SQL::AST::BinaryOperator::BitwiseAnd },
+        { "|", SQL::AST::BinaryOperator::BitwiseOr },
+        { "<", SQL::AST::BinaryOperator::LessThan },
+        { "<=", SQL::AST::BinaryOperator::LessThanEquals },
+        { ">", SQL::AST::BinaryOperator::GreaterThan },
+        { ">=", SQL::AST::BinaryOperator::GreaterThanEquals },
+        { "=", SQL::AST::BinaryOperator::Equals },
+        { "==", SQL::AST::BinaryOperator::Equals },
+        { "!=", SQL::AST::BinaryOperator::NotEquals },
+        { "<>", SQL::AST::BinaryOperator::NotEquals },
+        { "AND", SQL::AST::BinaryOperator::And },
+        { "OR", SQL::AST::BinaryOperator::Or },
     };
 
     for (auto op : operators) {
@@ -214,16 +230,16 @@ TEST_CASE(binary_operator)
         }
     }
 
-    auto validate = [](StringView sql, SQL::BinaryOperator expected_operator) {
+    auto validate = [](StringView sql, SQL::AST::BinaryOperator expected_operator) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::BinaryOperatorExpression>(*expression));
+        EXPECT(is<SQL::AST::BinaryOperatorExpression>(*expression));
 
-        const auto& binary = static_cast<const SQL::BinaryOperatorExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*binary.lhs()));
-        EXPECT(!is<SQL::ErrorExpression>(*binary.rhs()));
+        const auto& binary = static_cast<const SQL::AST::BinaryOperatorExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*binary.lhs()));
+        EXPECT(!is<SQL::AST::ErrorExpression>(*binary.rhs()));
         EXPECT_EQ(binary.type(), expected_operator);
     };
 
@@ -247,18 +263,18 @@ TEST_CASE(chained_expression)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::ChainedExpression>(*expression));
+        EXPECT(is<SQL::AST::ChainedExpression>(*expression));
 
-        const auto& chain = static_cast<const SQL::ChainedExpression&>(*expression).expressions();
+        const auto& chain = static_cast<const SQL::AST::ChainedExpression&>(*expression).expressions();
         EXPECT_EQ(chain.size(), expected_chain_size);
 
         for (const auto& chained_expression : chain)
-            EXPECT(!is<SQL::ErrorExpression>(chained_expression));
+            EXPECT(!is<SQL::AST::ErrorExpression>(chained_expression));
     };
 
     validate("(15)", 1);
     validate("(15, 16)", 2);
-    validate("(15, 16, column)", 3);
+    validate("(15, 16, column_name)", 3);
 }
 
 TEST_CASE(cast_expression)
@@ -273,21 +289,26 @@ TEST_CASE(cast_expression)
 
     auto validate = [](StringView sql, StringView expected_type_name) {
         auto result = parse(sql);
+        if (result.is_error())
+            outln("{}: {}", sql, result.error());
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::CastExpression>(*expression));
+        EXPECT(is<SQL::AST::CastExpression>(*expression));
 
-        const auto& cast = static_cast<const SQL::CastExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*cast.expression()));
+        const auto& cast = static_cast<const SQL::AST::CastExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*cast.expression()));
 
         const auto& type_name = cast.type_name();
         EXPECT_EQ(type_name->name(), expected_type_name);
     };
 
-    validate("CAST (15 AS int)", "int");
-    validate("CAST ('NULL' AS null)", "null");
-    validate("CAST (15 AS varchar(255))", "varchar");
+    validate("CAST (15 AS int)", "INT");
+    // FIXME The syntax in the test below fails on both sqlite3 and psql (PostgreSQL).
+    // Also fails here because null is interpreted as the NULL keyword and not the
+    // identifier null (which is not a type)
+    // validate("CAST ('NULL' AS null)", "null");
+    validate("CAST (15 AS varchar(255))", "VARCHAR");
 }
 
 TEST_CASE(case_expression)
@@ -307,26 +328,26 @@ TEST_CASE(case_expression)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::CaseExpression>(*expression));
+        EXPECT(is<SQL::AST::CaseExpression>(*expression));
 
-        const auto& case_ = static_cast<const SQL::CaseExpression&>(*expression);
+        const auto& case_ = static_cast<const SQL::AST::CaseExpression&>(*expression);
 
         const auto& case_expression = case_.case_expression();
         EXPECT_EQ(case_expression.is_null(), !expect_case_expression);
         if (case_expression)
-            EXPECT(!is<SQL::ErrorExpression>(*case_expression));
+            EXPECT(!is<SQL::AST::ErrorExpression>(*case_expression));
 
         const auto& when_then_clauses = case_.when_then_clauses();
         EXPECT_EQ(when_then_clauses.size(), expected_when_then_size);
         for (const auto& when_then_clause : when_then_clauses) {
-            EXPECT(!is<SQL::ErrorExpression>(*when_then_clause.when));
-            EXPECT(!is<SQL::ErrorExpression>(*when_then_clause.then));
+            EXPECT(!is<SQL::AST::ErrorExpression>(*when_then_clause.when));
+            EXPECT(!is<SQL::AST::ErrorExpression>(*when_then_clause.then));
         }
 
         const auto& else_expression = case_.else_expression();
         EXPECT_EQ(else_expression.is_null(), !expect_else_expression);
         if (else_expression)
-            EXPECT(!is<SQL::ErrorExpression>(*else_expression));
+            EXPECT(!is<SQL::AST::ErrorExpression>(*else_expression));
     };
 
     validate("CASE WHEN 16 THEN 17 END", false, 1, false);
@@ -344,31 +365,31 @@ TEST_CASE(exists_expression)
     EXPECT(parse("EXISTS (").is_error());
     EXPECT(parse("EXISTS (SELECT").is_error());
     EXPECT(parse("EXISTS (SELECT)").is_error());
-    EXPECT(parse("EXISTS (SELECT * FROM table").is_error());
+    EXPECT(parse("EXISTS (SELECT * FROM table_name").is_error());
     EXPECT(parse("NOT EXISTS").is_error());
     EXPECT(parse("NOT EXISTS (").is_error());
     EXPECT(parse("NOT EXISTS (SELECT").is_error());
     EXPECT(parse("NOT EXISTS (SELECT)").is_error());
-    EXPECT(parse("NOT EXISTS (SELECT * FROM table").is_error());
+    EXPECT(parse("NOT EXISTS (SELECT * FROM table_name").is_error());
     EXPECT(parse("(").is_error());
     EXPECT(parse("(SELECT").is_error());
     EXPECT(parse("(SELECT)").is_error());
-    EXPECT(parse("(SELECT * FROM table").is_error());
+    EXPECT(parse("(SELECT * FROM table_name").is_error());
 
     auto validate = [](StringView sql, bool expected_invert_expression) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::ExistsExpression>(*expression));
+        EXPECT(is<SQL::AST::ExistsExpression>(*expression));
 
-        const auto& exists = static_cast<const SQL::ExistsExpression&>(*expression);
+        const auto& exists = static_cast<const SQL::AST::ExistsExpression&>(*expression);
         EXPECT_EQ(exists.invert_expression(), expected_invert_expression);
     };
 
-    validate("EXISTS (SELECT * FROM table)", false);
-    validate("NOT EXISTS (SELECT * FROM table)", true);
-    validate("(SELECT * FROM table)", false);
+    validate("EXISTS (SELECT * FROM table_name)", false);
+    validate("NOT EXISTS (SELECT * FROM table_name)", true);
+    validate("(SELECT * FROM table_name)", false);
 }
 
 TEST_CASE(collate_expression)
@@ -382,15 +403,15 @@ TEST_CASE(collate_expression)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::CollateExpression>(*expression));
+        EXPECT(is<SQL::AST::CollateExpression>(*expression));
 
-        const auto& collate = static_cast<const SQL::CollateExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*collate.expression()));
+        const auto& collate = static_cast<const SQL::AST::CollateExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*collate.expression()));
         EXPECT_EQ(collate.collation_name(), expected_collation_name);
     };
 
-    validate("15 COLLATE fifteen", "fifteen");
-    validate("(15, 16) COLLATE chain", "chain");
+    validate("15 COLLATE fifteen", "FIFTEEN");
+    validate("(15, 16) COLLATE \"chain\"", "chain");
 }
 
 TEST_CASE(is_expression)
@@ -407,11 +428,11 @@ TEST_CASE(is_expression)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::IsExpression>(*expression));
+        EXPECT(is<SQL::AST::IsExpression>(*expression));
 
-        const auto& is_ = static_cast<const SQL::IsExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*is_.lhs()));
-        EXPECT(!is<SQL::ErrorExpression>(*is_.rhs()));
+        const auto& is_ = static_cast<const SQL::AST::IsExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*is_.lhs()));
+        EXPECT(!is<SQL::AST::ErrorExpression>(*is_.rhs()));
         EXPECT_EQ(is_.invert_expression(), expected_invert_expression);
     };
 
@@ -421,11 +442,11 @@ TEST_CASE(is_expression)
 
 TEST_CASE(match_expression)
 {
-    HashMap<StringView, SQL::MatchOperator> operators {
-        { "LIKE", SQL::MatchOperator::Like },
-        { "GLOB", SQL::MatchOperator::Glob },
-        { "MATCH", SQL::MatchOperator::Match },
-        { "REGEXP", SQL::MatchOperator::Regexp },
+    HashMap<StringView, SQL::AST::MatchOperator> operators {
+        { "LIKE", SQL::AST::MatchOperator::Like },
+        { "GLOB", SQL::AST::MatchOperator::Glob },
+        { "MATCH", SQL::AST::MatchOperator::Match },
+        { "REGEXP", SQL::AST::MatchOperator::Regexp },
     };
 
     for (auto op : operators) {
@@ -442,16 +463,16 @@ TEST_CASE(match_expression)
         EXPECT(parse(builder.build()).is_error());
     }
 
-    auto validate = [](StringView sql, SQL::MatchOperator expected_operator, bool expected_invert_expression) {
+    auto validate = [](StringView sql, SQL::AST::MatchOperator expected_operator, bool expected_invert_expression) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::MatchExpression>(*expression));
+        EXPECT(is<SQL::AST::MatchExpression>(*expression));
 
-        const auto& match = static_cast<const SQL::MatchExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*match.lhs()));
-        EXPECT(!is<SQL::ErrorExpression>(*match.rhs()));
+        const auto& match = static_cast<const SQL::AST::MatchExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*match.lhs()));
+        EXPECT(!is<SQL::AST::ErrorExpression>(*match.rhs()));
         EXPECT_EQ(match.type(), expected_operator);
         EXPECT_EQ(match.invert_expression(), expected_invert_expression);
     };
@@ -482,9 +503,9 @@ TEST_CASE(null_expression)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::NullExpression>(*expression));
+        EXPECT(is<SQL::AST::NullExpression>(*expression));
 
-        const auto& null = static_cast<const SQL::NullExpression&>(*expression);
+        const auto& null = static_cast<const SQL::AST::NullExpression&>(*expression);
         EXPECT_EQ(null.invert_expression(), expected_invert_expression);
     };
 
@@ -509,12 +530,12 @@ TEST_CASE(between_expression)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::BetweenExpression>(*expression));
+        EXPECT(is<SQL::AST::BetweenExpression>(*expression));
 
-        const auto& between = static_cast<const SQL::BetweenExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*between.expression()));
-        EXPECT(!is<SQL::ErrorExpression>(*between.lhs()));
-        EXPECT(!is<SQL::ErrorExpression>(*between.rhs()));
+        const auto& between = static_cast<const SQL::AST::BetweenExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*between.expression()));
+        EXPECT(!is<SQL::AST::ErrorExpression>(*between.lhs()));
+        EXPECT(!is<SQL::AST::ErrorExpression>(*between.rhs()));
         EXPECT_EQ(between.invert_expression(), expected_invert_expression);
     };
 
@@ -525,29 +546,29 @@ TEST_CASE(between_expression)
 TEST_CASE(in_table_expression)
 {
     EXPECT(parse("IN").is_error());
-    EXPECT(parse("IN table").is_error());
+    EXPECT(parse("IN table_name").is_error());
     EXPECT(parse("NOT IN").is_error());
-    EXPECT(parse("NOT IN table").is_error());
+    EXPECT(parse("NOT IN table_name").is_error());
 
     auto validate = [](StringView sql, StringView expected_schema, StringView expected_table, bool expected_invert_expression) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::InTableExpression>(*expression));
+        EXPECT(is<SQL::AST::InTableExpression>(*expression));
 
-        const auto& in = static_cast<const SQL::InTableExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*in.expression()));
+        const auto& in = static_cast<const SQL::AST::InTableExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*in.expression()));
         EXPECT_EQ(in.schema_name(), expected_schema);
         EXPECT_EQ(in.table_name(), expected_table);
         EXPECT_EQ(in.invert_expression(), expected_invert_expression);
     };
 
-    validate("15 IN table", {}, "table", false);
-    validate("15 IN schema.table", "schema", "table", false);
+    validate("15 IN table_name", {}, "TABLE_NAME", false);
+    validate("15 IN schema_name.table_name", "SCHEMA_NAME", "TABLE_NAME", false);
 
-    validate("15 NOT IN table", {}, "table", true);
-    validate("15 NOT IN schema.table", "schema", "table", true);
+    validate("15 NOT IN table_name", {}, "TABLE_NAME", true);
+    validate("15 NOT IN schema_name.table_name", "SCHEMA_NAME", "TABLE_NAME", true);
 }
 
 TEST_CASE(in_chained_expression)
@@ -560,15 +581,15 @@ TEST_CASE(in_chained_expression)
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::InChainedExpression>(*expression));
+        EXPECT(is<SQL::AST::InChainedExpression>(*expression));
 
-        const auto& in = static_cast<const SQL::InChainedExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*in.expression()));
+        const auto& in = static_cast<const SQL::AST::InChainedExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*in.expression()));
         EXPECT_EQ(in.expression_chain()->expressions().size(), expected_chain_size);
         EXPECT_EQ(in.invert_expression(), expected_invert_expression);
 
         for (const auto& chained_expression : in.expression_chain()->expressions())
-            EXPECT(!is<SQL::ErrorExpression>(chained_expression));
+            EXPECT(!is<SQL::AST::ErrorExpression>(chained_expression));
     };
 
     validate("15 IN ()", 0, false);
@@ -583,22 +604,29 @@ TEST_CASE(in_chained_expression)
 TEST_CASE(in_selection_expression)
 {
     EXPECT(parse("IN (SELECT)").is_error());
-    EXPECT(parse("IN (SELECT * FROM table, SELECT * FROM table);").is_error());
+    EXPECT(parse("IN (SELECT * FROM table_name, SELECT * FROM table_name);").is_error());
     EXPECT(parse("NOT IN (SELECT)").is_error());
-    EXPECT(parse("NOT IN (SELECT * FROM table, SELECT * FROM table);").is_error());
+    EXPECT(parse("NOT IN (SELECT * FROM table_name, SELECT * FROM table_name);").is_error());
 
     auto validate = [](StringView sql, bool expected_invert_expression) {
         auto result = parse(sql);
         EXPECT(!result.is_error());
 
         auto expression = result.release_value();
-        EXPECT(is<SQL::InSelectionExpression>(*expression));
+        EXPECT(is<SQL::AST::InSelectionExpression>(*expression));
 
-        const auto& in = static_cast<const SQL::InSelectionExpression&>(*expression);
-        EXPECT(!is<SQL::ErrorExpression>(*in.expression()));
+        const auto& in = static_cast<const SQL::AST::InSelectionExpression&>(*expression);
+        EXPECT(!is<SQL::AST::ErrorExpression>(*in.expression()));
         EXPECT_EQ(in.invert_expression(), expected_invert_expression);
     };
 
-    validate("15 IN (SELECT * FROM table)", false);
-    validate("15 NOT IN (SELECT * FROM table)", true);
+    validate("15 IN (SELECT * FROM table_name)", false);
+    validate("15 NOT IN (SELECT * FROM table_name)", true);
+}
+
+TEST_CASE(expression_tree_depth_limit)
+{
+    auto too_deep_expression = String::formatted("{:+^{}}1", "", SQL::AST::Limits::maximum_expression_tree_depth);
+    EXPECT(!parse(too_deep_expression.substring_view(1)).is_error());
+    EXPECT(parse(too_deep_expression).is_error());
 }

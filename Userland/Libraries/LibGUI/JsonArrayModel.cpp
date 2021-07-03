@@ -13,7 +13,7 @@ namespace GUI {
 void JsonArrayModel::update()
 {
     auto file = Core::File::construct(m_json_path);
-    if (!file->open(Core::IODevice::ReadOnly)) {
+    if (!file->open(Core::OpenMode::ReadOnly)) {
         dbgln("Unable to open {}", file->filename());
         m_array.clear();
         did_update();
@@ -32,7 +32,7 @@ void JsonArrayModel::update()
 bool JsonArrayModel::store()
 {
     auto file = Core::File::construct(m_json_path);
-    if (!file->open(Core::IODevice::WriteOnly)) {
+    if (!file->open(Core::OpenMode::WriteOnly)) {
         dbgln("Unable to open {}", file->filename());
         return false;
     }
@@ -59,7 +59,7 @@ bool JsonArrayModel::set(int row, Vector<JsonValue>&& values)
 {
     VERIFY(values.size() == m_fields.size());
 
-    if (row >= m_array.size())
+    if ((size_t)row >= m_array.size())
         return false;
 
     JsonObject obj;
@@ -76,12 +76,12 @@ bool JsonArrayModel::set(int row, Vector<JsonValue>&& values)
 
 bool JsonArrayModel::remove(int row)
 {
-    if (row >= m_array.size())
+    if ((size_t)row >= m_array.size())
         return false;
 
     JsonArray new_array;
-    for (int i = 0; i < m_array.size(); ++i)
-        if (i != row)
+    for (size_t i = 0; i < m_array.size(); ++i)
+        if (i != (size_t)row)
             new_array.append(m_array.at(i));
 
     m_array = new_array;

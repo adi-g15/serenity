@@ -54,6 +54,7 @@ int main(int argc, char** argv)
     int max_bytes_for_one_command = ARG_MAX;
 
     Core::ArgsParser args_parser;
+    args_parser.set_stop_on_first_non_option(true);
     args_parser.set_general_help("Read arguments from stdin and interpret them as command-line arguments for another program. See also: 'man xargs'.");
     args_parser.add_option(placeholder, "Placeholder string to be replaced in arguments", "replace", 'I', "placeholder");
     args_parser.add_option(split_with_nulls, "Split input items with the null character instead of newline", "null", '0');
@@ -69,7 +70,7 @@ int main(int argc, char** argv)
     size_t max_lines = max(max_lines_for_one_command, 0);
 
     if (!split_with_nulls && strlen(specified_delimiter) > 1) {
-        fprintf(stderr, "xargs: the delimiter must be a single byte\n");
+        warnln("xargs: the delimiter must be a single byte");
         return 1;
     }
 
@@ -205,8 +206,7 @@ bool run_command(Vector<char*>&& child_argv, bool verbose, bool is_stdin, int de
     if (verbose) {
         StringBuilder builder;
         builder.join(" ", child_argv);
-        fprintf(stderr, "xargs: %s\n", builder.to_string().characters());
-        fflush(stderr);
+        warnln("xargs: {}", builder.to_string());
     }
 
     auto pid = fork();

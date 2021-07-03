@@ -101,7 +101,7 @@ void MenuManager::event(Core::Event& event)
                     else {
                         auto* target_menu = previous_menu(m_current_menu);
                         if (target_menu) {
-                            target_menu->ensure_menu_window().move_to(target_menu->rect_in_window_menubar().bottom_left().translated(wm.window_with_active_menu()->frame().rect().location()).translated(wm.window_with_active_menu()->frame().menubar_rect().location()));
+                            target_menu->ensure_menu_window(target_menu->rect_in_window_menubar().bottom_left().translated(wm.window_with_active_menu()->frame().rect().location()).translated(wm.window_with_active_menu()->frame().menubar_rect().location()));
                             open_menu(*target_menu);
                             wm.window_with_active_menu()->invalidate_menubar();
                         }
@@ -118,7 +118,7 @@ void MenuManager::event(Core::Event& event)
                 else if (m_open_menu_stack.size() <= 1 && wm.window_with_active_menu()) {
                     auto* target_menu = next_menu(m_current_menu);
                     if (target_menu) {
-                        target_menu->ensure_menu_window().move_to(target_menu->rect_in_window_menubar().bottom_left().translated(wm.window_with_active_menu()->frame().rect().location()).translated(wm.window_with_active_menu()->frame().menubar_rect().location()));
+                        target_menu->ensure_menu_window(target_menu->rect_in_window_menubar().bottom_left().translated(wm.window_with_active_menu()->frame().rect().location()).translated(wm.window_with_active_menu()->frame().menubar_rect().location()));
                         open_menu(*target_menu);
                         wm.window_with_active_menu()->invalidate_menubar();
                         close_everyone_not_in_lineage(*target_menu);
@@ -160,8 +160,7 @@ void MenuManager::handle_mouse_event(MouseEvent& mouse_event)
     bool event_is_inside_current_menu = window->rect().contains(mouse_event.position());
     if (event_is_inside_current_menu) {
         WindowManager::the().set_hovered_window(window);
-        auto translated_event = mouse_event.translated(-window->position());
-        WindowManager::the().deliver_mouse_event(*window, translated_event, true);
+        WindowManager::the().deliver_mouse_event(*window, mouse_event, true);
         return;
     }
 
@@ -197,8 +196,7 @@ void MenuManager::handle_mouse_event(MouseEvent& mouse_event)
             if (!menu->menu_window()->rect().contains(mouse_event.position()))
                 continue;
             WindowManager::the().set_hovered_window(menu->menu_window());
-            auto translated_event = mouse_event.translated(-menu->menu_window()->position());
-            WindowManager::the().deliver_mouse_event(*menu->menu_window(), translated_event, true);
+            WindowManager::the().deliver_mouse_event(*menu->menu_window(), mouse_event, true);
             break;
         }
     }
@@ -227,34 +225,34 @@ void MenuManager::close_everyone()
 
 void MenuManager::close_everyone_not_in_lineage(Menu& menu)
 {
-    Vector<Menu*> menus_to_close;
+    Vector<Menu&> menus_to_close;
     for (auto& open_menu : m_open_menu_stack) {
         if (!open_menu)
             continue;
         if (&menu == open_menu.ptr() || open_menu->is_menu_ancestor_of(menu))
             continue;
-        menus_to_close.append(open_menu);
+        menus_to_close.append(*open_menu);
     }
     close_menus(menus_to_close);
 }
 
-void MenuManager::close_menus(const Vector<Menu*>& menus)
+void MenuManager::close_menus(const Vector<Menu&>& menus)
 {
     for (auto& menu : menus) {
-        if (menu == m_current_menu)
+        if (&menu == m_current_menu)
             clear_current_menu();
-        menu->set_visible(false);
-        menu->clear_hovered_item();
+        menu.set_visible(false);
+        menu.clear_hovered_item();
         m_open_menu_stack.remove_first_matching([&](auto& entry) {
-            return entry == menu;
+            return entry == &menu;
         });
     }
     refresh();
 }
 
-static void collect_menu_subtree(Menu& menu, Vector<Menu*>& menus)
+static void collect_menu_subtree(Menu& menu, Vector<Menu&>& menus)
 {
-    menus.append(&menu);
+    menus.append(menu);
     for (size_t i = 0; i < menu.item_count(); ++i) {
         auto& item = menu.item(i);
         if (!item.is_submenu())
@@ -265,7 +263,7 @@ static void collect_menu_subtree(Menu& menu, Vector<Menu*>& menus)
 
 void MenuManager::close_menu_and_descendants(Menu& menu)
 {
-    Vector<Menu*> menus_to_close;
+    Vector<Menu&> menus_to_close;
     collect_menu_subtree(menu, menus_to_close);
     close_menus(menus_to_close);
 }
@@ -291,7 +289,7 @@ void MenuManager::set_hovered_menu(Menu* menu)
 
 void MenuManager::open_menu(Menu& menu, bool as_current_menu)
 {
-    if (is_open(menu)) {
+    if (menu.is_open()) {
         if (as_current_menu || current_menu() != &menu) {
             // This menu is already open. If requested, or if the current
             // window doesn't match this one, then set it to this
@@ -302,9 +300,9 @@ void MenuManager::open_menu(Menu& menu, bool as_current_menu)
 
     if (!menu.is_empty()) {
         menu.redraw_if_theme_changed();
-        if (!menu.menu_window())
-            menu.ensure_menu_window();
-        menu.set_visible(true);
+        auto* window = menu.menu_window();
+        VERIFY(window);
+        window->set_visible(true);
     }
 
     if (m_open_menu_stack.find_if([&menu](auto& other) { return &menu == other.ptr(); }).is_end())

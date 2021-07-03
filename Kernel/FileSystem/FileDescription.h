@@ -56,7 +56,7 @@ public:
     bool can_read() const;
     bool can_write() const;
 
-    ssize_t get_dir_entries(UserOrKernelBuffer& buffer, ssize_t);
+    KResultOr<size_t> get_dir_entries(UserOrKernelBuffer& buffer, size_t);
 
     KResultOr<NonnullOwnPtr<KBuffer>> read_entire_file();
 
@@ -76,6 +76,10 @@ public:
     bool is_tty() const;
     const TTY* tty() const;
     TTY* tty();
+
+    bool is_inode_watcher() const;
+    const InodeWatcher* inode_watcher() const;
+    InodeWatcher* inode_watcher();
 
     bool is_master_pty() const;
     const MasterPTY* master_pty() const;

@@ -11,7 +11,7 @@ namespace Kernel {
 
 constexpr size_t map_name_max_size = 50;
 
-KResultOr<int> Process::sys$setkeymap(Userspace<const Syscall::SC_setkeymap_params*> user_params)
+KResultOr<FlatPtr> Process::sys$setkeymap(Userspace<const Syscall::SC_setkeymap_params*> user_params)
 {
     REQUIRE_PROMISE(setkeymap);
 
@@ -36,17 +36,16 @@ KResultOr<int> Process::sys$setkeymap(Userspace<const Syscall::SC_setkeymap_para
         return EFAULT;
 
     auto map_name = get_syscall_path_argument(params.map_name);
-    if (map_name.is_error()) {
+    if (map_name.is_error())
         return map_name.error();
-    }
-    if (map_name.value().length() > map_name_max_size) {
+    if (map_name.value()->length() > map_name_max_size)
         return ENAMETOOLONG;
-    }
-    HIDManagement::the().set_maps(character_map_data, map_name.value());
+
+    HIDManagement::the().set_maps(character_map_data, map_name.value()->view());
     return 0;
 }
 
-KResultOr<int> Process::sys$getkeymap(Userspace<const Syscall::SC_getkeymap_params*> user_params)
+KResultOr<FlatPtr> Process::sys$getkeymap(Userspace<const Syscall::SC_getkeymap_params*> user_params)
 {
     REQUIRE_PROMISE(getkeymap);
 

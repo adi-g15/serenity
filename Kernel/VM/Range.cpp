@@ -6,8 +6,9 @@
  */
 
 #include <AK/Vector.h>
-#include <Kernel/Arch/x86/CPU.h>
+#include <Kernel/VM/MemoryManager.h>
 #include <Kernel/VM/Range.h>
+#include <LibC/limits.h>
 
 namespace Kernel {
 
@@ -33,6 +34,23 @@ Range Range::intersect(const Range& other) const
     auto new_end = min(end(), other.end());
     VERIFY(new_base < new_end);
     return Range(new_base, (new_end - new_base).get());
+}
+
+KResultOr<Range> Range::expand_to_page_boundaries(FlatPtr address, size_t size)
+{
+    if (page_round_up_would_wrap(size))
+        return EINVAL;
+
+    if ((address + size) < address)
+        return EINVAL;
+
+    if (page_round_up_would_wrap(address + size))
+        return EINVAL;
+
+    auto base = VirtualAddress { address }.page_base();
+    auto end = page_round_up(address + size);
+
+    return Range { base, end - base.get() };
 }
 
 }

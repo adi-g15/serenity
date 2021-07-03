@@ -92,10 +92,14 @@ protected:
     {
     }
 
-    virtual void handle_irq(const RegisterState& regs) override
+    virtual bool handle_irq(const RegisterState& regs) override
     {
-        if (m_callback)
+        // Note: if we have an IRQ on this line, it's going to be the timer always
+        if (m_callback) {
             m_callback(regs);
+            return true;
+        }
+        return false;
     }
 
     u64 m_frequency { OPTIMAL_TICKS_PER_SECOND_RATE };
@@ -128,7 +132,7 @@ public:
 
     virtual size_t sharing_devices_count() const override { return 0; }
     virtual bool is_shared_handler() const override { return false; }
-    virtual bool is_sharing_with_others() const { return false; }
+    virtual bool is_sharing_with_others() const override { return false; }
     virtual HandlerType type() const override { return HandlerType::IRQHandler; }
     virtual const char* controller() const override { return nullptr; }
     virtual bool eoi() override;
@@ -142,10 +146,14 @@ protected:
     {
     }
 
-    virtual void handle_interrupt(const RegisterState& regs) override
+    virtual bool handle_interrupt(const RegisterState& regs) override
     {
-        if (m_callback)
+        // Note: if we have an IRQ on this line, it's going to be the timer always
+        if (m_callback) {
             m_callback(regs);
+            return true;
+        }
+        return false;
     }
 
     u64 m_frequency { OPTIMAL_TICKS_PER_SECOND_RATE };

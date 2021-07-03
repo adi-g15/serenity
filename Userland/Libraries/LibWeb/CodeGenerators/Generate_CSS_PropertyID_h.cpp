@@ -34,7 +34,7 @@ int main(int argc, char** argv)
         return 1;
     }
     auto file = Core::File::construct(argv[1]);
-    if (!file->open(Core::IODevice::ReadOnly))
+    if (!file->open(Core::OpenMode::ReadOnly))
         return 1;
 
     auto json = JsonValue::from_string(file->read_all());
@@ -53,6 +53,7 @@ namespace Web::CSS {
 
 enum class PropertyID {
     Invalid,
+    Custom,
 )~~~");
 
     json.value().as_object().for_each_member([&](auto& name, auto& value) {

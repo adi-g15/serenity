@@ -12,6 +12,7 @@
 #include <Kernel/API/Syscall.h>
 #include <LibSystem/syscall.h>
 #include <bits/pthread_integration.h>
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <serenity.h>
@@ -28,40 +29,59 @@ using PthreadAttrImpl = Syscall::SC_create_thread_params;
 
 } // end anonymous namespace
 
-constexpr size_t required_stack_alignment = 4 * MiB;
-constexpr size_t highest_reasonable_guard_size = 32 * PAGE_SIZE;
-constexpr size_t highest_reasonable_stack_size = 8 * MiB; // That's the default in Ubuntu?
+static constexpr size_t required_stack_alignment = 4 * MiB;
+static constexpr size_t highest_reasonable_guard_size = 32 * PAGE_SIZE;
+static constexpr size_t highest_reasonable_stack_size = 8 * MiB; // That's the default in Ubuntu?
+
+#ifndef X86_64_NO_TLS
+__thread
+#endif
+    void* s_stack_location;
+#ifndef X86_64_NO_TLS
+__thread
+#endif
+    size_t s_stack_size;
 
 #define __RETURN_PTHREAD_ERROR(rc) \
     return ((rc) < 0 ? -(rc) : 0)
 
 extern "C" {
 
-static void* pthread_create_helper(void* (*routine)(void*), void* argument)
+static void* pthread_create_helper(void* (*routine)(void*), void* argument, void* stack_location, size_t stack_size)
 {
+    s_stack_location = stack_location;
+    s_stack_size = stack_size;
     void* ret_val = routine(argument);
     pthread_exit(ret_val);
-    return nullptr;
 }
 
 static int create_thread(pthread_t* thread, void* (*entry)(void*), void* argument, PthreadAttrImpl* thread_params)
 {
-    void** stack = (void**)((uintptr_t)thread_params->m_stack_location + thread_params->m_stack_size);
+    void** stack = (void**)((uintptr_t)thread_params->stack_location + thread_params->stack_size);
 
     auto push_on_stack = [&](void* data) {
         stack--;
         *stack = data;
-        thread_params->m_stack_size -= sizeof(void*);
+        thread_params->stack_size -= sizeof(void*);
     };
 
     // We set up the stack for pthread_create_helper.
     // Note that we need to align the stack to 16B, accounting for
-    // the fact that we also push 8 bytes.
-    while (((uintptr_t)stack - 8) % 16 != 0)
+    // the fact that we also push 16 bytes.
+    while (((uintptr_t)stack - 16) % 16 != 0)
         push_on_stack(nullptr);
 
+#if ARCH(I386)
+    push_on_stack((void*)(uintptr_t)thread_params->stack_size);
+    push_on_stack(thread_params->stack_location);
     push_on_stack(argument);
     push_on_stack((void*)entry);
+#else
+    thread_params->rdi = (FlatPtr)entry;
+    thread_params->rsi = (FlatPtr)argument;
+    thread_params->rdx = (FlatPtr)thread_params->stack_location;
+    thread_params->rcx = thread_params->stack_size;
+#endif
     VERIFY((uintptr_t)stack % 16 == 0);
 
     // Push a fake return address
@@ -73,10 +93,10 @@ static int create_thread(pthread_t* thread, void* (*entry)(void*), void* argumen
     __RETURN_PTHREAD_ERROR(rc);
 }
 
-[[noreturn]] static void exit_thread(void* code)
+[[noreturn]] static void exit_thread(void* code, void* stack_location, size_t stack_size)
 {
     __pthread_key_destroy_for_current_thread();
-    syscall(SC_exit_thread, code);
+    syscall(SC_exit_thread, code, stack_location, stack_size);
     VERIFY_NOT_REACHED();
 }
 
@@ -95,30 +115,30 @@ int pthread_create(pthread_t* thread, pthread_attr_t* attributes, void* (*start_
 
     PthreadAttrImpl* used_attributes = arg_attributes ? *arg_attributes : &default_attributes;
 
-    if (!used_attributes->m_stack_location) {
+    if (!used_attributes->stack_location) {
         // adjust stack size, user might have called setstacksize, which has no restrictions on size/alignment
-        if (0 != (used_attributes->m_stack_size % required_stack_alignment))
-            used_attributes->m_stack_size += required_stack_alignment - (used_attributes->m_stack_size % required_stack_alignment);
+        if (0 != (used_attributes->stack_size % required_stack_alignment))
+            used_attributes->stack_size += required_stack_alignment - (used_attributes->stack_size % required_stack_alignment);
 
-        used_attributes->m_stack_location = mmap_with_name(nullptr, used_attributes->m_stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, 0, 0, "Thread stack");
-        if (!used_attributes->m_stack_location)
+        used_attributes->stack_location = mmap_with_name(nullptr, used_attributes->stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, 0, 0, "Thread stack");
+        if (!used_attributes->stack_location)
             return -1;
     }
 
     dbgln_if(PTHREAD_DEBUG, "pthread_create: Creating thread with attributes at {}, detach state {}, priority {}, guard page size {}, stack size {}, stack location {}",
         used_attributes,
-        (PTHREAD_CREATE_JOINABLE == used_attributes->m_detach_state) ? "joinable" : "detached",
-        used_attributes->m_schedule_priority,
-        used_attributes->m_guard_page_size,
-        used_attributes->m_stack_size,
-        used_attributes->m_stack_location);
+        (PTHREAD_CREATE_JOINABLE == used_attributes->detach_state) ? "joinable" : "detached",
+        used_attributes->schedule_priority,
+        used_attributes->guard_page_size,
+        used_attributes->stack_size,
+        used_attributes->stack_location);
 
     return create_thread(thread, start_routine, argument_to_start_routine, used_attributes);
 }
 
 void pthread_exit(void* value_ptr)
 {
-    exit_thread(value_ptr);
+    exit_thread(value_ptr, s_stack_location, s_stack_size);
 }
 
 void pthread_cleanup_push([[maybe_unused]] void (*routine)(void*), [[maybe_unused]] void* arg)
@@ -209,11 +229,11 @@ int pthread_attr_init(pthread_attr_t* attributes)
 
     dbgln_if(PTHREAD_DEBUG, "pthread_attr_init: New thread attributes at {}, detach state {}, priority {}, guard page size {}, stack size {}, stack location {}",
         impl,
-        (PTHREAD_CREATE_JOINABLE == impl->m_detach_state) ? "joinable" : "detached",
-        impl->m_schedule_priority,
-        impl->m_guard_page_size,
-        impl->m_stack_size,
-        impl->m_stack_location);
+        (PTHREAD_CREATE_JOINABLE == impl->detach_state) ? "joinable" : "detached",
+        impl->schedule_priority,
+        impl->guard_page_size,
+        impl->stack_size,
+        impl->stack_location);
 
     return 0;
 }
@@ -232,7 +252,7 @@ int pthread_attr_getdetachstate(const pthread_attr_t* attributes, int* p_detach_
     if (!attributes_impl || !p_detach_state)
         return EINVAL;
 
-    *p_detach_state = attributes_impl->m_detach_state;
+    *p_detach_state = attributes_impl->detach_state;
     return 0;
 }
 
@@ -246,15 +266,15 @@ int pthread_attr_setdetachstate(pthread_attr_t* attributes, int detach_state)
     if (detach_state != PTHREAD_CREATE_JOINABLE && detach_state != PTHREAD_CREATE_DETACHED)
         return EINVAL;
 
-    attributes_impl->m_detach_state = detach_state;
+    attributes_impl->detach_state = detach_state;
 
     dbgln_if(PTHREAD_DEBUG, "pthread_attr_setdetachstate: Thread attributes at {}, detach state {}, priority {}, guard page size {}, stack size {}, stack location {}",
         attributes_impl,
-        (PTHREAD_CREATE_JOINABLE == attributes_impl->m_detach_state) ? "joinable" : "detached",
-        attributes_impl->m_schedule_priority,
-        attributes_impl->m_guard_page_size,
-        attributes_impl->m_stack_size,
-        attributes_impl->m_stack_location);
+        (PTHREAD_CREATE_JOINABLE == attributes_impl->detach_state) ? "joinable" : "detached",
+        attributes_impl->schedule_priority,
+        attributes_impl->guard_page_size,
+        attributes_impl->stack_size,
+        attributes_impl->stack_location);
 
     return 0;
 }
@@ -266,7 +286,7 @@ int pthread_attr_getguardsize(const pthread_attr_t* attributes, size_t* p_guard_
     if (!attributes_impl || !p_guard_size)
         return EINVAL;
 
-    *p_guard_size = attributes_impl->m_reported_guard_page_size;
+    *p_guard_size = attributes_impl->reported_guard_page_size;
     return 0;
 }
 
@@ -287,16 +307,16 @@ int pthread_attr_setguardsize(pthread_attr_t* attributes, size_t guard_size)
         return EINVAL;
     }
 
-    attributes_impl->m_guard_page_size = actual_guard_size;
-    attributes_impl->m_reported_guard_page_size = guard_size; // POSIX, why?
+    attributes_impl->guard_page_size = actual_guard_size;
+    attributes_impl->reported_guard_page_size = guard_size; // POSIX, why?
 
     dbgln_if(PTHREAD_DEBUG, "pthread_attr_setguardsize: Thread attributes at {}, detach state {}, priority {}, guard page size {}, stack size {}, stack location {}",
         attributes_impl,
-        (PTHREAD_CREATE_JOINABLE == attributes_impl->m_detach_state) ? "joinable" : "detached",
-        attributes_impl->m_schedule_priority,
-        attributes_impl->m_guard_page_size,
-        attributes_impl->m_stack_size,
-        attributes_impl->m_stack_location);
+        (PTHREAD_CREATE_JOINABLE == attributes_impl->detach_state) ? "joinable" : "detached",
+        attributes_impl->schedule_priority,
+        attributes_impl->guard_page_size,
+        attributes_impl->stack_size,
+        attributes_impl->stack_location);
 
     return 0;
 }
@@ -308,7 +328,7 @@ int pthread_attr_getschedparam(const pthread_attr_t* attributes, struct sched_pa
     if (!attributes_impl || !p_sched_param)
         return EINVAL;
 
-    p_sched_param->sched_priority = attributes_impl->m_schedule_priority;
+    p_sched_param->sched_priority = attributes_impl->schedule_priority;
     return 0;
 }
 
@@ -321,15 +341,15 @@ int pthread_attr_setschedparam(pthread_attr_t* attributes, const struct sched_pa
     if (p_sched_param->sched_priority < THREAD_PRIORITY_MIN || p_sched_param->sched_priority > THREAD_PRIORITY_MAX)
         return ENOTSUP;
 
-    attributes_impl->m_schedule_priority = p_sched_param->sched_priority;
+    attributes_impl->schedule_priority = p_sched_param->sched_priority;
 
     dbgln_if(PTHREAD_DEBUG, "pthread_attr_setschedparam: Thread attributes at {}, detach state {}, priority {}, guard page size {}, stack size {}, stack location {}",
         attributes_impl,
-        (PTHREAD_CREATE_JOINABLE == attributes_impl->m_detach_state) ? "joinable" : "detached",
-        attributes_impl->m_schedule_priority,
-        attributes_impl->m_guard_page_size,
-        attributes_impl->m_stack_size,
-        attributes_impl->m_stack_location);
+        (PTHREAD_CREATE_JOINABLE == attributes_impl->detach_state) ? "joinable" : "detached",
+        attributes_impl->schedule_priority,
+        attributes_impl->guard_page_size,
+        attributes_impl->stack_size,
+        attributes_impl->stack_location);
 
     return 0;
 }
@@ -341,8 +361,8 @@ int pthread_attr_getstack(const pthread_attr_t* attributes, void** p_stack_ptr, 
     if (!attributes_impl || !p_stack_ptr || !p_stack_size)
         return EINVAL;
 
-    *p_stack_ptr = attributes_impl->m_stack_location;
-    *p_stack_size = attributes_impl->m_stack_size;
+    *p_stack_ptr = attributes_impl->stack_location;
+    *p_stack_size = attributes_impl->stack_size;
 
     return 0;
 }
@@ -363,16 +383,16 @@ int pthread_attr_setstack(pthread_attr_t* attributes, void* p_stack, size_t stac
     // FIXME: "[EACCES] The stack page(s) described by stackaddr and stacksize are not both readable and writable by the thread."
     // Have to check that the whole range is mapped to this process/thread? Can we defer this to create_thread?
 
-    attributes_impl->m_stack_size = stack_size;
-    attributes_impl->m_stack_location = p_stack;
+    attributes_impl->stack_size = stack_size;
+    attributes_impl->stack_location = p_stack;
 
     dbgln_if(PTHREAD_DEBUG, "pthread_attr_setstack: Thread attributes at {}, detach state {}, priority {}, guard page size {}, stack size {}, stack location {}",
         attributes_impl,
-        (PTHREAD_CREATE_JOINABLE == attributes_impl->m_detach_state) ? "joinable" : "detached",
-        attributes_impl->m_schedule_priority,
-        attributes_impl->m_guard_page_size,
-        attributes_impl->m_stack_size,
-        attributes_impl->m_stack_location);
+        (PTHREAD_CREATE_JOINABLE == attributes_impl->detach_state) ? "joinable" : "detached",
+        attributes_impl->schedule_priority,
+        attributes_impl->guard_page_size,
+        attributes_impl->stack_size,
+        attributes_impl->stack_location);
 
     return 0;
 }
@@ -384,7 +404,7 @@ int pthread_attr_getstacksize(const pthread_attr_t* attributes, size_t* p_stack_
     if (!attributes_impl || !p_stack_size)
         return EINVAL;
 
-    *p_stack_size = attributes_impl->m_stack_size;
+    *p_stack_size = attributes_impl->stack_size;
     return 0;
 }
 
@@ -398,15 +418,15 @@ int pthread_attr_setstacksize(pthread_attr_t* attributes, size_t stack_size)
     if ((stack_size < PTHREAD_STACK_MIN) || stack_size > highest_reasonable_stack_size)
         return EINVAL;
 
-    attributes_impl->m_stack_size = stack_size;
+    attributes_impl->stack_size = stack_size;
 
     dbgln_if(PTHREAD_DEBUG, "pthread_attr_setstacksize: Thread attributes at {}, detach state {}, priority {}, guard page size {}, stack size {}, stack location {}",
         attributes_impl,
-        (PTHREAD_CREATE_JOINABLE == attributes_impl->m_detach_state) ? "joinable" : "detached",
-        attributes_impl->m_schedule_priority,
-        attributes_impl->m_guard_page_size,
-        attributes_impl->m_stack_size,
-        attributes_impl->m_stack_location);
+        (PTHREAD_CREATE_JOINABLE == attributes_impl->detach_state) ? "joinable" : "detached",
+        attributes_impl->schedule_priority,
+        attributes_impl->guard_page_size,
+        attributes_impl->stack_size,
+        attributes_impl->stack_location);
 
     return 0;
 }
@@ -555,14 +575,24 @@ int pthread_getname_np(pthread_t thread, char* buffer, size_t buffer_size)
     __RETURN_PTHREAD_ERROR(rc);
 }
 
-int pthread_setcancelstate([[maybe_unused]] int state, [[maybe_unused]] int* oldstate)
+int pthread_setcancelstate(int state, int* oldstate)
 {
-    TODO();
+    if (oldstate)
+        *oldstate = PTHREAD_CANCEL_DISABLE;
+    dbgln("FIXME: Implement pthread_setcancelstate({}, ...)", state);
+    if (state != PTHREAD_CANCEL_DISABLE)
+        return EINVAL;
+    return 0;
 }
 
-int pthread_setcanceltype([[maybe_unused]] int type, [[maybe_unused]] int* oldtype)
+int pthread_setcanceltype(int type, int* oldtype)
 {
-    TODO();
+    if (oldtype)
+        *oldtype = PTHREAD_CANCEL_DEFERRED;
+    dbgln("FIXME: Implement pthread_setcanceltype({}, ...)", type);
+    if (type != PTHREAD_CANCEL_DEFERRED)
+        return EINVAL;
+    return 0;
 }
 
 constexpr static pid_t spinlock_unlock_sentinel = 0;
@@ -601,7 +631,7 @@ int pthread_spin_lock(pthread_spinlock_t* lock)
 int pthread_spin_trylock(pthread_spinlock_t* lock)
 {
     // We expect the current value to be unlocked, as the specification
-    // states that trylock should lock ony if it is not held by ANY thread.
+    // states that trylock should lock only if it is not held by ANY thread.
     auto current = spinlock_unlock_sentinel;
     auto desired = gettid();
 

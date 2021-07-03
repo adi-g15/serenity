@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <Kernel/Arch/x86/InterruptDisabler.h>
 #include <Kernel/Process.h>
 
 namespace Kernel {
@@ -47,8 +48,6 @@ KResult Process::do_killpg(ProcessGroupID pgrp, int signal)
             any_succeeded = true;
         else
             error = res;
-
-        return IterationDecision::Continue;
     });
 
     if (group_was_empty)
@@ -97,7 +96,7 @@ KResult Process::do_killself(int signal)
     return KSuccess;
 }
 
-KResultOr<int> Process::sys$kill(pid_t pid_or_pgid, int signal)
+KResultOr<FlatPtr> Process::sys$kill(pid_t pid_or_pgid, int signal)
 {
     if (pid_or_pgid == pid().value())
         REQUIRE_PROMISE(stdio);
@@ -124,7 +123,7 @@ KResultOr<int> Process::sys$kill(pid_t pid_or_pgid, int signal)
     return do_kill(*peer, signal);
 }
 
-KResultOr<int> Process::sys$killpg(pid_t pgrp, int signum)
+KResultOr<FlatPtr> Process::sys$killpg(pid_t pgrp, int signum)
 {
     REQUIRE_PROMISE(proc);
     if (signum < 1 || signum >= 32)

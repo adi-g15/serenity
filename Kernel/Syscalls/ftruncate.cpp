@@ -9,7 +9,7 @@
 
 namespace Kernel {
 
-KResultOr<int> Process::sys$ftruncate(int fd, Userspace<off_t*> userspace_length)
+KResultOr<FlatPtr> Process::sys$ftruncate(int fd, Userspace<off_t*> userspace_length)
 {
     REQUIRE_PROMISE(stdio);
     off_t length;
@@ -17,7 +17,7 @@ KResultOr<int> Process::sys$ftruncate(int fd, Userspace<off_t*> userspace_length
         return EFAULT;
     if (length < 0)
         return EINVAL;
-    auto description = file_description(fd);
+    auto description = fds().file_description(fd);
     if (!description)
         return EBADF;
     if (!description->is_writable())

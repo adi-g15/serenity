@@ -47,14 +47,14 @@ public:
     using RefCountType = unsigned int;
     using AllowOwnPtr = FalseType;
 
-    ALWAYS_INLINE void ref() const
+    void ref() const
     {
         auto old_ref_count = m_ref_count.fetch_add(1, AK::MemoryOrder::memory_order_relaxed);
         VERIFY(old_ref_count > 0);
         VERIFY(!Checked<RefCountType>::addition_would_overflow(old_ref_count, 1));
     }
 
-    [[nodiscard]] ALWAYS_INLINE bool try_ref() const
+    [[nodiscard]] bool try_ref() const
     {
         RefCountType expected = m_ref_count.load(AK::MemoryOrder::memory_order_relaxed);
         for (;;) {
@@ -66,19 +66,19 @@ public:
         }
     }
 
-    ALWAYS_INLINE RefCountType ref_count() const
+    [[nodiscard]] RefCountType ref_count() const
     {
         return m_ref_count.load(AK::MemoryOrder::memory_order_relaxed);
     }
 
 protected:
     RefCountedBase() = default;
-    ALWAYS_INLINE ~RefCountedBase()
+    ~RefCountedBase()
     {
         VERIFY(m_ref_count.load(AK::MemoryOrder::memory_order_relaxed) == 0);
     }
 
-    ALWAYS_INLINE RefCountType deref_base() const
+    RefCountType deref_base() const
     {
         auto old_ref_count = m_ref_count.fetch_sub(1, AK::MemoryOrder::memory_order_acq_rel);
         VERIFY(old_ref_count > 0);

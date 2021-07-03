@@ -9,9 +9,12 @@
 #include <AK/Assertions.h>
 #include <AK/String.h>
 #include <AK/Types.h>
-#include <Kernel/Arch/x86/CPU.h>
 
 namespace IO {
+
+// Every character written to this IO port is written to the Bochs console
+// (e.g. the console where Qemu is running).
+static constexpr u16 BOCHS_DEBUG_PORT = 0xE9;
 
 inline u8 in8(u16 port)
 {
@@ -79,6 +82,7 @@ public:
     template<typename T>
     ALWAYS_INLINE T in()
     {
+        static_assert(sizeof(T) <= 4);
         if constexpr (sizeof(T) == 4)
             return IO::in32(get());
         if constexpr (sizeof(T) == 2)
@@ -91,6 +95,7 @@ public:
     template<typename T>
     ALWAYS_INLINE void out(T value)
     {
+        static_assert(sizeof(T) <= 4);
         if constexpr (sizeof(T) == 4) {
             IO::out32(get(), value);
             return;

@@ -17,9 +17,15 @@ class TypedArrayBase : public Object {
     JS_OBJECT(TypedArrayBase, Object);
 
 public:
+    enum class ContentType {
+        BigInt,
+        Number,
+    };
+
     u32 array_length() const { return m_array_length; }
     u32 byte_length() const { return m_byte_length; }
     u32 byte_offset() const { return m_byte_offset; }
+    ContentType content_type() const { return m_content_type; }
     ArrayBuffer* viewed_array_buffer() const { return m_viewed_array_buffer; }
 
     void set_array_length(u32 length) { m_array_length = length; }
@@ -28,6 +34,12 @@ public:
     void set_viewed_array_buffer(ArrayBuffer* array_buffer) { m_viewed_array_buffer = array_buffer; }
 
     virtual size_t element_size() const = 0;
+    virtual String element_name() const = 0;
+
+    // 25.1.2.10 GetValueFromBuffer ( arrayBuffer, byteIndex, type, isTypedArray, order [ , isLittleEndian ] ), https://tc39.es/ecma262/#sec-getvaluefrombuffer
+    virtual Value get_value_from_buffer(size_t byte_index, ArrayBuffer::Order, bool is_little_endian = true) const = 0;
+    // 25.1.2.12 SetValueInBuffer ( arrayBuffer, byteIndex, type, value, isTypedArray, order [ , isLittleEndian ] ), https://tc39.es/ecma262/#sec-setvalueinbuffer
+    virtual void set_value_in_buffer(size_t byte_index, Value, ArrayBuffer::Order, bool is_little_endian = true) = 0;
 
 protected:
     explicit TypedArrayBase(Object& prototype)
@@ -38,6 +50,7 @@ protected:
     u32 m_array_length { 0 };
     u32 m_byte_length { 0 };
     u32 m_byte_offset { 0 };
+    ContentType m_content_type { ContentType::Number };
     ArrayBuffer* m_viewed_array_buffer { nullptr };
 
 private:
@@ -48,71 +61,97 @@ template<typename T>
 class TypedArray : public TypedArrayBase {
     JS_OBJECT(TypedArray, TypedArrayBase);
 
+    using UnderlyingBufferDataType = Conditional<IsSame<ClampedU8, T>, u8, T>;
+
 public:
+    // 10.4.5.11 IntegerIndexedElementSet ( O, index, value ), https://tc39.es/ecma262/#sec-integerindexedelementset
+    // NOTE: In error cases, the function will return as if it succeeded.
     virtual bool put_by_index(u32 property_index, Value value) override
     {
-        property_index += m_byte_offset / sizeof(T);
-        if (property_index >= m_array_length)
-            return Base::put_by_index(property_index, value);
+        auto& vm = this->vm();
+        auto& global_object = this->global_object();
 
-        if constexpr (sizeof(T) < 4) {
-            auto number = value.to_i32(global_object());
-            if (vm().exception())
+        Value num_value;
+        if (content_type() == TypedArrayBase::ContentType::BigInt) {
+            num_value = value.to_bigint(global_object);
+            if (vm.exception())
                 return {};
-            data()[property_index] = number;
-        } else if constexpr (sizeof(T) == 4 || sizeof(T) == 8) {
-            auto number = value.to_double(global_object());
-            if (vm().exception())
-                return {};
-            data()[property_index] = number;
         } else {
-            static_assert(DependentFalse<T>, "TypedArray::put_by_index with unhandled type size");
+            num_value = value.to_number(global_object);
+            if (vm.exception())
+                return {};
         }
+
+        if (!is_valid_integer_index(property_index))
+            return true;
+
+        auto offset = byte_offset();
+
+        // FIXME: Not exactly sure what we should do when overflow occurs.
+        //        Just return as if it succeeded for now.
+        Checked<size_t> indexed_position = property_index;
+        indexed_position *= sizeof(UnderlyingBufferDataType);
+        indexed_position += offset;
+        if (indexed_position.has_overflow()) {
+            dbgln("TypedArray::put_by_index: indexed_position overflowed, returning as if succeeded.");
+            return true;
+        }
+
+        viewed_array_buffer()->template set_value<T>(indexed_position.value(), num_value, true, ArrayBuffer::Order::Unordered);
+
         return true;
     }
 
-    virtual Value get_by_index(u32 property_index) const override
+    // 10.4.5.10 IntegerIndexedElementGet ( O, index ), https://tc39.es/ecma262/#sec-integerindexedelementget
+    virtual Value get_by_index(u32 property_index, AllowSideEffects = AllowSideEffects::Yes) const override
     {
-        property_index += m_byte_offset / sizeof(T);
-        if (property_index >= m_array_length)
-            return Base::get_by_index(property_index);
+        if (!is_valid_integer_index(property_index))
+            return js_undefined();
 
-        if constexpr (sizeof(T) < 4) {
-            return Value((i32)data()[property_index]);
-        } else if constexpr (sizeof(T) == 4 || sizeof(T) == 8) {
-            auto value = data()[property_index];
-            if constexpr (IsFloatingPoint<T>) {
-                return Value((double)value);
-            } else if constexpr (NumericLimits<T>::is_signed()) {
-                if (value > NumericLimits<i32>::max() || value < NumericLimits<i32>::min())
-                    return Value((double)value);
-            } else {
-                if (value > NumericLimits<i32>::max())
-                    return Value((double)value);
-            }
-            return Value((i32)value);
-        } else {
-            static_assert(DependentFalse<T>, "TypedArray::get_by_index with unhandled type size");
+        auto offset = byte_offset();
+
+        // FIXME: Not exactly sure what we should do when overflow occurs.
+        //        Just return as if it's an invalid index for now.
+        Checked<size_t> indexed_position = property_index;
+        indexed_position *= sizeof(UnderlyingBufferDataType);
+        indexed_position += offset;
+        if (indexed_position.has_overflow()) {
+            dbgln("TypedArray::get_by_index: indexed_position overflowed, returning as if it's an invalid index.");
+            return js_undefined();
         }
+
+        return viewed_array_buffer()->template get_value<T>(indexed_position.value(), true, ArrayBuffer::Order::Unordered);
     }
 
-    Span<const T> data() const
+    // 10.4.5.2 [[HasProperty]] ( P ), https://tc39.es/ecma262/#sec-integer-indexed-exotic-objects-hasproperty-p
+    bool has_property(const PropertyName& name) const override
     {
-        return { reinterpret_cast<const T*>(m_viewed_array_buffer->buffer().data()), m_array_length };
-    }
-    Span<T> data()
-    {
-        return { reinterpret_cast<T*>(m_viewed_array_buffer->buffer().data()), m_array_length };
+        if (name.is_number()) {
+            return is_valid_integer_index(name.as_number());
+        }
+        return Object::has_property(name);
     }
 
-    virtual size_t element_size() const override { return sizeof(T); };
+    Span<const UnderlyingBufferDataType> data() const
+    {
+        return { reinterpret_cast<const UnderlyingBufferDataType*>(m_viewed_array_buffer->buffer().data() + m_byte_offset), m_array_length };
+    }
+    Span<UnderlyingBufferDataType> data()
+    {
+        return { reinterpret_cast<UnderlyingBufferDataType*>(m_viewed_array_buffer->buffer().data() + m_byte_offset), m_array_length };
+    }
+
+    virtual size_t element_size() const override { return sizeof(UnderlyingBufferDataType); };
+
+    Value get_value_from_buffer(size_t byte_index, ArrayBuffer::Order order, bool is_little_endian = true) const override { return viewed_array_buffer()->template get_value<T>(byte_index, true, order, is_little_endian); }
+    void set_value_in_buffer(size_t byte_index, Value value, ArrayBuffer::Order order, bool is_little_endian = true) override { viewed_array_buffer()->template set_value<T>(byte_index, value, true, order, is_little_endian); }
 
 protected:
     TypedArray(u32 array_length, Object& prototype)
         : TypedArrayBase(prototype)
     {
-        VERIFY(!Checked<u32>::multiplication_would_overflow(array_length, sizeof(T)));
-        m_viewed_array_buffer = ArrayBuffer::create(global_object(), array_length * sizeof(T));
+        VERIFY(!Checked<u32>::multiplication_would_overflow(array_length, sizeof(UnderlyingBufferDataType)));
+        m_viewed_array_buffer = ArrayBuffer::create(global_object(), array_length * sizeof(UnderlyingBufferDataType));
         if (array_length)
             VERIFY(!data().is_null());
         m_array_length = array_length;
@@ -121,6 +160,22 @@ protected:
 
 private:
     virtual bool is_typed_array() const final { return true; }
+
+    // 10.4.5.9 IsValidIntegerIndex ( O, index ), https://tc39.es/ecma262/#sec-isvalidintegerindex
+    bool is_valid_integer_index(u32 property_index) const
+    {
+        if (viewed_array_buffer()->is_detached())
+            return false;
+
+        // FIXME: If ! IsIntegralNumber(index) is false, return false.
+
+        // FIXME: If index is -0𝔽, return false.
+
+        if (property_index >= m_array_length /* FIXME: or less than 0 (index is currently unsigned) */)
+            return false;
+
+        return true;
+    }
 };
 
 #define JS_DECLARE_TYPED_ARRAY(ClassName, snake_name, PrototypeName, ConstructorName, Type) \
@@ -131,6 +186,7 @@ private:
         virtual ~ClassName();                                                               \
         static ClassName* create(GlobalObject&, u32 length);                                \
         ClassName(u32 length, Object& prototype);                                           \
+        virtual String element_name() const override;                                       \
     };                                                                                      \
     class PrototypeName final : public Object {                                             \
         JS_OBJECT(PrototypeName, Object);                                                   \
@@ -148,7 +204,7 @@ private:
         virtual ~ConstructorName() override;                                                \
                                                                                             \
         virtual Value call() override;                                                      \
-        virtual Value construct(Function& new_target) override;                             \
+        virtual Value construct(FunctionObject& new_target) override;                       \
                                                                                             \
     private:                                                                                \
         virtual bool has_constructor() const override { return true; }                      \

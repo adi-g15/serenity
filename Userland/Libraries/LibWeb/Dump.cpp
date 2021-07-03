@@ -40,19 +40,19 @@ void dump_tree(StringBuilder& builder, const DOM::Node& node)
     for (int i = 0; i < indent; ++i)
         builder.append("  ");
     if (is<DOM::Element>(node)) {
-        builder.appendff("<{}", downcast<DOM::Element>(node).local_name());
-        downcast<DOM::Element>(node).for_each_attribute([&](auto& name, auto& value) {
+        builder.appendff("<{}", verify_cast<DOM::Element>(node).local_name());
+        verify_cast<DOM::Element>(node).for_each_attribute([&](auto& name, auto& value) {
             builder.appendff(" {}={}", name, value);
         });
         builder.append(">\n");
     } else if (is<DOM::Text>(node)) {
-        builder.appendff("\"{}\"\n", downcast<DOM::Text>(node).data());
+        builder.appendff("\"{}\"\n", verify_cast<DOM::Text>(node).data());
     } else {
         builder.appendff("{}\n", node.node_name());
     }
     ++indent;
-    if (is<DOM::Element>(node) && downcast<DOM::Element>(node).shadow_root()) {
-        dump_tree(*downcast<DOM::Element>(node).shadow_root());
+    if (is<DOM::Element>(node) && verify_cast<DOM::Element>(node).shadow_root()) {
+        dump_tree(*verify_cast<DOM::Element>(node).shadow_root());
     }
     if (is<DOM::ParentNode>(node)) {
         if (!is<HTML::HTMLTemplateElement>(node)) {
@@ -60,7 +60,7 @@ void dump_tree(StringBuilder& builder, const DOM::Node& node)
                 dump_tree(child);
             });
         } else {
-            auto& template_element = downcast<HTML::HTMLTemplateElement>(node);
+            auto& template_element = verify_cast<HTML::HTMLTemplateElement>(node);
             dump_tree(template_element.content());
         }
     }
@@ -84,13 +84,13 @@ void dump_tree(StringBuilder& builder, const Layout::Node& layout_node, bool sho
     if (layout_node.is_anonymous())
         tag_name = "(anonymous)";
     else if (is<DOM::Element>(layout_node.dom_node()))
-        tag_name = downcast<DOM::Element>(*layout_node.dom_node()).local_name();
+        tag_name = verify_cast<DOM::Element>(*layout_node.dom_node()).local_name();
     else
         tag_name = layout_node.dom_node()->node_name();
 
     String identifier = "";
     if (layout_node.dom_node() && is<DOM::Element>(*layout_node.dom_node())) {
-        auto& element = downcast<DOM::Element>(*layout_node.dom_node());
+        auto& element = verify_cast<DOM::Element>(*layout_node.dom_node());
         StringBuilder builder;
         auto id = element.attribute(HTML::AttributeNames::id);
         if (!id.is_empty()) {
@@ -139,7 +139,7 @@ void dump_tree(StringBuilder& builder, const Layout::Node& layout_node, bool sho
             builder.appendff(" @{:p}", &layout_node);
         builder.append("\n");
     } else {
-        auto& box = downcast<Layout::Box>(layout_node);
+        auto& box = verify_cast<Layout::Box>(layout_node);
         builder.appendff("{}{}{} <{}{}{}{}> ",
             box_color_on,
             box.class_name().substring_view(13),
@@ -165,7 +165,9 @@ void dump_tree(StringBuilder& builder, const Layout::Node& layout_node, bool sho
         if (box.is_inline_block())
             builder.appendff(" {}inline-block{}", inline_block_color_on, color_off);
         if (box.computed_values().display() == CSS::Display::Flex)
-            builder.appendff(" {}flex{}", flex_color_on, color_off);
+            builder.appendff(" {}flex-container{}", flex_color_on, color_off);
+        if (box.is_flex_item())
+            builder.appendff(" {}flex-item{}", flex_color_on, color_off);
 
         if (show_box_model) {
             // Dump the horizontal box properties
@@ -229,13 +231,13 @@ void dump_tree(StringBuilder& builder, const Layout::Node& layout_node, bool sho
         }
     }
 
-    if (show_specified_style && layout_node.dom_node() && layout_node.dom_node()->is_element() && downcast<DOM::Element>(layout_node.dom_node())->specified_css_values()) {
+    if (show_specified_style && layout_node.dom_node() && layout_node.dom_node()->is_element() && verify_cast<DOM::Element>(layout_node.dom_node())->specified_css_values()) {
         struct NameAndValue {
             String name;
             String value;
         };
         Vector<NameAndValue> properties;
-        downcast<DOM::Element>(*layout_node.dom_node()).specified_css_values()->for_each_property([&](auto property_id, auto& value) {
+        verify_cast<DOM::Element>(*layout_node.dom_node()).specified_css_values()->for_each_property([&](auto property_id, auto& value) {
             properties.append({ CSS::string_from_property_id(property_id), value.to_string() });
         });
         quick_sort(properties, [](auto& a, auto& b) { return a.name < b.name; });
@@ -339,6 +341,9 @@ void dump_selector(StringBuilder& builder, const CSS::Selector& selector)
             case CSS::Selector::SimpleSelector::PseudoClass::Visited:
                 pseudo_class_description = "Visited";
                 break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Active:
+                pseudo_class_description = "Active";
+                break;
             case CSS::Selector::SimpleSelector::PseudoClass::None:
                 pseudo_class_description = "None";
                 break;
@@ -353,6 +358,9 @@ void dump_selector(StringBuilder& builder, const CSS::Selector& selector)
                 break;
             case CSS::Selector::SimpleSelector::PseudoClass::NthChild:
                 pseudo_class_description = "NthChild";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::NthLastChild:
+                pseudo_class_description = "NthLastChild";
                 break;
             case CSS::Selector::SimpleSelector::PseudoClass::Focus:
                 pseudo_class_description = "Focus";
@@ -371,6 +379,18 @@ void dump_selector(StringBuilder& builder, const CSS::Selector& selector)
                 break;
             case CSS::Selector::SimpleSelector::PseudoClass::OnlyChild:
                 pseudo_class_description = "OnlyChild";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Disabled:
+                pseudo_class_description = "Disabled";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Enabled:
+                pseudo_class_description = "Enabled";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Checked:
+                pseudo_class_description = "Checked";
+                break;
+            case CSS::Selector::SimpleSelector::PseudoClass::Not:
+                pseudo_class_description = "Not";
                 break;
             }
 
@@ -400,10 +420,10 @@ void dump_rule(StringBuilder& builder, const CSS::CSSRule& rule)
     builder.appendff("{}:\n", rule.class_name());
     switch (rule.type()) {
     case CSS::CSSRule::Type::Style:
-        dump_style_rule(builder, downcast<const CSS::CSSStyleRule>(rule));
+        dump_style_rule(builder, verify_cast<const CSS::CSSStyleRule>(rule));
         break;
     case CSS::CSSRule::Type::Import:
-        dump_import_rule(builder, downcast<const CSS::CSSImportRule>(rule));
+        dump_import_rule(builder, verify_cast<const CSS::CSSImportRule>(rule));
         break;
     default:
         VERIFY_NOT_REACHED();
@@ -433,13 +453,13 @@ void dump_sheet(const CSS::StyleSheet& sheet)
     dbgln("{}", builder.string_view());
 }
 
-void dump_sheet(StringBuilder& builder, const CSS::StyleSheet& sheet)
+void dump_sheet(StringBuilder& builder, CSS::StyleSheet const& sheet)
 {
-    VERIFY(is<CSS::CSSStyleSheet>(sheet));
+    auto& css_stylesheet = verify_cast<CSS::CSSStyleSheet>(sheet);
 
-    builder.appendff("CSSStyleSheet{{{}}}: {} rule(s)\n", &sheet, static_cast<const CSS::CSSStyleSheet&>(sheet).rules().size());
+    builder.appendff("CSSStyleSheet{{{}}}: {} rule(s)\n", &sheet, css_stylesheet.rules().size());
 
-    for (auto& rule : static_cast<const CSS::CSSStyleSheet&>(sheet).rules()) {
+    for (auto& rule : css_stylesheet.rules()) {
         dump_rule(builder, rule);
     }
 }

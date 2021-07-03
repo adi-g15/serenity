@@ -40,7 +40,8 @@ else
     $CP -PdR "$SERENITY_SOURCE_DIR"/Base/* mnt/
     $CP -PdR Root/* mnt/
 fi
-$CP "$SERENITY_SOURCE_DIR"/Toolchain/Local/i686/i686-pc-serenity/lib/libgcc_s.so mnt/usr/lib/
+SERENITY_ARCH="${SERENITY_ARCH:-i686}"
+$CP "$SERENITY_SOURCE_DIR"/Toolchain/Local/"$SERENITY_ARCH"/"$SERENITY_ARCH"-pc-serenity/lib/libgcc_s.so mnt/usr/lib/
 # If umask was 027 or similar when the repo was cloned,
 # file permissions in Base/ are too restrictive. Restore
 # the permissions needed in the image.
@@ -50,26 +51,47 @@ chmod 660 mnt/etc/WindowServer.ini
 chown $window_uid:$window_gid mnt/etc/WindowServer.ini
 echo "/bin/sh" > mnt/etc/shells
 
-chown 0:$wheel_gid mnt/bin/su
-chown 0:$wheel_gid mnt/bin/passwd
-chown 0:$wheel_gid mnt/bin/ping
-chown 0:$wheel_gid mnt/bin/traceroute
-chown 0:$phys_gid mnt/bin/keymap
-chown 0:$phys_gid mnt/bin/shutdown
-chown 0:$phys_gid mnt/bin/reboot
+if [ -f mnt/bin/su ]; then
+    chown 0:$wheel_gid mnt/bin/su
+    chmod 4750 mnt/bin/su
+fi
+if [ -f mnt/bin/passwd ]; then
+    chown 0:$wheel_gid mnt/bin/passwd
+    chmod 4755 mnt/bin/passwd
+fi
+if [ -f mnt/bin/ping ]; then
+    chown 0:$wheel_gid mnt/bin/ping
+    chmod 4755 mnt/bin/ping
+fi
+if [ -f mnt/bin/traceroute ]; then
+    chown 0:$wheel_gid mnt/bin/traceroute
+    chmod 4755 mnt/bin/traceroute
+fi
+if [ -f mnt/bin/keymap ]; then
+    chown 0:$phys_gid mnt/bin/keymap
+    chmod 4750 mnt/bin/keymap
+fi
+if [ -f mnt/bin/shutdown ]; then
+    chown 0:$phys_gid mnt/bin/shutdown
+    chmod 4750 mnt/bin/shutdown
+fi
+if [ -f mnt/bin/reboot ]; then
+    chown 0:$phys_gid mnt/bin/reboot
+    chmod 4750 mnt/bin/reboot
+fi
+if [ -f mnt/bin/pls ]; then
+    chown 0:$wheel_gid mnt/bin/pls
+    chmod 4750 mnt/bin/pls
+fi
+if [ -f mnt/bin/utmpupdate ]; then
+    chown 0:$utmp_gid mnt/bin/utmpupdate
+    chmod 2755 mnt/bin/utmpupdate
+fi
+
 chown 0:0 mnt/boot/Kernel
 chown 0:0 mnt/res/kernel.map
 chmod 0400 mnt/res/kernel.map
 chmod 0400 mnt/boot/Kernel
-chmod 4750 mnt/bin/su
-chmod 4755 mnt/bin/passwd
-chmod 4755 mnt/bin/ping
-chmod 4755 mnt/bin/traceroute
-chmod 4750 mnt/bin/reboot
-chmod 4750 mnt/bin/shutdown
-chmod 4750 mnt/bin/keymap
-chown 0:$utmp_gid mnt/bin/utmpupdate
-chmod 2755 mnt/bin/utmpupdate
 chmod 600 mnt/etc/shadow
 chmod 755 mnt/res/devel/templates/*.postcreate
 echo "done"
@@ -93,6 +115,10 @@ printf "setting up device nodes folder... "
 mkdir -p mnt/dev
 echo "done"
 
+printf "setting up sysfs folder... "
+mkdir -p mnt/sys
+echo "done"
+
 printf "writing version file... "
 GIT_HASH=$( (git log --pretty=format:'%h' -n 1 | cut -c1-7) || true )
 printf "[Version]\nMajor=1\nMinor=0\nGit=%s\n" "$GIT_HASH" > mnt/res/version.ini
@@ -104,10 +130,15 @@ mkdir -p mnt/home/anon
 mkdir -p mnt/home/anon/Desktop
 mkdir -p mnt/home/anon/Downloads
 mkdir -p mnt/home/nona
-rm -fr mnt/home/anon/js-tests mnt/home/anon/web-tests
+rm -fr mnt/home/anon/js-tests mnt/home/anon/web-tests mnt/home/anon/cpp-tests mnt/home/anon/wasm-tests
+mkdir -p mnt/home/anon/cpp-tests/
 cp "$SERENITY_SOURCE_DIR"/README.md mnt/home/anon/
 cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibJS/Tests mnt/home/anon/js-tests
 cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibWeb/Tests mnt/home/anon/web-tests
+cp -r "$SERENITY_SOURCE_DIR"/Userland/DevTools/HackStudio/LanguageServers/Cpp/Tests mnt/home/anon/cpp-tests/comprehension
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibCpp/Tests mnt/home/anon/cpp-tests/parser
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibWasm/Tests mnt/home/anon/wasm-tests
+cp -r "$SERENITY_SOURCE_DIR"/Userland/Libraries/LibJS/Tests/test-common.js mnt/home/anon/wasm-tests
 chmod 700 mnt/root
 chmod 700 mnt/home/anon
 chmod 700 mnt/home/nona
@@ -116,11 +147,12 @@ chown -R 100:100 mnt/home/anon
 chown -R 200:200 mnt/home/nona
 echo "done"
 
-printf "adding some desktop icons..."
+printf "adding some desktop icons... "
 ln -sf /bin/Browser mnt/home/anon/Desktop/
 ln -sf /bin/TextEditor mnt/home/anon/Desktop/Text\ Editor
 ln -sf /bin/Help mnt/home/anon/Desktop/
 ln -sf /home/anon mnt/home/anon/Desktop/Home
+chown -R 100:100 mnt/home/anon/Desktop
 echo "done"
 
 printf "installing shortcuts... "

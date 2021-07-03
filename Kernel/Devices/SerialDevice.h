@@ -7,18 +7,15 @@
 #pragma once
 
 #include <Kernel/Devices/CharacterDevice.h>
+#include <Kernel/IO.h>
 
 namespace Kernel {
-
-#define SERIAL_COM1_ADDR 0x3F8
-#define SERIAL_COM2_ADDR 0x2F8
-#define SERIAL_COM3_ADDR 0x3E8
-#define SERIAL_COM4_ADDR 0x2E8
 
 class SerialDevice final : public CharacterDevice {
     AK_MAKE_ETERNAL
 public:
-    SerialDevice(int base_addr, unsigned minor);
+    static NonnullRefPtr<SerialDevice> must_create(size_t com_number);
+
     virtual ~SerialDevice() override;
 
     // ^CharacterDevice
@@ -26,6 +23,8 @@ public:
     virtual KResultOr<size_t> read(FileDescription&, u64, UserOrKernelBuffer&, size_t) override;
     virtual bool can_write(const FileDescription&, size_t) const override;
     virtual KResultOr<size_t> write(FileDescription&, u64, const UserOrKernelBuffer&, size_t) override;
+
+    void put_char(char);
 
     enum InterruptEnable {
         LowPowerMode = 0x01 << 5,
@@ -108,29 +107,33 @@ public:
     virtual String device_name() const override;
 
 private:
+    friend class PCISerialDevice;
+
+    SerialDevice(IOAddress base_addr, unsigned minor);
+
     // ^CharacterDevice
     virtual const char* class_name() const override { return "SerialDevice"; }
 
     void initialize();
-    void set_interrupts(char interrupt_enable);
+    void set_interrupts(bool interrupt_enable);
     void set_baud(Baud);
-    void set_fifo_control(char fifo_control);
+    void set_fifo_control(u8 fifo_control);
     void set_line_control(ParitySelect, StopBits, WordLength);
     void set_break_enable(bool break_enable);
-    void set_modem_control(char modem_control);
-    char get_line_status() const;
-    bool rx_ready();
-    bool tx_ready();
+    void set_modem_control(u8 modem_control);
+    u8 get_line_status() const;
 
-    int m_base_addr;
-    char m_interrupt_enable;
-    char m_fifo_control;
-    Baud m_baud;
-    ParitySelect m_parity_select;
-    StopBits m_stop_bits;
-    WordLength m_word_length;
-    bool m_break_enable;
-    char m_modem_control;
+    IOAddress m_base_addr;
+    bool m_interrupt_enable { false };
+    u8 m_fifo_control { 0 };
+    Baud m_baud { Baud38400 };
+    ParitySelect m_parity_select { None };
+    StopBits m_stop_bits { One };
+    WordLength m_word_length { EightBits };
+    bool m_break_enable { false };
+    u8 m_modem_control { 0 };
+    bool m_last_put_char_was_carriage_return { false };
+    SpinLock<u8> m_serial_lock;
 };
 
 }

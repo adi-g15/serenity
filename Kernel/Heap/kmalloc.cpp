@@ -12,21 +12,26 @@
 #include <AK/Assertions.h>
 #include <AK/NonnullOwnPtrVector.h>
 #include <AK/Types.h>
-#include <Kernel/Arch/x86/CPU.h>
 #include <Kernel/Debug.h>
 #include <Kernel/Heap/Heap.h>
 #include <Kernel/Heap/kmalloc.h>
 #include <Kernel/KSyms.h>
 #include <Kernel/Panic.h>
+#include <Kernel/PerformanceManager.h>
 #include <Kernel/Process.h>
 #include <Kernel/Scheduler.h>
+#include <Kernel/Sections.h>
 #include <Kernel/SpinLock.h>
 #include <Kernel/StdLib.h>
 #include <Kernel/VM/MemoryManager.h>
 
 #define CHUNK_SIZE 32
 #define POOL_SIZE (2 * MiB)
-#define ETERNAL_RANGE_SIZE (2 * MiB)
+#define ETERNAL_RANGE_SIZE (3 * MiB)
+
+namespace std {
+const nothrow_t nothrow;
+}
 
 static RecursiveSpinLock s_lock; // needs to be recursive because of dump_backtrace()
 
@@ -180,7 +185,7 @@ struct KmallocGlobalHeap {
 };
 
 READONLY_AFTER_INIT static KmallocGlobalHeap* g_kmalloc_global;
-static u8 g_kmalloc_global_heap[sizeof(KmallocGlobalHeap)];
+alignas(KmallocGlobalHeap) static u8 g_kmalloc_global_heap[sizeof(KmallocGlobalHeap)];
 
 // Treat the heap as logically separate from .bss
 __attribute__((section(".heap"))) static u8 kmalloc_eternal_heap[ETERNAL_RANGE_SIZE];
@@ -189,6 +194,7 @@ __attribute__((section(".heap"))) static u8 kmalloc_pool_heap[POOL_SIZE];
 static size_t g_kmalloc_bytes_eternal = 0;
 static size_t g_kmalloc_call_count;
 static size_t g_kfree_call_count;
+static size_t g_nested_kfree_calls;
 bool g_dump_kmalloc_stacks;
 
 static u8* s_next_eternal_ptr;
@@ -204,6 +210,14 @@ void kmalloc_enable_expand()
     g_kmalloc_global->allocate_backup_memory();
 }
 
+static inline void kmalloc_verify_nospinlock_held()
+{
+    // Catch bad callers allocating under spinlock.
+    if constexpr (KMALLOC_VERIFY_NO_SPINLOCK_HELD) {
+        VERIFY(!Processor::current().in_critical());
+    }
+}
+
 UNMAP_AFTER_INIT void kmalloc_init()
 {
     // Zero out heap since it's placed after end_of_kernel_bss.
@@ -214,11 +228,13 @@ UNMAP_AFTER_INIT void kmalloc_init()
     s_lock.initialize();
 
     s_next_eternal_ptr = kmalloc_eternal_heap;
-    s_end_of_eternal_range = s_next_eternal_ptr + sizeof(kmalloc_pool_heap);
+    s_end_of_eternal_range = s_next_eternal_ptr + sizeof(kmalloc_eternal_heap);
 }
 
 void* kmalloc_eternal(size_t size)
 {
+    kmalloc_verify_nospinlock_held();
+
     size = round_up_to_power_of_two(size, sizeof(void*));
 
     ScopedSpinLock lock(s_lock);
@@ -231,6 +247,7 @@ void* kmalloc_eternal(size_t size)
 
 void* kmalloc(size_t size)
 {
+    kmalloc_verify_nospinlock_held();
     ScopedSpinLock lock(s_lock);
     ++g_kmalloc_call_count;
 
@@ -244,6 +261,12 @@ void* kmalloc(size_t size)
         PANIC("kmalloc: Out of memory (requested size: {})", size);
     }
 
+    Thread* current_thread = Thread::current();
+    if (!current_thread)
+        current_thread = Processor::idle_thread();
+    if (current_thread)
+        PerformanceManager::add_kmalloc_perf_event(*current_thread, size, (FlatPtr)ptr);
+
     return ptr;
 }
 
@@ -252,26 +275,77 @@ void kfree(void* ptr)
     if (!ptr)
         return;
 
+    kmalloc_verify_nospinlock_held();
     ScopedSpinLock lock(s_lock);
     ++g_kfree_call_count;
+    ++g_nested_kfree_calls;
+
+    if (g_nested_kfree_calls == 1) {
+        Thread* current_thread = Thread::current();
+        if (!current_thread)
+            current_thread = Processor::idle_thread();
+        if (current_thread)
+            PerformanceManager::add_kfree_perf_event(*current_thread, 0, (FlatPtr)ptr);
+    }
 
     g_kmalloc_global->m_heap.deallocate(ptr);
+    --g_nested_kfree_calls;
 }
 
 void* krealloc(void* ptr, size_t new_size)
 {
+    kmalloc_verify_nospinlock_held();
     ScopedSpinLock lock(s_lock);
     return g_kmalloc_global->m_heap.reallocate(ptr, new_size);
 }
 
+size_t kmalloc_good_size(size_t size)
+{
+    return size;
+}
+
 void* operator new(size_t size)
+{
+    void* ptr = kmalloc(size);
+    VERIFY(ptr);
+    return ptr;
+}
+
+void* operator new(size_t size, const std::nothrow_t&) noexcept
 {
     return kmalloc(size);
 }
 
 void* operator new[](size_t size)
 {
+    void* ptr = kmalloc(size);
+    VERIFY(ptr);
+    return ptr;
+}
+
+void* operator new[](size_t size, const std::nothrow_t&) noexcept
+{
     return kmalloc(size);
+}
+
+void operator delete(void* ptr) noexcept
+{
+    return kfree(ptr);
+}
+
+void operator delete(void* ptr, size_t) noexcept
+{
+    return kfree(ptr);
+}
+
+void operator delete[](void* ptr) noexcept
+{
+    return kfree(ptr);
+}
+
+void operator delete[](void* ptr, size_t) noexcept
+{
+    return kfree(ptr);
 }
 
 void get_kmalloc_stats(kmalloc_stats& stats)

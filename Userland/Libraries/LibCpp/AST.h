@@ -29,7 +29,7 @@ class ASTNode : public RefCounted<ASTNode> {
 public:
     virtual ~ASTNode() = default;
     virtual const char* class_name() const = 0;
-    virtual void dump(size_t indent) const;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const;
 
     ASTNode* parent() const { return m_parent; }
     Position start() const
@@ -81,7 +81,7 @@ class TranslationUnit : public ASTNode {
 public:
     virtual ~TranslationUnit() override = default;
     virtual const char* class_name() const override { return "TranslationUnit"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual NonnullRefPtrVector<Declaration> declarations() const override { return m_declarations; }
 
     TranslationUnit(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
@@ -144,8 +144,10 @@ class FunctionDeclaration : public Declaration {
 public:
     virtual ~FunctionDeclaration() override = default;
     virtual const char* class_name() const override { return "FunctionDeclaration"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual bool is_function() const override { return true; }
+    virtual bool is_constructor() const { return false; }
+    virtual bool is_destructor() const { return false; }
     RefPtr<FunctionDefinition> definition() { return m_definition; }
 
     FunctionDeclaration(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
@@ -179,7 +181,7 @@ class Parameter : public VariableOrParameterDeclaration {
 public:
     virtual ~Parameter() override = default;
     virtual const char* class_name() const override { return "Parameter"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     Parameter(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename, StringView name)
         : VariableOrParameterDeclaration(parent, start, end, filename)
@@ -196,25 +198,42 @@ class Type : public ASTNode {
 public:
     virtual ~Type() override = default;
     virtual const char* class_name() const override { return "Type"; }
-    virtual void dump(size_t indent) const override;
     virtual bool is_type() const override { return true; }
     virtual bool is_templatized() const { return false; }
-    virtual String to_string() const;
+    virtual bool is_named_type() const { return false; }
+    virtual String to_string() const = 0;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
+    bool m_is_auto { false };
+    Vector<StringView> m_qualifiers;
+
+protected:
     Type(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
         : ASTNode(parent, start, end, filename)
     {
     }
+};
+
+class NamedType : public Type {
+public:
+    virtual ~NamedType() override = default;
+    virtual const char* class_name() const override { return "NamedType"; }
+    virtual String to_string() const override;
+    virtual bool is_named_type() const override { return true; }
+
+    NamedType(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
+        : Type(parent, start, end, filename)
+    {
+    }
 
     RefPtr<Name> m_name;
-    Vector<StringView> m_qualifiers;
 };
 
 class Pointer : public Type {
 public:
     virtual ~Pointer() override = default;
     virtual const char* class_name() const override { return "Pointer"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual String to_string() const override;
 
     Pointer(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
@@ -230,7 +249,7 @@ public:
     virtual ~FunctionDefinition() override = default;
     virtual const char* class_name() const override { return "FunctionDefinition"; }
     NonnullRefPtrVector<Statement>& statements() { return m_statements; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     FunctionDefinition(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
         : ASTNode(parent, start, end, filename)
@@ -278,7 +297,7 @@ class VariableDeclaration : public VariableOrParameterDeclaration {
 public:
     virtual ~VariableDeclaration() override = default;
     virtual const char* class_name() const override { return "VariableDeclaration"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     VariableDeclaration(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
         : VariableOrParameterDeclaration(parent, start, end, filename)
@@ -294,7 +313,7 @@ class Identifier : public Expression {
 public:
     virtual ~Identifier() override = default;
     virtual const char* class_name() const override { return "Identifier"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     Identifier(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename, StringView name)
         : Expression(parent, start, end, filename)
@@ -315,7 +334,7 @@ class Name : public Expression {
 public:
     virtual ~Name() override = default;
     virtual const char* class_name() const override { return "Name"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual bool is_name() const override { return true; }
     virtual bool is_templatized() const { return false; }
 
@@ -347,8 +366,8 @@ public:
 class NumericLiteral : public Expression {
 public:
     virtual ~NumericLiteral() override = default;
-    virtual const char* class_name() const override { return "NumricLiteral"; }
-    virtual void dump(size_t indent) const override;
+    virtual const char* class_name() const override { return "NumericLiteral"; }
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     NumericLiteral(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename, StringView value)
         : Expression(parent, start, end, filename)
@@ -363,7 +382,7 @@ class NullPointerLiteral : public Expression {
 public:
     virtual ~NullPointerLiteral() override = default;
     virtual const char* class_name() const override { return "NullPointerLiteral"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     NullPointerLiteral(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
         : Expression(parent, start, end, filename)
@@ -375,7 +394,7 @@ class BooleanLiteral : public Expression {
 public:
     virtual ~BooleanLiteral() override = default;
     virtual const char* class_name() const override { return "BooleanLiteral"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     BooleanLiteral(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename, bool value)
         : Expression(parent, start, end, filename)
@@ -417,7 +436,7 @@ public:
 
     virtual ~BinaryExpression() override = default;
     virtual const char* class_name() const override { return "BinaryExpression"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     BinaryOp m_op;
     RefPtr<Expression> m_lhs;
@@ -439,7 +458,7 @@ public:
 
     virtual ~AssignmentExpression() override = default;
     virtual const char* class_name() const override { return "AssignmentExpression"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     AssignmentOp m_op;
     RefPtr<Expression> m_lhs;
@@ -455,7 +474,7 @@ public:
 
     virtual ~FunctionCall() override = default;
     virtual const char* class_name() const override { return "FunctionCall"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual bool is_function_call() const override { return true; }
     virtual bool is_templatized() const { return false; }
 
@@ -472,7 +491,7 @@ public:
 
     ~StringLiteral() override = default;
     virtual const char* class_name() const override { return "StringLiteral"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     String m_value;
 };
@@ -486,7 +505,7 @@ public:
         : Statement(parent, start, end, filename)
     {
     }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     RefPtr<Expression> m_value;
 };
@@ -495,37 +514,27 @@ class EnumDeclaration : public Declaration {
 public:
     virtual ~EnumDeclaration() override = default;
     virtual const char* class_name() const override { return "EnumDeclaration"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     EnumDeclaration(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
         : Declaration(parent, start, end, filename)
     {
     }
 
+    enum class Type {
+        RegularEnum,
+        EnumClass
+    };
+
+    Type type { Type::RegularEnum };
     Vector<StringView> m_entries;
-};
-
-class MemberDeclaration : public Declaration {
-public:
-    virtual ~MemberDeclaration() override = default;
-    virtual const char* class_name() const override { return "MemberDeclaration"; }
-    virtual void dump(size_t indent) const override;
-    virtual bool is_member() const override { return true; }
-
-    MemberDeclaration(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
-        : Declaration(parent, start, end, filename)
-    {
-    }
-
-    RefPtr<Type> m_type;
-    RefPtr<Expression> m_initial_value;
 };
 
 class StructOrClassDeclaration : public Declaration {
 public:
     virtual ~StructOrClassDeclaration() override = default;
     virtual const char* class_name() const override { return "StructOrClassDeclaration"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual bool is_struct_or_class() const override { return true; }
     virtual bool is_struct() const override { return m_type == Type::Struct; }
     virtual bool is_class() const override { return m_type == Type::Class; }
@@ -543,7 +552,7 @@ public:
     }
 
     StructOrClassDeclaration::Type m_type;
-    NonnullRefPtrVector<MemberDeclaration> m_members;
+    NonnullRefPtrVector<Declaration> m_members;
 };
 
 enum class UnaryOp {
@@ -565,7 +574,7 @@ public:
 
     virtual ~UnaryExpression() override = default;
     virtual const char* class_name() const override { return "UnaryExpression"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     UnaryOp m_op;
     RefPtr<Expression> m_lhs;
@@ -580,7 +589,7 @@ public:
 
     virtual ~MemberExpression() override = default;
     virtual const char* class_name() const override { return "MemberExpression"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual bool is_member_expression() const override { return true; }
 
     RefPtr<Expression> m_object;
@@ -596,7 +605,7 @@ public:
 
     virtual ~ForStatement() override = default;
     virtual const char* class_name() const override { return "ForStatement"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     virtual NonnullRefPtrVector<Declaration> declarations() const override;
 
@@ -615,7 +624,7 @@ public:
 
     virtual ~BlockStatement() override = default;
     virtual const char* class_name() const override { return "BlockStatement"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     virtual NonnullRefPtrVector<Declaration> declarations() const override;
 
@@ -642,7 +651,7 @@ public:
 
     virtual ~IfStatement() override = default;
     virtual const char* class_name() const override { return "IfStatement"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual NonnullRefPtrVector<Declaration> declarations() const override;
 
     RefPtr<Expression> m_predicate;
@@ -654,7 +663,7 @@ class NamespaceDeclaration : public Declaration {
 public:
     virtual ~NamespaceDeclaration() override = default;
     virtual const char* class_name() const override { return "NamespaceDeclaration"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
     virtual bool is_namespace() const override { return true; }
 
     NamespaceDeclaration(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
@@ -676,7 +685,7 @@ public:
 
     virtual ~CppCastExpression() override = default;
     virtual const char* class_name() const override { return "CppCastExpression"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     StringView m_cast_type;
     RefPtr<Type> m_type;
@@ -692,7 +701,7 @@ public:
 
     virtual ~CStyleCastExpression() override = default;
     virtual const char* class_name() const override { return "CStyleCastExpression"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     RefPtr<Type> m_type;
     RefPtr<Expression> m_expression;
@@ -707,7 +716,7 @@ public:
 
     virtual ~SizeofExpression() override = default;
     virtual const char* class_name() const override { return "SizeofExpression"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     RefPtr<Type> m_type;
 };
@@ -721,7 +730,7 @@ public:
 
     virtual ~BracedInitList() override = default;
     virtual const char* class_name() const override { return "BracedInitList"; }
-    virtual void dump(size_t indent) const override;
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
 
     NonnullRefPtrVector<Expression> m_expressions;
 };
@@ -734,6 +743,33 @@ public:
     }
     virtual bool is_dummy_node() const override { return true; }
     virtual const char* class_name() const override { return "DummyAstNode"; }
-    virtual void dump(size_t) const override { }
+    virtual void dump(FILE* = stdout, size_t = 0) const override { }
 };
+
+class Constructor : public FunctionDeclaration {
+public:
+    virtual ~Constructor() override = default;
+    virtual const char* class_name() const override { return "Constructor"; }
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
+    virtual bool is_constructor() const override { return true; }
+
+    Constructor(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
+        : FunctionDeclaration(parent, start, end, filename)
+    {
+    }
+};
+
+class Destructor : public FunctionDeclaration {
+public:
+    virtual ~Destructor() override = default;
+    virtual const char* class_name() const override { return "Destructor"; }
+    virtual void dump(FILE* = stdout, size_t indent = 0) const override;
+    virtual bool is_destructor() const override { return true; }
+
+    Destructor(ASTNode* parent, Optional<Position> start, Optional<Position> end, const String& filename)
+        : FunctionDeclaration(parent, start, end, filename)
+    {
+    }
+};
+
 }

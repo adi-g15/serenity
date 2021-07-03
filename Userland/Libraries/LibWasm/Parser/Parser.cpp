@@ -11,7 +11,7 @@
 
 namespace Wasm {
 
-ParseError with_eof_check(const InputStream& stream, ParseError error_if_not_eof)
+ParseError with_eof_check(InputStream const& stream, ParseError error_if_not_eof)
 {
     if (stream.unreliable_eof())
         return ParseError::UnexpectedEof;
@@ -81,8 +81,8 @@ struct ParseUntilAnyOfResult {
     u8 terminator { 0 };
     Vector<T> values;
 };
-template<typename T, typename... Args>
-static ParseResult<ParseUntilAnyOfResult<T>> parse_until_any_of(InputStream& stream, Args... terminators) requires(requires(InputStream& stream) { T::parse(stream); })
+template<typename T, u8... terminators, typename... Args>
+static ParseResult<ParseUntilAnyOfResult<T>> parse_until_any_of(InputStream& stream, Args&... args) requires(requires(InputStream& stream, Args... args) { T::parse(stream, args...); })
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger;
     ReconsumableStream new_stream { stream };
@@ -99,17 +99,19 @@ static ParseResult<ParseUntilAnyOfResult<T>> parse_until_any_of(InputStream& str
         if (new_stream.has_any_error())
             return with_eof_check(stream, ParseError::ExpectedValueOrTerminator);
 
-        if ((... || (byte == terminators))) {
+        constexpr auto equals = [](auto&& a, auto&& b) { return a == b; };
+
+        if ((... || equals(byte, terminators))) {
             result.terminator = byte;
             return result;
         }
 
         new_stream.unread({ &byte, 1 });
-        auto parse_result = T::parse(new_stream);
+        auto parse_result = T::parse(new_stream, args...);
         if (parse_result.is_error())
             return parse_result.error();
 
-        result.values.append(parse_result.release_value());
+        result.values.extend(parse_result.release_value());
     }
 }
 
@@ -188,7 +190,7 @@ ParseResult<Limits> Limits::parse(InputStream& stream)
     Optional<u32> max;
     if (flag) {
         size_t value;
-        if (LEB128::read_unsigned(stream, value))
+        if (!LEB128::read_unsigned(stream, value))
             return with_eof_check(stream, ParseError::ExpectedSize);
         max = value;
     }
@@ -265,13 +267,15 @@ ParseResult<BlockType> BlockType::parse(InputStream& stream)
     if (!LEB128::read_signed(new_stream, index_value))
         return with_eof_check(stream, ParseError::ExpectedIndex);
 
-    if (index_value < 0)
+    if (index_value < 0) {
+        dbgln("Invalid type index {}", index_value);
         return with_eof_check(stream, ParseError::InvalidIndex);
+    }
 
     return BlockType { TypeIndex(index_value) };
 }
 
-ParseResult<Instruction> Instruction::parse(InputStream& stream)
+ParseResult<Vector<Instruction>> Instruction::parse(InputStream& stream, InstructionPointer& ip)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Instruction");
     u8 byte;
@@ -279,6 +283,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
     if (stream.has_any_error())
         return with_eof_check(stream, ParseError::ExpectedKindTag);
     OpCode opcode { byte };
+    ++ip;
 
     switch (opcode.value()) {
     case Instructions::block.value():
@@ -287,36 +292,44 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         auto block_type = BlockType::parse(stream);
         if (block_type.is_error())
             return block_type.error();
-        NonnullOwnPtrVector<Instruction> left_instructions, right_instructions;
+        Vector<Instruction> instructions;
+        InstructionPointer end_ip, else_ip;
+
         {
-            auto result = parse_until_any_of<Instruction>(stream, 0x0b, 0x05);
+            auto result = parse_until_any_of<Instruction, 0x0b, 0x05>(stream, ip);
             if (result.is_error())
                 return result.error();
 
             if (result.value().terminator == 0x0b) {
                 // block/loop/if without else
-                NonnullOwnPtrVector<Instruction> instructions;
-                for (auto& entry : result.value().values)
-                    instructions.append(make<Instruction>(move(entry)));
+                result.value().values.append(Instruction { Instructions::structured_end });
 
-                return Instruction { opcode, BlockAndInstructionSet { block_type.release_value(), move(instructions) } };
+                // Transform op(..., instr*) -> op(...) instr* op(end(ip))
+                result.value().values.prepend(Instruction { opcode, StructuredInstructionArgs { BlockType { block_type.release_value() }, ip.value(), {} } });
+                ++ip;
+                return result.release_value().values;
             }
 
+            // Transform op(..., instr*, instr*) -> op(...) instr* op(else(ip) instr* op(end(ip))
             VERIFY(result.value().terminator == 0x05);
-            for (auto& entry : result.value().values)
-                left_instructions.append(make<Instruction>(move(entry)));
+            instructions.extend(result.release_value().values);
+            instructions.append(Instruction { Instructions::structured_else });
+            ++ip;
+            else_ip = ip.value();
         }
         // if with else
         {
-            auto result = parse_until_any_of<Instruction>(stream, 0x0b);
+            auto result = parse_until_any_of<Instruction, 0x0b>(stream, ip);
             if (result.is_error())
                 return result.error();
-
-            for (auto& entry : result.value().values)
-                right_instructions.append(make<Instruction>(move(entry)));
+            instructions.extend(result.release_value().values);
+            instructions.append(Instruction { Instructions::structured_end });
+            ++ip;
+            end_ip = ip.value();
         }
 
-        return Instruction { opcode, BlockAndTwoInstructionSets { block_type.release_value(), move(left_instructions), move(right_instructions) } };
+        instructions.prepend(Instruction { opcode, StructuredInstructionArgs { BlockType { block_type.release_value() }, end_ip, else_ip } });
+        return instructions;
     }
     case Instructions::br.value():
     case Instructions::br_if.value(): {
@@ -325,7 +338,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (index.is_error())
             return index.error();
 
-        return Instruction { opcode, index.release_value() };
+        return Vector { Instruction { opcode, index.release_value() } };
     }
     case Instructions::br_table.value(): {
         // br_table label* label
@@ -337,7 +350,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (default_label.is_error())
             return default_label.error();
 
-        return Instruction { opcode, TableBranchArgs { labels.release_value(), default_label.release_value() } };
+        return Vector { Instruction { opcode, TableBranchArgs { labels.release_value(), default_label.release_value() } } };
     }
     case Instructions::call.value(): {
         // call function
@@ -345,7 +358,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (function_index.is_error())
             return function_index.error();
 
-        return Instruction { opcode, function_index.release_value() };
+        return Vector { Instruction { opcode, function_index.release_value() } };
     }
     case Instructions::call_indirect.value(): {
         // call_indirect type table
@@ -357,7 +370,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (table_index.is_error())
             return table_index.error();
 
-        return Instruction { opcode, IndirectCallArgs { type_index.release_value(), table_index.release_value() } };
+        return Vector { Instruction { opcode, IndirectCallArgs { type_index.release_value(), table_index.release_value() } } };
     }
     case Instructions::i32_load.value():
     case Instructions::i64_load.value():
@@ -389,7 +402,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (!LEB128::read_unsigned(stream, offset))
             return with_eof_check(stream, ParseError::InvalidInput);
 
-        return Instruction { opcode, MemoryArgument { static_cast<u32>(align), static_cast<u32>(offset) } };
+        return Vector { Instruction { opcode, MemoryArgument { static_cast<u32>(align), static_cast<u32>(offset) } } };
     }
     case Instructions::local_get.value():
     case Instructions::local_set.value():
@@ -398,7 +411,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (index.is_error())
             return index.error();
 
-        return Instruction { opcode, index.release_value() };
+        return Vector { Instruction { opcode, index.release_value() } };
     }
     case Instructions::global_get.value():
     case Instructions::global_set.value(): {
@@ -406,7 +419,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (index.is_error())
             return index.error();
 
-        return Instruction { opcode, index.release_value() };
+        return Vector { Instruction { opcode, index.release_value() } };
     }
     case Instructions::memory_size.value():
     case Instructions::memory_grow.value(): {
@@ -416,17 +429,19 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         stream >> unused;
         if (stream.has_any_error())
             return with_eof_check(stream, ParseError::ExpectedKindTag);
-        if (unused != 0x00)
+        if (unused != 0x00) {
+            dbgln("Invalid tag in memory_grow {}", unused);
             return with_eof_check(stream, ParseError::InvalidTag);
+        }
 
-        return Instruction { opcode };
+        return Vector { Instruction { opcode } };
     }
     case Instructions::i32_const.value(): {
         i32 value;
         if (!LEB128::read_signed(stream, value))
             return with_eof_check(stream, ParseError::ExpectedSignedImmediate);
 
-        return Instruction { opcode, value };
+        return Vector { Instruction { opcode, value } };
     }
     case Instructions::i64_const.value(): {
         // op literal
@@ -434,7 +449,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (!LEB128::read_signed(stream, value))
             return with_eof_check(stream, ParseError::ExpectedSignedImmediate);
 
-        return Instruction { opcode, value };
+        return Vector { Instruction { opcode, value } };
     }
     case Instructions::f32_const.value(): {
         // op literal
@@ -444,7 +459,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
             return with_eof_check(stream, ParseError::ExpectedFloatingImmediate);
 
         auto floating = bit_cast<float>(static_cast<u32>(value));
-        return Instruction { opcode, floating };
+        return Vector { Instruction { opcode, floating } };
     }
     case Instructions::f64_const.value(): {
         // op literal
@@ -454,7 +469,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
             return with_eof_check(stream, ParseError::ExpectedFloatingImmediate);
 
         auto floating = bit_cast<double>(static_cast<u64>(value));
-        return Instruction { opcode, floating };
+        return Vector { Instruction { opcode, floating } };
     }
     case Instructions::table_get.value():
     case Instructions::table_set.value(): {
@@ -462,14 +477,14 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (index.is_error())
             return index.error();
 
-        return Instruction { opcode, index.release_value() };
+        return Vector { Instruction { opcode, index.release_value() } };
     }
     case Instructions::select_typed.value(): {
         auto types = parse_vector<ValueType>(stream);
         if (types.is_error())
             return types.error();
 
-        return Instruction { opcode, types.release_value() };
+        return Vector { Instruction { opcode, types.release_value() } };
     }
     case Instructions::ref_null.value(): {
         auto type = ValueType::parse(stream);
@@ -478,14 +493,14 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         if (!type.value().is_reference())
             return ParseError::InvalidType;
 
-        return Instruction { opcode, type.release_value() };
+        return Vector { Instruction { opcode, type.release_value() } };
     }
     case Instructions::ref_func.value(): {
         auto index = GenericIndexParser<FunctionIndex>::parse(stream);
         if (index.is_error())
             return index.error();
 
-        return Instruction { opcode, index.release_value() };
+        return Vector { Instruction { opcode, index.release_value() } };
     }
     case Instructions::ref_is_null.value():
     case Instructions::unreachable.value():
@@ -616,7 +631,12 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
     case Instructions::i64_reinterpret_f64.value():
     case Instructions::f32_reinterpret_i32.value():
     case Instructions::f64_reinterpret_i64.value():
-        return Instruction { opcode };
+    case Instructions::i32_extend8_s.value():
+    case Instructions::i32_extend16_s.value():
+    case Instructions::i64_extend8_s.value():
+    case Instructions::i64_extend16_s.value():
+    case Instructions::i64_extend32_s.value():
+        return Vector { Instruction { opcode } };
     case 0xfc: {
         // These are multibyte instructions.
         u32 selector;
@@ -631,7 +651,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
         case Instructions::i64_trunc_sat_f32_u_second:
         case Instructions::i64_trunc_sat_f64_s_second:
         case Instructions::i64_trunc_sat_f64_u_second:
-            return Instruction { OpCode { 0xfc00 | selector } };
+            return Vector { Instruction { OpCode { 0xfc00 | selector } } };
         case Instructions::memory_init_second: {
             auto index = GenericIndexParser<DataIndex>::parse(stream);
             if (index.is_error())
@@ -642,13 +662,13 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
                 return with_eof_check(stream, ParseError::InvalidInput);
             if (unused != 0x00)
                 return ParseError::InvalidImmediate;
-            return Instruction { OpCode { 0xfc00 | selector }, index.release_value() };
+            return Vector { Instruction { OpCode { 0xfc00 | selector }, index.release_value() } };
         }
         case Instructions::data_drop_second: {
             auto index = GenericIndexParser<DataIndex>::parse(stream);
             if (index.is_error())
                 return index.error();
-            return Instruction { OpCode { 0xfc00 | selector }, index.release_value() };
+            return Vector { Instruction { OpCode { 0xfc00 | selector }, index.release_value() } };
         }
         case Instructions::memory_copy_second: {
             for (size_t i = 0; i < 2; ++i) {
@@ -659,7 +679,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
                 if (unused != 0x00)
                     return ParseError::InvalidImmediate;
             }
-            return Instruction { OpCode { 0xfc00 | selector } };
+            return Vector { Instruction { OpCode { 0xfc00 | selector } } };
         }
         case Instructions::memory_fill_second: {
             u8 unused;
@@ -668,7 +688,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
                 return with_eof_check(stream, ParseError::InvalidInput);
             if (unused != 0x00)
                 return ParseError::InvalidImmediate;
-            return Instruction { OpCode { 0xfc00 | selector } };
+            return Vector { Instruction { OpCode { 0xfc00 | selector } } };
         }
         case Instructions::table_init_second: {
             auto element_index = GenericIndexParser<ElementIndex>::parse(stream);
@@ -677,13 +697,13 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
             auto table_index = GenericIndexParser<TableIndex>::parse(stream);
             if (table_index.is_error())
                 return table_index.error();
-            return Instruction { OpCode { 0xfc00 | selector }, TableElementArgs { element_index.release_value(), table_index.release_value() } };
+            return Vector { Instruction { OpCode { 0xfc00 | selector }, TableElementArgs { element_index.release_value(), table_index.release_value() } } };
         }
         case Instructions::elem_drop_second: {
             auto element_index = GenericIndexParser<ElementIndex>::parse(stream);
             if (element_index.is_error())
                 return element_index.error();
-            return Instruction { OpCode { 0xfc00 | selector }, element_index.release_value() };
+            return Vector { Instruction { OpCode { 0xfc00 | selector }, element_index.release_value() } };
         }
         case Instructions::table_copy_second: {
             auto lhs = GenericIndexParser<TableIndex>::parse(stream);
@@ -692,7 +712,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
             auto rhs = GenericIndexParser<TableIndex>::parse(stream);
             if (rhs.is_error())
                 return rhs.error();
-            return Instruction { OpCode { 0xfc00 | selector }, TableTableArgs { lhs.release_value(), rhs.release_value() } };
+            return Vector { Instruction { OpCode { 0xfc00 | selector }, TableTableArgs { lhs.release_value(), rhs.release_value() } } };
         }
         case Instructions::table_grow_second:
         case Instructions::table_size_second:
@@ -700,7 +720,7 @@ ParseResult<Instruction> Instruction::parse(InputStream& stream)
             auto index = GenericIndexParser<TableIndex>::parse(stream);
             if (index.is_error())
                 return index.error();
-            return Instruction { OpCode { 0xfc00 | selector }, index.release_value() };
+            return Vector { Instruction { OpCode { 0xfc00 | selector }, index.release_value() } };
         }
         default:
             return ParseError::UnknownInstruction;
@@ -788,7 +808,7 @@ ParseResult<FunctionSection> FunctionSection::parse(InputStream& stream)
         return indices.error();
 
     Vector<TypeIndex> typed_indices;
-    typed_indices.resize(indices.value().size());
+    typed_indices.ensure_capacity(indices.value().size());
     for (auto entry : indices.value())
         typed_indices.append(entry);
 
@@ -834,7 +854,8 @@ ParseResult<MemorySection> MemorySection::parse(InputStream& stream)
 ParseResult<Expression> Expression::parse(InputStream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Expression");
-    auto instructions = parse_until_any_of<Instruction>(stream, 0x0b);
+    InstructionPointer ip { 0 };
+    auto instructions = parse_until_any_of<Instruction, 0x0b>(stream, ip);
     if (instructions.is_error())
         return instructions.error();
 
@@ -918,26 +939,147 @@ ParseResult<StartSection> StartSection::parse(InputStream& stream)
     return StartSection { result.release_value() };
 }
 
+ParseResult<ElementSection::SegmentType0> ElementSection::SegmentType0::parse(InputStream& stream)
+{
+    auto expression = Expression::parse(stream);
+    if (expression.is_error())
+        return expression.error();
+    auto indices = parse_vector<GenericIndexParser<FunctionIndex>>(stream);
+    if (indices.is_error())
+        return indices.error();
+
+    return SegmentType0 { indices.release_value(), Active { 0, expression.release_value() } };
+}
+
+ParseResult<ElementSection::SegmentType1> ElementSection::SegmentType1::parse(InputStream& stream)
+{
+    u8 kind;
+    stream >> kind;
+    if (stream.has_any_error())
+        return with_eof_check(stream, ParseError::ExpectedKindTag);
+    if (kind != 0)
+        return ParseError::InvalidTag;
+    auto indices = parse_vector<GenericIndexParser<FunctionIndex>>(stream);
+    if (indices.is_error())
+        return indices.error();
+
+    return SegmentType1 { indices.release_value() };
+}
+
+ParseResult<ElementSection::SegmentType2> ElementSection::SegmentType2::parse(InputStream& stream)
+{
+    dbgln("Type 2");
+    (void)stream;
+    return ParseError::NotImplemented;
+}
+
+ParseResult<ElementSection::SegmentType3> ElementSection::SegmentType3::parse(InputStream& stream)
+{
+    dbgln("Type 3");
+    (void)stream;
+    return ParseError::NotImplemented;
+}
+
+ParseResult<ElementSection::SegmentType4> ElementSection::SegmentType4::parse(InputStream& stream)
+{
+    dbgln("Type 4");
+    (void)stream;
+    return ParseError::NotImplemented;
+}
+
+ParseResult<ElementSection::SegmentType5> ElementSection::SegmentType5::parse(InputStream& stream)
+{
+    dbgln("Type 5");
+    (void)stream;
+    return ParseError::NotImplemented;
+}
+
+ParseResult<ElementSection::SegmentType6> ElementSection::SegmentType6::parse(InputStream& stream)
+{
+    dbgln("Type 6");
+    (void)stream;
+    return ParseError::NotImplemented;
+}
+
+ParseResult<ElementSection::SegmentType7> ElementSection::SegmentType7::parse(InputStream& stream)
+{
+    dbgln("Type 7");
+    (void)stream;
+    return ParseError::NotImplemented;
+}
+
 ParseResult<ElementSection::Element> ElementSection::Element::parse(InputStream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Element");
-    auto table_index = GenericIndexParser<TableIndex>::parse(stream);
-    if (table_index.is_error())
-        return table_index.error();
-    auto offset = Expression::parse(stream);
-    if (offset.is_error())
-        return offset.error();
-    auto init = parse_vector<GenericIndexParser<FunctionIndex>>(stream);
-    if (init.is_error())
-        return init.error();
+    u8 tag;
+    stream >> tag;
+    if (stream.has_any_error())
+        return with_eof_check(stream, ParseError::ExpectedKindTag);
 
-    return Element { table_index.release_value(), offset.release_value(), init.release_value() };
+    switch (tag) {
+    case 0x00:
+        if (auto result = SegmentType0::parse(stream); result.is_error()) {
+            return result.error();
+        } else {
+            Vector<Instruction> instructions;
+            for (auto& index : result.value().function_indices)
+                instructions.empend(Instructions::ref_func, index);
+            return Element { ValueType(ValueType::FunctionReference), { Expression { move(instructions) } }, move(result.value().mode) };
+        }
+    case 0x01:
+        if (auto result = SegmentType1::parse(stream); result.is_error()) {
+            return result.error();
+        } else {
+            Vector<Instruction> instructions;
+            for (auto& index : result.value().function_indices)
+                instructions.empend(Instructions::ref_func, index);
+            return Element { ValueType(ValueType::FunctionReference), { Expression { move(instructions) } }, Passive {} };
+        }
+    case 0x02:
+        if (auto result = SegmentType2::parse(stream); result.is_error()) {
+            return result.error();
+        } else {
+            return ParseError::NotImplemented;
+        }
+    case 0x03:
+        if (auto result = SegmentType3::parse(stream); result.is_error()) {
+            return result.error();
+        } else {
+            return ParseError::NotImplemented;
+        }
+    case 0x04:
+        if (auto result = SegmentType4::parse(stream); result.is_error()) {
+            return result.error();
+        } else {
+            return ParseError::NotImplemented;
+        }
+    case 0x05:
+        if (auto result = SegmentType5::parse(stream); result.is_error()) {
+            return result.error();
+        } else {
+            return ParseError::NotImplemented;
+        }
+    case 0x06:
+        if (auto result = SegmentType6::parse(stream); result.is_error()) {
+            return result.error();
+        } else {
+            return ParseError::NotImplemented;
+        }
+    case 0x07:
+        if (auto result = SegmentType7::parse(stream); result.is_error()) {
+            return result.error();
+        } else {
+            return ParseError::NotImplemented;
+        }
+    default:
+        return ParseError::InvalidTag;
+    }
 }
 
 ParseResult<ElementSection> ElementSection::parse(InputStream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("ElementSection");
-    auto result = Element::parse(stream);
+    auto result = parse_vector<Element>(stream);
     if (result.is_error())
         return result.error();
     return ElementSection { result.release_value() };
@@ -957,7 +1099,7 @@ ParseResult<Locals> Locals::parse(InputStream& stream)
     return Locals { static_cast<u32>(count), type.release_value() };
 }
 
-ParseResult<Func> Func::parse(InputStream& stream)
+ParseResult<CodeSection::Func> CodeSection::Func::parse(InputStream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("Func");
     auto locals = parse_vector<Locals>(stream);
@@ -1053,8 +1195,16 @@ ParseResult<DataSection> DataSection::parse(InputStream& stream)
 ParseResult<DataCountSection> DataCountSection::parse([[maybe_unused]] InputStream& stream)
 {
     ScopeLogger<WASM_BINPARSER_DEBUG> logger("DataCountSection");
-    // FIXME: Implement parsing optional values!
-    return with_eof_check(stream, ParseError::NotImplemented);
+    u32 value;
+    if (!LEB128::read_unsigned(stream, value)) {
+        if (stream.unreliable_eof()) {
+            // The section simply didn't contain anything.
+            return DataCountSection { {} };
+        }
+        return ParseError::ExpectedSize;
+    }
+
+    return DataCountSection { value };
 }
 
 ParseResult<Module> Module::parse(InputStream& stream)
@@ -1190,12 +1340,42 @@ ParseResult<Module> Module::parse(InputStream& stream)
                 return section.error();
             }
         }
+        case DataCountSection::section_id: {
+            if (auto section = DataCountSection::parse(section_stream); !section.is_error()) {
+                sections.append(section.release_value());
+                continue;
+            } else {
+                return section.error();
+            }
+        }
         default:
             return with_eof_check(stream, ParseError::InvalidIndex);
         }
     }
 
     return Module { move(sections) };
+}
+
+void Module::populate_sections()
+{
+    FunctionSection const* function_section { nullptr };
+    for_each_section_of_type<FunctionSection>([&](FunctionSection const& section) { function_section = &section; });
+    for_each_section_of_type<CodeSection>([&](CodeSection const& section) {
+        // FIXME: This should be considered invalid once validation is implemented.
+        if (!function_section)
+            return;
+        size_t index = 0;
+        for (auto& entry : section.functions()) {
+            auto& type_index = function_section->types()[index];
+            Vector<ValueType> locals;
+            for (auto& local : entry.func().locals()) {
+                for (size_t i = 0; i < local.n(); ++i)
+                    locals.append(local.type());
+            }
+            m_functions.empend(type_index, move(locals), entry.func().body());
+            ++index;
+        }
+    });
 }
 
 String parse_error_to_string(ParseError error)
